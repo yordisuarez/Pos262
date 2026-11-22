@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import Dexie, { type EntityTable } from 'dexie';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  AlertTriangle,
+  ArrowLeftRight,
   Banknote,
   Building2,
   Check,
@@ -10,6 +11,7 @@ import {
   CreditCard,
   Download,
   History,
+  Lock,
   MessageCircle,
   Minus,
   Plus,
@@ -18,6 +20,7 @@ import {
   ShoppingCart,
   Smartphone,
   Trash2,
+  UserCheck,
   UserPlus,
   Users,
   Wallet,
@@ -25,6 +28,9 @@ import {
   WifiOff,
   X,
 } from 'lucide-react';
+import { db, seedDatabaseIfNeeded, syncAllPendingRecords } from './db/posDb';
+import { CashierLoginModal, ShiftManager } from './components/ShiftManager';
+import { InventoryManager } from './components/InventoryManager';
 import type {
   Branch,
   CartItem,
@@ -37,275 +43,22 @@ import type {
   SalePayment,
   SaleType,
   Shift,
+  StockTransfer,
 } from './types/pos';
 
-interface SettingEntry {
-  key: string;
-  value: string;
-}
-
-class Pos262Database extends Dexie {
-  branches!: EntityTable<Branch, 'id'>;
-  products!: EntityTable<Product, 'id'>;
-  customers!: EntityTable<Customer, 'id'>;
-  sales!: EntityTable<Sale, 'id'>;
-  shifts!: EntityTable<Shift, 'id'>;
-  settings!: EntityTable<SettingEntry, 'key'>;
-
-  constructor() {
-    super('pos_262_db');
-    this.version(1).stores({
-      branches: 'id, code, name',
-      products: 'id, sku, barcode, name, category',
-      customers: 'id, name, documentId, phone',
-      sales: 'id, receiptNumber, branchId, customerId, createdAt, syncStatus',
-      shifts: 'id, branchId, cashierId, status, openedAt',
-      settings: 'key',
-    });
-  }
-}
-
-const db = new Pos262Database();
-
-const DEFAULT_BRANCHES: Branch[] = [
-  {
-    id: 'branch-centro',
-    name: 'Sucursal Centro',
-    code: 'SUC-01',
-    address: 'Av. Bolívar, Edif. Comercial Local 4',
-    phone: '+58 412-5550101',
-    isActive: true,
-  },
-  {
-    id: 'branch-este',
-    name: 'Sucursal Este',
-    code: 'SUC-02',
-    address: 'C.C. Plaza Este, Nivel PB Local 12',
-    phone: '+58 414-5550202',
-    isActive: true,
-  },
-  {
-    id: 'branch-norte',
-    name: 'Sucursal Norte',
-    code: 'SUC-03',
-    address: 'Av. Intercomunal, Galpón 7',
-    phone: '+58 424-5550303',
-    isActive: true,
-  },
-];
-
-const DEFAULT_CASHIER: Cashier = {
-  id: 'cashier-01',
-  name: 'Caja Principal',
-  pin: '1234',
-  role: 'admin',
-  branchId: 'branch-centro',
-  isActive: true,
-};
-
-const DEFAULT_CUSTOMERS: Customer[] = [
-  {
-    id: 'cust-final',
-    name: 'Consumidor Final',
-    documentId: 'V-00000000',
-    phone: '',
-    creditLimitUsd: 0,
-    balanceUsd: 0,
-    createdAt: '2026-01-01T08:00:00.000Z',
-  },
-  {
-    id: 'cust-01',
-    name: 'María Fernanda Rojas',
-    documentId: 'V-19482710',
-    phone: '584125551948',
-    address: 'Urb. Las Acacias',
-    creditLimitUsd: 150,
-    balanceUsd: 18.5,
-    createdAt: '2026-02-10T10:30:00.000Z',
-  },
-  {
-    id: 'cust-02',
-    name: 'Inversiones El Valle C.A.',
-    documentId: 'J-40918273-1',
-    phone: '584145554091',
-    address: 'Zona Industrial II',
-    creditLimitUsd: 600,
-    balanceUsd: 0,
-    createdAt: '2026-03-04T14:15:00.000Z',
-  },
-];
-
-const DEFAULT_PRODUCTS: Product[] = [
-  {
-    id: 'prod-01',
-    sku: 'VIV-101',
-    barcode: '759100100101',
-    name: 'Harina de Maíz Precocida 1 kg',
-    category: 'Víveres',
-    priceUsd: 1.45,
-    costUsd: 1.05,
-    taxExempt: true,
-    unit: 'und',
-    minStock: 10,
-    stockByBranch: { 'branch-centro': 48, 'branch-este': 26, 'branch-norte': 14 },
-  },
-  {
-    id: 'prod-02',
-    sku: 'VIV-102',
-    barcode: '759100100102',
-    name: 'Arroz Blanco Tipo I 1 kg',
-    category: 'Víveres',
-    priceUsd: 1.6,
-    costUsd: 1.15,
-    taxExempt: true,
-    unit: 'und',
-    minStock: 12,
-    stockByBranch: { 'branch-centro': 34, 'branch-este': 19, 'branch-norte': 6 },
-  },
-  {
-    id: 'prod-03',
-    sku: 'VIV-103',
-    barcode: '759100100103',
-    name: 'Aceite Vegetal Comestible 1 L',
-    category: 'Víveres',
-    priceUsd: 3.85,
-    costUsd: 2.95,
-    taxExempt: true,
-    unit: 'und',
-    minStock: 8,
-    stockByBranch: { 'branch-centro': 18, 'branch-este': 5, 'branch-norte': 22 },
-  },
-  {
-    id: 'prod-04',
-    sku: 'VIV-104',
-    barcode: '759100100104',
-    name: 'Café Molido Gourmet 500 g',
-    category: 'Víveres',
-    priceUsd: 6.5,
-    costUsd: 4.8,
-    taxExempt: false,
-    unit: 'und',
-    minStock: 6,
-    stockByBranch: { 'branch-centro': 15, 'branch-este': 11, 'branch-norte': 4 },
-  },
-  {
-    id: 'prod-05',
-    sku: 'BEB-201',
-    barcode: '759100200201',
-    name: 'Agua Mineral Sin Gas 1.5 L',
-    category: 'Bebidas',
-    priceUsd: 1.1,
-    costUsd: 0.65,
-    taxExempt: true,
-    unit: 'und',
-    minStock: 15,
-    stockByBranch: { 'branch-centro': 62, 'branch-este': 40, 'branch-norte': 30 },
-  },
-  {
-    id: 'prod-06',
-    sku: 'BEB-202',
-    barcode: '759100200202',
-    name: 'Refresco Cola Retornable 2 L',
-    category: 'Bebidas',
-    priceUsd: 2.25,
-    costUsd: 1.55,
-    taxExempt: false,
-    unit: 'und',
-    minStock: 10,
-    stockByBranch: { 'branch-centro': 28, 'branch-este': 16, 'branch-norte': 0 },
-  },
-  {
-    id: 'prod-07',
-    sku: 'BEB-203',
-    barcode: '759100200203',
-    name: 'Malta Enlatada Pack x6',
-    category: 'Bebidas',
-    priceUsd: 5.4,
-    costUsd: 3.9,
-    taxExempt: false,
-    unit: 'pack',
-    minStock: 6,
-    stockByBranch: { 'branch-centro': 14, 'branch-este': 9, 'branch-norte': 12 },
-  },
-  {
-    id: 'prod-08',
-    sku: 'SNK-301',
-    barcode: '759100300301',
-    name: 'Galletas de Chocolate 240 g',
-    category: 'Snacks',
-    priceUsd: 2.8,
-    costUsd: 1.9,
-    taxExempt: false,
-    unit: 'und',
-    minStock: 8,
-    stockByBranch: { 'branch-centro': 24, 'branch-este': 18, 'branch-norte': 10 },
-  },
-  {
-    id: 'prod-09',
-    sku: 'SNK-302',
-    barcode: '759100300302',
-    name: 'Platanitos Salados Artesanales 150 g',
-    category: 'Snacks',
-    priceUsd: 1.95,
-    costUsd: 1.2,
-    taxExempt: false,
-    unit: 'und',
-    minStock: 8,
-    stockByBranch: { 'branch-centro': 7, 'branch-este': 22, 'branch-norte': 15 },
-  },
-  {
-    id: 'prod-10',
-    sku: 'LIM-401',
-    barcode: '759100400401',
-    name: 'Detergente Líquido Concentrado 2 L',
-    category: 'Limpieza',
-    priceUsd: 5.9,
-    costUsd: 4.1,
-    taxExempt: false,
-    unit: 'und',
-    minStock: 6,
-    stockByBranch: { 'branch-centro': 19, 'branch-este': 8, 'branch-norte': 11 },
-  },
-  {
-    id: 'prod-11',
-    sku: 'LIM-402',
-    barcode: '759100400402',
-    name: 'Desinfectante Lavanda 1 L',
-    category: 'Limpieza',
-    priceUsd: 2.15,
-    costUsd: 1.35,
-    taxExempt: false,
-    unit: 'und',
-    minStock: 10,
-    stockByBranch: { 'branch-centro': 31, 'branch-este': 14, 'branch-norte': 19 },
-  },
-  {
-    id: 'prod-12',
-    sku: 'PER-501',
-    barcode: '759100500501',
-    name: 'Jabón de Baño Hidratante x3',
-    category: 'Cuidado Personal',
-    priceUsd: 3.4,
-    costUsd: 2.25,
-    taxExempt: false,
-    unit: 'pack',
-    minStock: 8,
-    stockByBranch: { 'branch-centro': 21, 'branch-este': 13, 'branch-norte': 7 },
-  },
-];
+type WorkspaceTab = 'pos' | 'shifts' | 'inventory';
 
 const PAYMENT_METHODS: Array<{
   method: PaymentMethod;
   currency: CurrencyMode;
   requiresRef: boolean;
-  shortLabel: string;
 }> = [
-  { method: 'Efectivo Bs', currency: 'VES', requiresRef: false, shortLabel: 'Efectivo Bs' },
-  { method: 'Pago Móvil', currency: 'VES', requiresRef: true, shortLabel: 'Pago Móvil' },
-  { method: 'Biopago', currency: 'VES', requiresRef: true, shortLabel: 'Biopago' },
-  { method: 'Punto de Venta', currency: 'VES', requiresRef: true, shortLabel: 'Punto de Venta' },
-  { method: 'Efectivo Divisa $', currency: 'USD', requiresRef: false, shortLabel: 'Divisa $' },
-  { method: 'Binance USDT', currency: 'USD', requiresRef: true, shortLabel: 'Binance USDT' },
+  { method: 'Efectivo Bs', currency: 'VES', requiresRef: false },
+  { method: 'Pago Móvil', currency: 'VES', requiresRef: true },
+  { method: 'Biopago', currency: 'VES', requiresRef: true },
+  { method: 'Punto de Venta', currency: 'VES', requiresRef: true },
+  { method: 'Efectivo Divisa $', currency: 'USD', requiresRef: false },
+  { method: 'Binance USDT', currency: 'USD', requiresRef: true },
 ];
 
 interface BeforeInstallPromptEvent extends Event {
@@ -336,6 +89,7 @@ function buildWhatsAppReceiptText(sale: Sale): string {
     `*POS 262 — ${sale.branchName}*`,
     `Recibo: ${sale.receiptNumber}`,
     `Fecha: ${dateLabel}`,
+    `Cajero: ${sale.cashierName}`,
     `Cliente: ${sale.customerName}`,
     `Modalidad: ${sale.saleType === 'cash' ? 'Contado' : 'Crédito'}`,
     `Tasa aplicada: Bs ${sale.exchangeRate.toFixed(2)} / $`,
@@ -409,13 +163,23 @@ export default function App() {
     typeof navigator !== 'undefined' ? navigator.onLine : true
   );
   const [isSyncing, setIsSyncing] = useState(false);
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>('pos');
 
+  // Persisted collections
   const [branches, setBranches] = useState<Branch[]>([]);
-  const [activeBranchId, setActiveBranchId] = useState<string>('branch-centro');
+  const [cashiers, setCashiers] = useState<Cashier[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
+  const [shifts, setShifts] = useState<Shift[]>([]);
+  const [transfers, setTransfers] = useState<StockTransfer[]>([]);
 
+  // Active cashier & branch session
+  const [activeCashier, setActiveCashier] = useState<Cashier | null>(null);
+  const [loginModalOpen, setLoginModalOpen] = useState<boolean>(false);
+  const [activeBranchId, setActiveBranchId] = useState<string>('branch-centro');
+
+  // Global currency & rate
   const [currency, setCurrency] = useState<CurrencyMode>('USD');
   const [exchangeRateInput, setExchangeRateInput] = useState<string>('64.50');
   const exchangeRate = useMemo(() => {
@@ -423,9 +187,9 @@ export default function App() {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
   }, [exchangeRateInput]);
 
+  // POS Catalog & Cart state
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('Todos');
-
   const [cart, setCart] = useState<CartItem[]>([]);
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('cust-final');
   const [applyTax, setApplyTax] = useState<boolean>(false);
@@ -437,6 +201,7 @@ export default function App() {
   const [newCustomerDoc, setNewCustomerDoc] = useState<string>('');
   const [newCustomerPhone, setNewCustomerPhone] = useState<string>('');
 
+  // Checkout Modal state
   const [checkoutOpen, setCheckoutOpen] = useState<boolean>(false);
   const [saleType, setSaleType] = useState<SaleType>('cash');
   const [selectedMethod, setSelectedMethod] = useState<PaymentMethod>('Pago Móvil');
@@ -454,12 +219,56 @@ export default function App() {
 
   const [historyOpen, setHistoryOpen] = useState<boolean>(false);
 
-  // PWA install prompt state
+  // PWA Install Prompt state
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isInstalled, setIsInstalled] = useState<boolean>(false);
   const [isIOS, setIsIOS] = useState<boolean>(false);
   const [showIOSInstallGuide, setShowIOSInstallGuide] = useState<boolean>(false);
 
+  const reloadAllData = useCallback(async () => {
+    const [
+      loadedBranches,
+      loadedCashiers,
+      loadedProducts,
+      loadedCustomers,
+      loadedSales,
+      loadedShifts,
+      loadedTransfers,
+    ] = await Promise.all([
+      db.branches.toArray(),
+      db.cashiers.toArray(),
+      db.products.toArray(),
+      db.customers.toArray(),
+      db.sales.orderBy('createdAt').reverse().toArray(),
+      db.shifts.orderBy('openedAt').reverse().toArray(),
+      db.stockTransfers.orderBy('createdAt').reverse().toArray(),
+    ]);
+
+    setBranches(loadedBranches);
+    setCashiers(loadedCashiers);
+    setProducts(loadedProducts);
+    setCustomers(loadedCustomers);
+    setSales(loadedSales);
+    setShifts(loadedShifts);
+    setTransfers(loadedTransfers);
+
+    return { loadedBranches, loadedCashiers };
+  }, []);
+
+  const triggerSyncQueue = useCallback(async () => {
+    if (!navigator.onLine) return;
+    setIsSyncing(true);
+    try {
+      const syncedCount = await syncAllPendingRecords();
+      if (syncedCount > 0) {
+        await reloadAllData();
+      }
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [reloadAllData]);
+
+  // PWA lifecycle listeners
   useEffect(() => {
     const isStandalone =
       window.matchMedia('(display-mode: standalone)').matches ||
@@ -494,43 +303,21 @@ export default function App() {
     }
   };
 
-  // Bootstrap IndexedDB with initial seed if empty
+  // Bootstrap IndexedDB
   useEffect(() => {
     let active = true;
-    async function initDatabase() {
-      const [branchCount, productCount, customerCount] = await Promise.all([
-        db.branches.count(),
-        db.products.count(),
-        db.customers.count(),
+    async function init() {
+      await seedDatabaseIfNeeded();
+      const { loadedBranches, loadedCashiers } = await reloadAllData();
+      const [rateSetting, branchSetting, currSetting, cashierSetting] = await Promise.all([
+        db.settings.get('exchangeRate'),
+        db.settings.get('activeBranchId'),
+        db.settings.get('currencyMode'),
+        db.settings.get('activeCashierId'),
       ]);
-
-      if (branchCount === 0) {
-        await db.branches.bulkPut(DEFAULT_BRANCHES);
-      }
-      if (productCount === 0) {
-        await db.products.bulkPut(DEFAULT_PRODUCTS);
-      }
-      if (customerCount === 0) {
-        await db.customers.bulkPut(DEFAULT_CUSTOMERS);
-      }
-
-      const [loadedBranches, loadedProducts, loadedCustomers, loadedSales, rateSetting, branchSetting, currSetting] =
-        await Promise.all([
-          db.branches.toArray(),
-          db.products.toArray(),
-          db.customers.toArray(),
-          db.sales.orderBy('createdAt').reverse().toArray(),
-          db.settings.get('exchangeRate'),
-          db.settings.get('activeBranchId'),
-          db.settings.get('currencyMode'),
-        ]);
 
       if (!active) return;
 
-      setBranches(loadedBranches);
-      setProducts(loadedProducts);
-      setCustomers(loadedCustomers);
-      setSales(loadedSales);
       if (rateSetting?.value) setExchangeRateInput(rateSetting.value);
       if (branchSetting?.value && loadedBranches.some((b) => b.id === branchSetting.value)) {
         setActiveBranchId(branchSetting.value);
@@ -538,37 +325,31 @@ export default function App() {
       if (currSetting?.value === 'USD' || currSetting?.value === 'VES') {
         setCurrency(currSetting.value);
       }
+      if (cashierSetting?.value) {
+        const found = loadedCashiers.find((c) => c.id === cashierSetting.value);
+        if (found) setActiveCashier(found);
+      } else {
+        setLoginModalOpen(true);
+      }
+
       setIsReady(true);
+
+      if (navigator.onLine) {
+        await triggerSyncQueue();
+      }
     }
 
-    initDatabase();
+    void init();
     return () => {
       active = false;
     };
-  }, []);
+  }, [reloadAllData, triggerSyncQueue]);
 
-  // Online/Offline detection and automatic queue synchronization
-  const syncPendingSales = async () => {
-    if (!navigator.onLine) return;
-    const pendingSales = await db.sales.where('syncStatus').equals('pending').toArray();
-    if (pendingSales.length === 0) return;
-
-    setIsSyncing(true);
-    const now = new Date().toISOString();
-    await Promise.all(
-      pendingSales.map((sale) =>
-        db.sales.update(sale.id, { syncStatus: 'synced', syncedAt: now })
-      )
-    );
-    const refreshed = await db.sales.orderBy('createdAt').reverse().toArray();
-    setSales(refreshed);
-    setIsSyncing(false);
-  };
-
+  // Automatic sync queue trigger when network comes back online
   useEffect(() => {
     const handleOnline = () => {
       setIsOnline(true);
-      void syncPendingSales();
+      void triggerSyncQueue();
     };
     const handleOffline = () => {
       setIsOnline(false);
@@ -580,7 +361,7 @@ export default function App() {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
-  }, []);
+  }, [triggerSyncQueue]);
 
   const persistSetting = (key: string, value: string) => {
     void db.settings.put({ key, value });
@@ -605,6 +386,14 @@ export default function App() {
     persistSetting('currencyMode', next);
   };
 
+  const handleCashierLogin = (cashier: Cashier) => {
+    setActiveCashier(cashier);
+    persistSetting('activeCashierId', cashier.id);
+    setActiveBranchId(cashier.branchId);
+    persistSetting('activeBranchId', cashier.branchId);
+    setLoginModalOpen(false);
+  };
+
   const activeBranch = useMemo(
     () => branches.find((b) => b.id === activeBranchId) || branches[0],
     [branches, activeBranchId]
@@ -615,6 +404,202 @@ export default function App() {
     [customers, selectedCustomerId]
   );
 
+  const activeShift = useMemo(
+    () =>
+      shifts.find(
+        (s) =>
+          s.status === 'open' &&
+          s.branchId === activeBranchId &&
+          (!activeCashier || s.cashierId === activeCashier.id)
+      ) || null,
+    [shifts, activeBranchId, activeCashier]
+  );
+
+  const pendingSyncSummary = useMemo(() => {
+    const pendingSales = sales.filter((s) => s.syncStatus === 'pending').length;
+    const pendingShifts = shifts.filter((s) => s.syncStatus === 'pending').length;
+    const pendingTransfers = transfers.filter((t) => t.syncStatus === 'pending').length;
+    const pendingCustomers = customers.filter((c) => c.syncStatus === 'pending').length;
+    const pendingProducts = products.filter((p) => p.syncStatus === 'pending').length;
+    const total =
+      pendingSales + pendingShifts + pendingTransfers + pendingCustomers + pendingProducts;
+    return { total, pendingSales, pendingShifts, pendingTransfers, pendingCustomers, pendingProducts };
+  }, [sales, shifts, transfers, customers, products]);
+
+  // Shift Handlers
+  const handleOpenShift = async (params: {
+    openingFundUsd: number;
+    openingFundVes: number;
+    openingNote?: string;
+  }) => {
+    if (!activeCashier || !activeBranch) return;
+    const now = new Date().toISOString();
+    const onlineNow = navigator.onLine;
+
+    const newShift: Shift = {
+      id: `shift-${Date.now()}`,
+      branchId: activeBranch.id,
+      branchName: activeBranch.name,
+      cashierId: activeCashier.id,
+      cashierName: activeCashier.name,
+      cashierRole: activeCashier.role,
+      openedAt: now,
+      openingFundUsd: params.openingFundUsd,
+      openingFundVes: params.openingFundVes,
+      openingNote: params.openingNote,
+      status: 'open',
+      syncStatus: onlineNow ? 'synced' : 'pending',
+      syncedAt: onlineNow ? now : undefined,
+    };
+
+    await db.shifts.put(newShift);
+    await reloadAllData();
+  };
+
+  const handleCloseShift = async (params: {
+    shiftId: string;
+    countedCashUsd: number;
+    countedCashVes: number;
+    expectedCashUsd: number;
+    expectedCashVes: number;
+    digitalTotalUsd: number;
+    creditTotalUsd: number;
+    salesCount: number;
+    closingNote?: string;
+  }) => {
+    const now = new Date().toISOString();
+    const onlineNow = navigator.onLine;
+
+    await db.shifts.update(params.shiftId, {
+      closedAt: now,
+      status: 'closed',
+      countedCashUsd: params.countedCashUsd,
+      countedCashVes: params.countedCashVes,
+      expectedCashUsd: params.expectedCashUsd,
+      expectedCashVes: params.expectedCashVes,
+      diffUsd: round2(params.countedCashUsd - params.expectedCashUsd),
+      diffVes: round2(params.countedCashVes - params.expectedCashVes),
+      digitalTotalUsd: params.digitalTotalUsd,
+      creditTotalUsd: params.creditTotalUsd,
+      salesCount: params.salesCount,
+      closingNote: params.closingNote,
+      syncStatus: onlineNow ? 'synced' : 'pending',
+      syncedAt: onlineNow ? now : undefined,
+    });
+
+    await reloadAllData();
+  };
+
+  // Multi-Branch Stock Load & Transfer Handlers
+  const handleLoadStock = async (params: {
+    branchId: string;
+    productId: string;
+    quantity: number;
+    notes?: string;
+  }) => {
+    if (!activeCashier) return;
+    const targetBranch = branches.find((b) => b.id === params.branchId);
+    const targetProduct = products.find((p) => p.id === params.productId);
+    if (!targetBranch || !targetProduct) return;
+
+    const now = new Date().toISOString();
+    const onlineNow = navigator.onLine;
+    const syncStatus = onlineNow ? 'synced' : 'pending';
+
+    const movement: StockTransfer = {
+      id: `mov-${Date.now()}`,
+      type: 'load',
+      productId: targetProduct.id,
+      productName: targetProduct.name,
+      productSku: targetProduct.sku,
+      toBranchId: targetBranch.id,
+      toBranchName: targetBranch.name,
+      quantity: params.quantity,
+      cashierId: activeCashier.id,
+      cashierName: activeCashier.name,
+      notes: params.notes,
+      createdAt: now,
+      syncStatus,
+      syncedAt: onlineNow ? now : undefined,
+    };
+
+    await db.transaction('rw', [db.products, db.stockTransfers], async () => {
+      const freshProd = await db.products.get(targetProduct.id);
+      if (!freshProd) return;
+      const currentQty = freshProd.stockByBranch[targetBranch.id] ?? 0;
+      await db.products.update(freshProd.id, {
+        stockByBranch: {
+          ...freshProd.stockByBranch,
+          [targetBranch.id]: currentQty + params.quantity,
+        },
+        syncStatus,
+        syncedAt: onlineNow ? now : undefined,
+      });
+      await db.stockTransfers.put(movement);
+    });
+
+    await reloadAllData();
+  };
+
+  const handleTransferStock = async (params: {
+    fromBranchId: string;
+    toBranchId: string;
+    productId: string;
+    quantity: number;
+    notes?: string;
+  }) => {
+    if (!activeCashier) return;
+    const fromBranch = branches.find((b) => b.id === params.fromBranchId);
+    const toBranch = branches.find((b) => b.id === params.toBranchId);
+    const targetProduct = products.find((p) => p.id === params.productId);
+    if (!fromBranch || !toBranch || !targetProduct) return;
+
+    const now = new Date().toISOString();
+    const onlineNow = navigator.onLine;
+    const syncStatus = onlineNow ? 'synced' : 'pending';
+
+    const movement: StockTransfer = {
+      id: `trf-${Date.now()}`,
+      type: 'transfer',
+      productId: targetProduct.id,
+      productName: targetProduct.name,
+      productSku: targetProduct.sku,
+      fromBranchId: fromBranch.id,
+      fromBranchName: fromBranch.name,
+      toBranchId: toBranch.id,
+      toBranchName: toBranch.name,
+      quantity: params.quantity,
+      cashierId: activeCashier.id,
+      cashierName: activeCashier.name,
+      notes: params.notes,
+      createdAt: now,
+      syncStatus,
+      syncedAt: onlineNow ? now : undefined,
+    };
+
+    await db.transaction('rw', [db.products, db.stockTransfers], async () => {
+      const freshProd = await db.products.get(targetProduct.id);
+      if (!freshProd) return;
+      const sourceQty = freshProd.stockByBranch[fromBranch.id] ?? 0;
+      const destQty = freshProd.stockByBranch[toBranch.id] ?? 0;
+      if (sourceQty < params.quantity) return;
+
+      await db.products.update(freshProd.id, {
+        stockByBranch: {
+          ...freshProd.stockByBranch,
+          [fromBranch.id]: sourceQty - params.quantity,
+          [toBranch.id]: destQty + params.quantity,
+        },
+        syncStatus,
+        syncedAt: onlineNow ? now : undefined,
+      });
+      await db.stockTransfers.put(movement);
+    });
+
+    await reloadAllData();
+  };
+
+  // Catalog & Cart helpers
   const categories = useMemo(() => {
     const unique = Array.from(new Set(products.map((p) => p.category)));
     return ['Todos', ...unique];
@@ -634,11 +619,6 @@ export default function App() {
       );
     });
   }, [products, searchQuery, selectedCategory]);
-
-  const pendingSyncCount = useMemo(
-    () => sales.filter((s) => s.syncStatus === 'pending').length,
-    [sales]
-  );
 
   const formatPrimary = (usd: number): string =>
     currency === 'USD' ? formatUsd(usd) : formatVes(round2(usd * exchangeRate));
@@ -738,6 +718,8 @@ export default function App() {
     const trimmedDoc = newCustomerDoc.trim() || 'V-00000000';
     if (!trimmedName) return;
 
+    const now = new Date().toISOString();
+    const onlineNow = navigator.onLine;
     const customer: Customer = {
       id: `cust-${Date.now()}`,
       name: trimmedName,
@@ -745,12 +727,13 @@ export default function App() {
       phone: newCustomerPhone.trim(),
       creditLimitUsd: 200,
       balanceUsd: 0,
-      createdAt: new Date().toISOString(),
+      createdAt: now,
+      syncStatus: onlineNow ? 'synced' : 'pending',
+      syncedAt: onlineNow ? now : undefined,
     };
 
     await db.customers.put(customer);
-    const updated = await db.customers.toArray();
-    setCustomers(updated);
+    await reloadAllData();
     setSelectedCustomerId(customer.id);
     setNewCustomerName('');
     setNewCustomerDoc('');
@@ -851,7 +834,7 @@ export default function App() {
   };
 
   const handleConfirmSale = async () => {
-    if (!activeBranch || cart.length === 0) return;
+    if (!activeBranch || !activeCashier || cart.length === 0) return;
     setCheckoutError('');
 
     if (saleType === 'credit' && selectedCustomerId === 'cust-final') {
@@ -883,16 +866,19 @@ export default function App() {
     const finalChangeUsd = round2(Math.max(0, totalPaidUsd - cartTotals.totalUsd));
 
     const now = new Date();
+    const nowIso = now.toISOString();
     const receiptNumber = `P262-${String(sales.length + 1).padStart(4, '0')}`;
     const onlineNow = navigator.onLine;
+    const syncStatus = onlineNow ? 'synced' : 'pending';
 
     const newSale: Sale = {
       id: `sale-${now.getTime()}`,
       receiptNumber,
       branchId: activeBranch.id,
       branchName: activeBranch.name,
-      cashierId: DEFAULT_CASHIER.id,
-      cashierName: DEFAULT_CASHIER.name,
+      cashierId: activeCashier.id,
+      cashierName: activeCashier.name,
+      shiftId: activeShift?.id,
       customerId: selectedCustomer?.id ?? 'cust-final',
       customerName: selectedCustomer?.name ?? 'Consumidor Final',
       customerPhone: selectedCustomer?.phone,
@@ -910,13 +896,12 @@ export default function App() {
       payments: finalPayments,
       notes: orderNotes.trim() || undefined,
       dueDate: saleType === 'credit' ? creditDueDate : undefined,
-      createdAt: now.toISOString(),
-      syncStatus: onlineNow ? 'synced' : 'pending',
-      syncedAt: onlineNow ? now.toISOString() : undefined,
+      createdAt: nowIso,
+      syncStatus,
+      syncedAt: onlineNow ? nowIso : undefined,
     };
 
-    // Persist sale, decrement branch stock, and update credit balance atomically in IndexedDB
-    await db.transaction('rw', db.sales, db.products, db.customers, async () => {
+    await db.transaction('rw', [db.sales, db.products, db.customers], async () => {
       await db.sales.put(newSale);
 
       for (const item of cart) {
@@ -928,6 +913,8 @@ export default function App() {
               ...prod.stockByBranch,
               [activeBranch.id]: Math.max(0, currentStock - item.quantity),
             },
+            syncStatus,
+            syncedAt: onlineNow ? nowIso : undefined,
           });
         }
       }
@@ -935,19 +922,13 @@ export default function App() {
       if (saleType === 'credit' && finalPendingUsd > 0 && selectedCustomer) {
         await db.customers.update(selectedCustomer.id, {
           balanceUsd: round2((selectedCustomer.balanceUsd || 0) + finalPendingUsd),
+          syncStatus,
+          syncedAt: onlineNow ? nowIso : undefined,
         });
       }
     });
 
-    const [updatedProducts, updatedCustomers, updatedSales] = await Promise.all([
-      db.products.toArray(),
-      db.customers.toArray(),
-      db.sales.orderBy('createdAt').reverse().toArray(),
-    ]);
-
-    setProducts(updatedProducts);
-    setCustomers(updatedCustomers);
-    setSales(updatedSales);
+    await reloadAllData();
     setCompletedSale(newSale);
     setCart([]);
     setOrderNotes('');
@@ -966,7 +947,6 @@ export default function App() {
 
   const renderCartContent = () => (
     <div className="flex h-full flex-col bg-white">
-      {/* Customer selector & quick creation */}
       <div className="border-b border-slate-200 px-4 py-3">
         <div className="flex items-center justify-between gap-2">
           <label
@@ -1043,7 +1023,6 @@ export default function App() {
         )}
       </div>
 
-      {/* Cart items */}
       <div className="flex-1 overflow-y-auto px-4">
         {cart.length === 0 ? (
           <div className="flex h-full min-h-[200px] flex-col items-center justify-center text-center py-8">
@@ -1115,7 +1094,6 @@ export default function App() {
         )}
       </div>
 
-      {/* Options, totals, and Checkout CTA */}
       <div className="border-t border-slate-200 bg-slate-50/80 px-4 py-3 space-y-3">
         <div className="flex items-center justify-between gap-3">
           <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer select-none">
@@ -1172,7 +1150,7 @@ export default function App() {
 
         <button
           type="button"
-          disabled={cart.length === 0}
+          disabled={cart.length === 0 || !activeCashier}
           onClick={openCheckoutModal}
           className="flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-700 disabled:bg-slate-300 disabled:text-slate-500 transition-colors cursor-pointer"
         >
@@ -1187,20 +1165,20 @@ export default function App() {
     <div className="flex h-full min-h-screen flex-col bg-slate-50 text-slate-900">
       {/* Top Operational Bar */}
       <header className="sticky top-0 z-30 border-b border-slate-800 bg-slate-900 text-white">
-        <div className="mx-auto flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 lg:flex-nowrap lg:px-6">
-          {/* Brand + Branch Selector */}
-          <div className="flex items-center gap-3 min-w-0">
+        <div className="mx-auto flex flex-wrap items-center justify-between gap-2.5 px-4 py-2.5 lg:flex-nowrap lg:px-6">
+          {/* Left: Brand, Branch Selector, Primary Module Tabs */}
+          <div className="flex flex-wrap items-center gap-2.5 min-w-0">
             <span className="text-lg font-bold tracking-tight text-white whitespace-nowrap shrink-0">
               Pos 262
             </span>
-            <span className="hidden h-4 w-px bg-slate-700 sm:inline-block" aria-hidden="true" />
+
             <div className="relative flex items-center">
               <Building2 className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-slate-400" />
               <select
                 aria-label="Seleccionar sucursal"
                 value={activeBranchId}
                 onChange={(e) => handleBranchChange(e.target.value)}
-                className="max-w-[175px] truncate rounded-lg border border-slate-700 bg-slate-800 py-1.5 pl-8 pr-7 text-xs font-semibold text-slate-100 focus:border-emerald-500 focus:outline-none cursor-pointer"
+                className="max-w-[165px] truncate rounded-lg border border-slate-700 bg-slate-800 py-1.5 pl-8 pr-6 text-xs font-semibold text-slate-100 focus:border-emerald-500 focus:outline-none cursor-pointer"
               >
                 {branches.map((branch) => (
                   <option key={branch.id} value={branch.id}>
@@ -1209,11 +1187,59 @@ export default function App() {
                 ))}
               </select>
             </div>
+
+            <nav aria-label="Módulos" className="flex items-center gap-1 rounded-lg bg-slate-800 p-0.5">
+              <button
+                type="button"
+                onClick={() => setActiveTab('pos')}
+                className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+                  activeTab === 'pos'
+                    ? 'bg-white text-slate-900'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+              >
+                Caja POS
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('shifts')}
+                className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+                  activeTab === 'shifts'
+                    ? 'bg-white text-slate-900'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+              >
+                <Lock className="h-3 w-3" />
+                Turnos
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('inventory')}
+                className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+                  activeTab === 'inventory'
+                    ? 'bg-white text-slate-900'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+              >
+                <ArrowLeftRight className="h-3 w-3" />
+                Stock y Traslados
+              </button>
+            </nav>
           </div>
 
-          {/* Operational Controls: Online/Offline, Daily Rate, $ / Bs Toggle, History, PWA Install */}
-          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-            {/* Online / Offline status + Sync Queue trigger */}
+          {/* Right: Cashier, Online/Offline Sync, Rate, Currency Toggle, History, PWA Install */}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setLoginModalOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs font-semibold text-slate-100 hover:bg-slate-700 whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              <UserCheck className="h-3.5 w-3.5 text-emerald-400" />
+              <span className="max-w-[110px] truncate">
+                {activeCashier ? activeCashier.name : 'Ingresar'}
+              </span>
+            </button>
+
             <button
               type="button"
               onClick={() => setHistoryOpen(true)}
@@ -1225,16 +1251,15 @@ export default function App() {
             >
               {isOnline ? <Wifi className="h-3.5 w-3.5" /> : <WifiOff className="h-3.5 w-3.5" />}
               <span>{isOnline ? 'En línea' : 'Sin conexión'}</span>
-              {pendingSyncCount > 0 && (
+              {pendingSyncSummary.total > 0 && (
                 <span className="font-mono tabular-nums text-amber-300">
-                  · {pendingSyncCount} pend.
+                  · {pendingSyncSummary.total} pend.
                 </span>
               )}
             </button>
 
-            {/* Daily USD Rate Input */}
             <label className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs">
-              <span className="font-medium text-slate-400 whitespace-nowrap">Tasa Bs/$</span>
+              <span className="font-medium text-slate-400 whitespace-nowrap">Bs/$</span>
               <input
                 type="number"
                 step="0.01"
@@ -1242,11 +1267,10 @@ export default function App() {
                 aria-label="Tasa diaria de cambio en Bolívares por Dólar"
                 value={exchangeRateInput}
                 onChange={(e) => handleExchangeRateChange(e.target.value)}
-                className="w-16 bg-transparent text-right font-mono text-xs font-bold tabular-nums text-white focus:outline-none"
+                className="w-14 bg-transparent text-right font-mono text-xs font-bold tabular-nums text-white focus:outline-none"
               />
             </label>
 
-            {/* Global $ / Bs Currency Toggle */}
             <div
               role="group"
               aria-label="Moneda de visualización"
@@ -1255,18 +1279,18 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => handleCurrencyChange('USD')}
-                className={`rounded-md px-2.5 py-1 text-xs font-bold transition-colors whitespace-nowrap cursor-pointer ${
+                className={`rounded-md px-2 py-1 text-xs font-bold transition-colors whitespace-nowrap cursor-pointer ${
                   currency === 'USD'
                     ? 'bg-emerald-600 text-white'
                     : 'text-slate-300 hover:text-white'
                 }`}
               >
-                $ USD
+                $
               </button>
               <button
                 type="button"
                 onClick={() => handleCurrencyChange('VES')}
-                className={`rounded-md px-2.5 py-1 text-xs font-bold transition-colors whitespace-nowrap cursor-pointer ${
+                className={`rounded-md px-2 py-1 text-xs font-bold transition-colors whitespace-nowrap cursor-pointer ${
                   currency === 'VES'
                     ? 'bg-emerald-600 text-white'
                     : 'text-slate-300 hover:text-white'
@@ -1276,22 +1300,21 @@ export default function App() {
               </button>
             </div>
 
-            {/* Sales History button */}
             <button
               type="button"
               onClick={() => setHistoryOpen(true)}
+              aria-label="Historial de ventas y sincronización"
               className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
             >
               <History className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Ventas ({sales.length})</span>
+              <span className="hidden xl:inline">Ventas ({sales.length})</span>
             </button>
 
-            {/* In-App PWA Install Button */}
             {!isInstalled && (deferredPrompt || isIOS) && (
               <button
                 type="button"
                 onClick={deferredPrompt ? handleInstallPWA : () => setShowIOSInstallGuide(true)}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
               >
                 <Download className="h-3.5 w-3.5" />
                 <span>Instalar</span>
@@ -1301,189 +1324,247 @@ export default function App() {
         </div>
       </header>
 
-      {/* Main Split Operational Workspace */}
-      <main className="flex flex-1 overflow-hidden">
-        {/* Left: Catalog Search, Category Tabs & Product Grid */}
-        <section className="flex flex-1 flex-col overflow-hidden">
-          {/* Search + Category Filter Bar */}
-          <div className="border-b border-slate-200 bg-white px-4 py-3 lg:px-6">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="relative flex-1 max-w-xl">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                <input
-                  type="search"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onKeyDown={handleSearchKeyDown}
-                  placeholder="Buscar por nombre, SKU o código de barras (Enter para agregar)..."
-                  className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-emerald-600 focus:bg-white focus:outline-none"
-                />
-              </div>
-              <p className="text-xs font-medium text-slate-500 whitespace-nowrap shrink-0">
-                {filteredProducts.length} productos · {activeBranch?.name ?? 'Sucursal'}
-              </p>
-            </div>
-
-            {/* Category Tabs */}
-            <div className="mt-3 flex items-center gap-1.5 overflow-x-auto pb-0.5">
-              {categories.map((category) => {
-                const isActive = selectedCategory === category;
-                return (
-                  <button
-                    key={category}
-                    type="button"
-                    onClick={() => setSelectedCategory(category)}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                      isActive
-                        ? 'bg-slate-900 text-white'
-                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900'
-                    }`}
-                  >
-                    {category}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Scrollable Product Grid */}
-          <div className="flex-1 overflow-y-auto p-4 pb-24 lg:p-6 lg:pb-6">
-            {!isReady ? (
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                {Array.from({ length: 6 }).map((_, idx) => (
-                  <div
-                    key={idx}
-                    className="h-32 animate-pulse rounded-xl border border-slate-200 bg-white p-4"
-                  />
-                ))}
-              </div>
-            ) : filteredProducts.length === 0 ? (
-              <div className="flex flex-col items-center justify-center rounded-xl border border-slate-200 bg-white py-14 text-center">
-                <Search className="h-8 w-8 text-slate-300" />
-                <p className="mt-3 text-sm font-semibold text-slate-800">
-                  No se encontraron productos
-                </p>
-                <p className="mt-1 text-xs text-slate-500">
-                  Intenta con otro término o selecciona todas las categorías.
-                </p>
+      {/* Main Content Area by Active Tab */}
+      {activeTab === 'pos' && (
+        <>
+          {!activeShift && activeCashier && (
+            <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900 lg:px-6">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="inline-flex items-center gap-1.5 font-medium">
+                  <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+                  No tienes un turno abierto en {activeBranch?.name}. Abre un turno con fondo inicial para llevar el arqueo de caja.
+                </span>
                 <button
                   type="button"
-                  onClick={() => {
-                    setSearchQuery('');
-                    setSelectedCategory('Todos');
-                  }}
-                  className="mt-4 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800 transition-colors cursor-pointer"
+                  onClick={() => setActiveTab('shifts')}
+                  className="font-semibold text-amber-950 underline underline-offset-2 hover:text-amber-700 cursor-pointer whitespace-nowrap"
                 >
-                  Limpiar filtros
+                  Abrir turno ahora
                 </button>
               </div>
-            ) : (
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                {filteredProducts.map((product) => {
-                  const stock = getBranchStock(product);
-                  const inCartQty = getCartQuantity(product.id);
-                  const outOfStock = stock <= 0;
-                  const lowStock = stock > 0 && stock <= product.minStock;
-
-                  return (
-                    <button
-                      key={product.id}
-                      type="button"
-                      disabled={outOfStock}
-                      onClick={() => addToCart(product)}
-                      className={`group flex flex-col justify-between rounded-xl border p-4 text-left transition-all cursor-pointer ${
-                        outOfStock
-                          ? 'border-slate-200 bg-slate-100/70 opacity-60 cursor-not-allowed'
-                          : inCartQty > 0
-                          ? 'border-emerald-600 bg-white ring-1 ring-emerald-600/20'
-                          : 'border-slate-200 bg-white hover:border-slate-400'
-                      }`}
-                    >
-                      <div>
-                        <div className="flex items-start justify-between gap-2">
-                          <h2 className="text-sm font-semibold leading-snug text-slate-900 group-hover:text-emerald-700 transition-colors">
-                            {product.name}
-                          </h2>
-                          {inCartQty > 0 && (
-                            <span className="shrink-0 font-mono text-xs font-bold tabular-nums text-emerald-700">
-                              ×{inCartQty}
-                            </span>
-                          )}
-                        </div>
-                        <p className="mt-1 text-xs text-slate-500">
-                          <span className="font-mono">{product.sku}</span>
-                          <span aria-hidden="true"> · </span>
-                          <span>{product.category}</span>
-                          {product.taxExempt && (
-                            <>
-                              <span aria-hidden="true"> · </span>
-                              <span>Exento</span>
-                            </>
-                          )}
-                        </p>
-                      </div>
-
-                      <div className="mt-4 flex items-end justify-between gap-2 border-t border-slate-100 pt-3">
-                        <div className="font-mono tabular-nums">
-                          <p className="text-base font-bold text-slate-900">
-                            {formatPrimary(product.priceUsd)}
-                          </p>
-                          <p className="text-[11px] text-slate-500">
-                            {formatSecondary(product.priceUsd)}
-                          </p>
-                        </div>
-
-                        <div className="text-right text-xs font-semibold tabular-nums">
-                          {outOfStock ? (
-                            <span className="text-red-600">Agotado</span>
-                          ) : lowStock ? (
-                            <span className="text-amber-700">Stock bajo: {stock}</span>
-                          ) : (
-                            <span className="text-slate-600">Stock: {stock}</span>
-                          )}
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </section>
-
-        {/* Right: Desktop Persistent Cart Sidebar */}
-        <aside className="hidden w-[380px] shrink-0 border-l border-slate-200 lg:block xl:w-[410px]">
-          {renderCartContent()}
-        </aside>
-      </main>
-
-      {/* Mobile / Tablet Bottom Cart Bar (<= 15% viewport height) */}
-      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white px-4 py-2.5 lg:hidden">
-        <div className="flex items-center justify-between gap-3">
-          <button
-            type="button"
-            onClick={() => setMobileCartOpen(true)}
-            className="flex flex-1 items-center justify-between rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white cursor-pointer"
-          >
-            <span className="inline-flex items-center gap-2">
-              <ShoppingCart className="h-4 w-4" />
-              Carrito ({cartTotals.itemCount})
-            </span>
-            <span className="font-mono tabular-nums">
-              {formatPrimary(cartTotals.totalUsd)}
-            </span>
-          </button>
-          {cart.length > 0 && (
-            <button
-              type="button"
-              onClick={openCheckoutModal}
-              className="rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 whitespace-nowrap shrink-0 cursor-pointer"
-            >
-              Cobrar
-            </button>
+            </div>
           )}
+
+          <main className="flex flex-1 overflow-hidden">
+            <section className="flex flex-1 flex-col overflow-hidden">
+              <div className="border-b border-slate-200 bg-white px-4 py-3 lg:px-6">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="relative flex-1 max-w-xl">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="search"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      onKeyDown={handleSearchKeyDown}
+                      placeholder="Buscar por nombre, SKU o código de barras (Enter para agregar)..."
+                      className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-emerald-600 focus:bg-white focus:outline-none"
+                    />
+                  </div>
+                  <p className="text-xs font-medium text-slate-500 whitespace-nowrap shrink-0">
+                    {filteredProducts.length} productos · {activeBranch?.name ?? 'Sucursal'}
+                    {activeShift ? ' · Turno abierto' : ''}
+                  </p>
+                </div>
+
+                <div className="mt-3 flex items-center gap-1.5 overflow-x-auto pb-0.5">
+                  {categories.map((category) => {
+                    const isActive = selectedCategory === category;
+                    return (
+                      <button
+                        key={category}
+                        type="button"
+                        onClick={() => setSelectedCategory(category)}
+                        className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                          isActive
+                            ? 'bg-slate-900 text-white'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900'
+                        }`}
+                      >
+                        {category}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-4 pb-24 lg:p-6 lg:pb-6">
+                {!isReady ? (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                    {Array.from({ length: 6 }).map((_, idx) => (
+                      <div
+                        key={idx}
+                        className="h-32 animate-pulse rounded-xl border border-slate-200 bg-white p-4"
+                      />
+                    ))}
+                  </div>
+                ) : filteredProducts.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center rounded-xl border border-slate-200 bg-white py-14 text-center">
+                    <Search className="h-8 w-8 text-slate-300" />
+                    <p className="mt-3 text-sm font-semibold text-slate-800">
+                      No se encontraron productos
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Intenta con otro término o selecciona todas las categorías.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSearchQuery('');
+                        setSelectedCategory('Todos');
+                      }}
+                      className="mt-4 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800 transition-colors cursor-pointer"
+                    >
+                      Limpiar filtros
+                    </button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                    {filteredProducts.map((product) => {
+                      const stock = getBranchStock(product);
+                      const inCartQty = getCartQuantity(product.id);
+                      const outOfStock = stock <= 0;
+                      const lowStock = stock > 0 && stock <= product.minStock;
+
+                      return (
+                        <button
+                          key={product.id}
+                          type="button"
+                          disabled={outOfStock}
+                          onClick={() => addToCart(product)}
+                          className={`group flex flex-col justify-between rounded-xl border p-4 text-left transition-all cursor-pointer ${
+                            outOfStock
+                              ? 'border-slate-200 bg-slate-100/70 opacity-60 cursor-not-allowed'
+                              : inCartQty > 0
+                              ? 'border-emerald-600 bg-white ring-1 ring-emerald-600/20'
+                              : 'border-slate-200 bg-white hover:border-slate-400'
+                          }`}
+                        >
+                          <div>
+                            <div className="flex items-start justify-between gap-2">
+                              <h2 className="text-sm font-semibold leading-snug text-slate-900 group-hover:text-emerald-700 transition-colors">
+                                {product.name}
+                              </h2>
+                              {inCartQty > 0 && (
+                                <span className="shrink-0 font-mono text-xs font-bold tabular-nums text-emerald-700">
+                                  ×{inCartQty}
+                                </span>
+                              )}
+                            </div>
+                            <p className="mt-1 text-xs text-slate-500">
+                              <span className="font-mono">{product.sku}</span>
+                              <span aria-hidden="true"> · </span>
+                              <span>{product.category}</span>
+                              {product.taxExempt && (
+                                <>
+                                  <span aria-hidden="true"> · </span>
+                                  <span>Exento</span>
+                                </>
+                              )}
+                            </p>
+                          </div>
+
+                          <div className="mt-4 flex items-end justify-between gap-2 border-t border-slate-100 pt-3">
+                            <div className="font-mono tabular-nums">
+                              <p className="text-base font-bold text-slate-900">
+                                {formatPrimary(product.priceUsd)}
+                              </p>
+                              <p className="text-[11px] text-slate-500">
+                                {formatSecondary(product.priceUsd)}
+                              </p>
+                            </div>
+
+                            <div className="text-right text-xs font-semibold tabular-nums">
+                              {outOfStock ? (
+                                <span className="text-red-600">Agotado</span>
+                              ) : lowStock ? (
+                                <span className="text-amber-700">Stock bajo: {stock}</span>
+                              ) : (
+                                <span className="text-slate-600">Stock: {stock}</span>
+                              )}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </section>
+
+            <aside className="hidden w-[380px] shrink-0 border-l border-slate-200 lg:block xl:w-[410px]">
+              {renderCartContent()}
+            </aside>
+          </main>
+
+          <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white px-4 py-2.5 lg:hidden">
+            <div className="flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => setMobileCartOpen(true)}
+                className="flex flex-1 items-center justify-between rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white cursor-pointer"
+              >
+                <span className="inline-flex items-center gap-2">
+                  <ShoppingCart className="h-4 w-4" />
+                  Carrito ({cartTotals.itemCount})
+                </span>
+                <span className="font-mono tabular-nums">
+                  {formatPrimary(cartTotals.totalUsd)}
+                </span>
+              </button>
+              {cart.length > 0 && (
+                <button
+                  type="button"
+                  onClick={openCheckoutModal}
+                  className="rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  Cobrar
+                </button>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
+      {activeTab === 'shifts' && activeCashier && activeBranch && (
+        <div className="flex-1 overflow-y-auto">
+          <ShiftManager
+            activeCashier={activeCashier}
+            activeBranch={activeBranch}
+            branches={branches}
+            activeShift={activeShift}
+            shifts={shifts}
+            sales={sales}
+            onOpenShift={handleOpenShift}
+            onCloseShift={handleCloseShift}
+            onSwitchCashier={() => setLoginModalOpen(true)}
+          />
         </div>
-      </div>
+      )}
+
+      {activeTab === 'inventory' && activeCashier && (
+        <div className="flex-1 overflow-y-auto">
+          <InventoryManager
+            branches={branches}
+            activeBranchId={activeBranchId}
+            products={products}
+            transfers={transfers}
+            activeCashier={activeCashier}
+            onLoadStock={handleLoadStock}
+            onTransferStock={handleTransferStock}
+          />
+        </div>
+      )}
+
+      {/* Cashier Login Modal */}
+      {loginModalOpen && cashiers.length > 0 && (
+        <CashierLoginModal
+          cashiers={cashiers}
+          branches={branches}
+          activeCashier={activeCashier}
+          onLogin={handleCashierLogin}
+          onClose={activeCashier ? () => setLoginModalOpen(false) : undefined}
+        />
+      )}
 
       {/* Mobile Cart Sheet */}
       {mobileCartOpen && (
@@ -1511,7 +1592,6 @@ export default function App() {
       {checkoutOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-3 sm:p-4">
           <div className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white">
-            {/* Modal Header */}
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3.5">
               <div>
                 <h2 className="text-base font-bold text-slate-900">
@@ -1535,7 +1615,6 @@ export default function App() {
             </div>
 
             {completedSale ? (
-              /* Receipt & WhatsApp Sharing View */
               <div className="flex-1 overflow-y-auto p-5 space-y-5">
                 <div className="flex items-start justify-between gap-4 border-b border-slate-200 pb-4">
                   <div className="flex items-start gap-3">
@@ -1561,7 +1640,6 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Receipt Summary */}
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 font-mono text-xs leading-relaxed text-slate-700 whitespace-pre-wrap">
                   {buildWhatsAppReceiptText(completedSale)}
                 </div>
@@ -1607,9 +1685,7 @@ export default function App() {
                 </button>
               </div>
             ) : (
-              /* Checkout Form View */
               <div className="flex-1 overflow-y-auto p-5 space-y-5">
-                {/* Summary Banner */}
                 <div className="grid grid-cols-2 gap-4 rounded-lg border border-slate-200 bg-slate-50 p-4 font-mono tabular-nums">
                   <div>
                     <p className="font-sans text-xs font-medium text-slate-500">Total en Dólares</p>
@@ -1627,7 +1703,6 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Contado / Crédito Tabs */}
                 <div className="grid grid-cols-2 gap-1.5 rounded-lg bg-slate-100 p-1">
                   <button
                     type="button"
@@ -1659,7 +1734,6 @@ export default function App() {
                   </button>
                 </div>
 
-                {/* Credit options */}
                 {saleType === 'credit' && (
                   <div className="grid grid-cols-1 gap-3 rounded-lg border border-amber-200 bg-amber-50/70 p-3.5 sm:grid-cols-2">
                     <div>
@@ -1695,7 +1769,6 @@ export default function App() {
                   </div>
                 )}
 
-                {/* Payment Methods Grid */}
                 <div>
                   <p className="text-xs font-semibold text-slate-600">
                     Método de pago {saleType === 'credit' ? '(opcional abono inicial)' : ''}
@@ -1731,7 +1804,6 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Payment Entry Row */}
                 <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-12">
                   <div className="sm:col-span-5">
                     <label className="block text-xs font-medium text-slate-600">
@@ -1770,7 +1842,6 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Registered Split Payments List */}
                 {payments.length > 0 && (
                   <div className="rounded-lg border border-slate-200 bg-white divide-y divide-slate-100">
                     {payments.map((payment, index) => (
@@ -1804,7 +1875,6 @@ export default function App() {
                   </div>
                 )}
 
-                {/* Live Balance Breakdown */}
                 <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-3 text-xs font-mono tabular-nums">
                   <div>
                     <span className="font-sans text-slate-500">Registrado: </span>
@@ -1854,25 +1924,27 @@ export default function App() {
         </div>
       )}
 
-      {/* Sales History & Offline Sync Queue Modal */}
+      {/* Sales History & Unified Offline Sync Queue Modal */}
       {historyOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-3 sm:p-4">
           <div className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white">
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3.5">
               <div>
                 <h2 className="text-base font-bold text-slate-900">
-                  Historial de ventas y cola offline
+                  Historial de ventas y cola de sincronización
                 </h2>
                 <p className="text-xs text-slate-500">
-                  {sales.length} operaciones locales en IndexedDB · {pendingSyncCount} pendientes por sincronizar
+                  Pendientes offline: {pendingSyncSummary.total} total ({pendingSyncSummary.pendingSales} ventas,{' '}
+                  {pendingSyncSummary.pendingShifts} turnos, {pendingSyncSummary.pendingTransfers} traslados,{' '}
+                  {pendingSyncSummary.pendingCustomers} clientes)
                 </p>
               </div>
               <div className="flex items-center gap-2">
-                {pendingSyncCount > 0 && (
+                {pendingSyncSummary.total > 0 && (
                   <button
                     type="button"
                     disabled={!isOnline || isSyncing}
-                    onClick={() => void syncPendingSales()}
+                    onClick={() => void triggerSyncQueue()}
                     className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:bg-slate-300 transition-colors cursor-pointer"
                   >
                     <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
@@ -1898,7 +1970,7 @@ export default function App() {
                     Aún no hay ventas registradas
                   </p>
                   <p className="mt-1 text-xs text-slate-500">
-                    Todas las ventas se almacenan localmente en IndexedDB para trabajar sin conexión.
+                    Todas las ventas, turnos, traslados y clientes se guardan en IndexedDB para operar sin conexión.
                   </p>
                 </div>
               ) : (
@@ -1915,7 +1987,8 @@ export default function App() {
                           <span className="truncate">{sale.customerName}</span>
                         </div>
                         <p className="mt-0.5 text-xs text-slate-500">
-                          {sale.branchName} · {sale.saleType === 'cash' ? 'Contado' : 'Crédito'} ·{' '}
+                          {sale.branchName} · {sale.cashierName} ·{' '}
+                          {sale.saleType === 'cash' ? 'Contado' : 'Crédito'} ·{' '}
                           {new Date(sale.createdAt).toLocaleString('es-VE', {
                             dateStyle: 'short',
                             timeStyle: 'short',

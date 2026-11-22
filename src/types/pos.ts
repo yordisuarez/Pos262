@@ -4,6 +4,8 @@ export type SaleType = 'cash' | 'credit';
 
 export type SyncStatus = 'synced' | 'pending' | 'failed';
 
+export type StockMovementType = 'load' | 'transfer';
+
 export type PaymentMethod =
   | 'Efectivo Bs'
   | 'Pago Móvil'
@@ -19,6 +21,8 @@ export interface Branch {
   address: string;
   phone: string;
   isActive: boolean;
+  syncStatus: SyncStatus;
+  syncedAt?: string;
 }
 
 export interface Cashier {
@@ -42,6 +46,8 @@ export interface Product {
   unit: string;
   minStock: number;
   stockByBranch: Record<string, number>;
+  syncStatus: SyncStatus;
+  syncedAt?: string;
 }
 
 export interface Customer {
@@ -53,6 +59,8 @@ export interface Customer {
   creditLimitUsd: number;
   balanceUsd: number;
   createdAt: string;
+  syncStatus: SyncStatus;
+  syncedAt?: string;
 }
 
 export interface CartItem {
@@ -69,18 +77,47 @@ export interface CartItem {
 export interface Shift {
   id: string;
   branchId: string;
+  branchName: string;
   cashierId: string;
   cashierName: string;
+  cashierRole: 'admin' | 'manager' | 'cashier';
   openedAt: string;
   closedAt?: string;
   openingFundUsd: number;
   openingFundVes: number;
+  openingNote?: string;
   expectedCashUsd?: number;
   expectedCashVes?: number;
+  digitalTotalUsd?: number;
+  creditTotalUsd?: number;
+  salesCount?: number;
   countedCashUsd?: number;
   countedCashVes?: number;
+  diffUsd?: number;
+  diffVes?: number;
+  closingNote?: string;
   status: 'open' | 'closed';
+  syncStatus: SyncStatus;
+  syncedAt?: string;
+}
+
+export interface StockTransfer {
+  id: string;
+  type: StockMovementType;
+  productId: string;
+  productName: string;
+  productSku: string;
+  fromBranchId?: string;
+  fromBranchName?: string;
+  toBranchId: string;
+  toBranchName: string;
+  quantity: number;
+  cashierId: string;
+  cashierName: string;
   notes?: string;
+  createdAt: string;
+  syncStatus: SyncStatus;
+  syncedAt?: string;
 }
 
 export interface SalePayment {
