@@ -39,7 +39,6 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
   onLoadStock,
   onTransferStock,
 }) => {
-  // Load stock form state
   const [loadBranchId, setLoadBranchId] = useState<string>(activeBranchId);
   const [loadProductId, setLoadProductId] = useState<string>(products[0]?.id || '');
   const [loadQtyInput, setLoadQtyInput] = useState<string>('10');
@@ -48,7 +47,6 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
     null
   );
 
-  // Transfer stock form state
   const [fromBranchId, setFromBranchId] = useState<string>(activeBranchId);
   const [toBranchId, setToBranchId] = useState<string>(
     branches.find((b) => b.id !== activeBranchId)?.id || branches[0]?.id || ''
@@ -152,29 +150,26 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
   };
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 p-4 lg:p-6">
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        {/* Load Stock into Chosen Branch */}
-        <section className="rounded-xl border border-slate-200 bg-white p-5">
+    <div className="mx-auto max-w-6xl space-y-5 p-4 lg:p-5">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+        <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5">
           <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
-            <PackagePlus className="h-5 w-5 text-emerald-600" />
+            <PackagePlus className="h-4 w-4 text-[#76B900]" />
             <div>
-              <h2 className="text-base font-bold text-slate-900">Cargar stock a sucursal</h2>
+              <h2 className="text-sm font-bold text-slate-900">Cargar stock a sucursal</h2>
               <p className="text-xs text-slate-500">
-                Ingreso de mercancía por tienda registrado por {activeCashier.name}
+                Ingreso de mercancía por tienda · {activeCashier.name}
               </p>
             </div>
           </div>
 
-          <form onSubmit={handleLoadSubmit} className="mt-4 space-y-3.5">
+          <form onSubmit={handleLoadSubmit} className="mt-3.5 space-y-3">
             <div>
-              <label className="block text-xs font-semibold text-slate-700">
-                Sucursal destino
-              </label>
+              <label className="block text-xs font-semibold text-slate-700">Sucursal destino</label>
               <select
                 value={loadBranchId}
                 onChange={(e) => setLoadBranchId(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-900 focus:border-emerald-600 focus:outline-none"
+                className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
               >
                 {branches.map((branch) => (
                   <option key={branch.id} value={branch.id}>
@@ -189,7 +184,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
               <select
                 value={loadProductId}
                 onChange={(e) => setLoadProductId(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-emerald-600 focus:outline-none"
+                className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
               >
                 {products.map((product) => (
                   <option key={product.id} value={product.id}>
@@ -200,10 +195,10 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
               </select>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
               <div>
                 <label className="block text-xs font-semibold text-slate-700">
-                  Cantidad a sumar *
+                  Cantidad *
                 </label>
                 <input
                   type="number"
@@ -212,7 +207,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                   required
                   value={loadQtyInput}
                   onChange={(e) => setLoadQtyInput(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm font-bold tabular-nums text-slate-900 focus:border-emerald-600 focus:outline-none"
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 font-mono text-xs font-bold tabular-nums text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
                 />
               </div>
               <div className="sm:col-span-2">
@@ -224,59 +219,56 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                   placeholder="Ej: Factura proveedor #8841"
                   value={loadNotes}
                   onChange={(e) => setLoadNotes(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-emerald-600 focus:outline-none"
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-[#76B900] focus:bg-white focus:outline-none"
                 />
               </div>
             </div>
 
             {loadFeedback && (
               <p
-                className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium ${
+                className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium ${
                   loadFeedback.type === 'ok'
-                    ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                    ? 'border-[#84CC16]/40 bg-[#F7FEE7] text-[#3F6212]'
                     : 'border-red-200 bg-red-50 text-red-700'
                 }`}
               >
-                {loadFeedback.type === 'ok' && <CheckCircle2 className="h-4 w-4 shrink-0" />}
+                {loadFeedback.type === 'ok' && <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-[#76B900]" />}
                 {loadFeedback.text}
               </p>
             )}
 
             <button
               type="submit"
-              className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 transition-colors cursor-pointer"
+              className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-[#84CC16] px-3 py-2 text-xs font-bold text-slate-950 hover:bg-[#76B900] transition-colors cursor-pointer"
             >
-              <PackagePlus className="h-4 w-4" />
+              <PackagePlus className="h-3.5 w-3.5" />
               Cargar stock
             </button>
           </form>
         </section>
 
-        {/* Transfer Stock Between Stores */}
-        <section className="rounded-xl border border-slate-200 bg-white p-5">
+        <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5">
           <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
-            <ArrowLeftRight className="h-5 w-5 text-slate-800" />
+            <ArrowLeftRight className="h-4 w-4 text-slate-800" />
             <div>
-              <h2 className="text-base font-bold text-slate-900">Traslado entre sucursales</h2>
+              <h2 className="text-sm font-bold text-slate-900">Traslado entre sucursales</h2>
               <p className="text-xs text-slate-500">
                 Descuenta del origen, suma en el destino y guarda historial offline-first
               </p>
             </div>
           </div>
 
-          <form onSubmit={handleTransferSubmit} className="mt-4 space-y-3.5">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <form onSubmit={handleTransferSubmit} className="mt-3.5 space-y-3">
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
               <div>
-                <label className="block text-xs font-semibold text-slate-700">
-                  Sucursal origen
-                </label>
+                <label className="block text-xs font-semibold text-slate-700">Sucursal origen</label>
                 <select
                   value={fromBranchId}
                   onChange={(e) => {
                     setFromBranchId(e.target.value);
                     setTransferFeedback(null);
                   }}
-                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-900 focus:border-emerald-600 focus:outline-none"
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
                 >
                   {branches.map((branch) => (
                     <option key={branch.id} value={branch.id}>
@@ -287,16 +279,14 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700">
-                  Sucursal destino
-                </label>
+                <label className="block text-xs font-semibold text-slate-700">Sucursal destino</label>
                 <select
                   value={toBranchId}
                   onChange={(e) => {
                     setToBranchId(e.target.value);
                     setTransferFeedback(null);
                   }}
-                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-900 focus:border-emerald-600 focus:outline-none"
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
                 >
                   {branches.map((branch) => (
                     <option key={branch.id} value={branch.id}>
@@ -310,8 +300,8 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
             <div>
               <div className="flex items-center justify-between">
                 <label className="block text-xs font-semibold text-slate-700">Producto</label>
-                <span className="font-mono text-xs font-semibold tabular-nums text-slate-600">
-                  Disponible en origen: {availableInSource} und
+                <span className="font-mono text-[11px] font-semibold tabular-nums text-slate-600">
+                  Disponible: {availableInSource} und
                 </span>
               </div>
               <select
@@ -320,7 +310,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                   setTransferProductId(e.target.value);
                   setTransferFeedback(null);
                 }}
-                className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-emerald-600 focus:outline-none"
+                className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
               >
                 {products.map((product) => (
                   <option key={product.id} value={product.id}>
@@ -332,7 +322,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
               </select>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
               <div>
                 <label className="block text-xs font-semibold text-slate-700">Cantidad *</label>
                 <input
@@ -343,7 +333,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                   required
                   value={transferQtyInput}
                   onChange={(e) => setTransferQtyInput(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm font-bold tabular-nums text-slate-900 focus:border-emerald-600 focus:outline-none"
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 font-mono text-xs font-bold tabular-nums text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
                 />
               </div>
               <div className="sm:col-span-2">
@@ -355,56 +345,57 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                   placeholder="Ej: Reposición de anaquel Sucursal Norte"
                   value={transferNotes}
                   onChange={(e) => setTransferNotes(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-emerald-600 focus:outline-none"
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-[#76B900] focus:bg-white focus:outline-none"
                 />
               </div>
             </div>
 
             {transferFeedback && (
               <p
-                className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium ${
+                className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium ${
                   transferFeedback.type === 'ok'
-                    ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                    ? 'border-[#84CC16]/40 bg-[#F7FEE7] text-[#3F6212]'
                     : 'border-red-200 bg-red-50 text-red-700'
                 }`}
               >
-                {transferFeedback.type === 'ok' && <CheckCircle2 className="h-4 w-4 shrink-0" />}
+                {transferFeedback.type === 'ok' && (
+                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-[#76B900]" />
+                )}
                 {transferFeedback.text}
               </p>
             )}
 
             <button
               type="submit"
-              className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 transition-colors cursor-pointer"
+              className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800 transition-colors cursor-pointer"
             >
-              <ArrowLeftRight className="h-4 w-4" />
+              <ArrowLeftRight className="h-3.5 w-3.5" />
               Registrar traslado
             </button>
           </form>
         </section>
       </div>
 
-      {/* Multi-Branch Stock Matrix */}
-      <section className="rounded-xl border border-slate-200 bg-white p-5 space-y-4">
-        <div className="flex flex-col gap-3 border-b border-slate-200 pb-4 sm:flex-row sm:items-center sm:justify-between">
+      <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 space-y-3.5">
+        <div className="flex flex-col gap-3 border-b border-slate-200 pb-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2">
-            <Warehouse className="h-5 w-5 text-slate-600" />
+            <Warehouse className="h-4 w-4 text-slate-700" />
             <div>
-              <h2 className="text-base font-bold text-slate-900">Existencias por sucursal</h2>
+              <h2 className="text-sm font-bold text-slate-900">Existencias por sucursal</h2>
               <p className="text-xs text-slate-500">
                 Stock actualizado en tiempo real para todas las tiendas
               </p>
             </div>
           </div>
 
-          <div className="relative w-full sm:w-72">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <div className="relative w-full sm:w-64">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
             <input
               type="search"
               placeholder="Filtrar producto o SKU..."
               value={inventorySearch}
               onChange={(e) => setInventorySearch(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 py-1.5 pl-9 pr-3 text-xs text-slate-900 focus:border-emerald-600 focus:bg-white focus:outline-none"
+              className="w-full rounded-lg border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-2.5 text-xs text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
             />
           </div>
         </div>
@@ -413,13 +404,13 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
           <table className="w-full text-left text-xs">
             <thead>
               <tr className="border-b border-slate-200 text-slate-500">
-                <th className="py-2.5 pr-4 font-semibold">Producto</th>
+                <th className="py-2 pr-4 font-semibold">Producto</th>
                 {branches.map((branch) => (
-                  <th key={branch.id} className="py-2.5 px-3 font-semibold text-right whitespace-nowrap">
+                  <th key={branch.id} className="py-2 px-3 font-semibold text-right whitespace-nowrap">
                     {branch.name}
                   </th>
                 ))}
-                <th className="py-2.5 pl-3 font-semibold text-right">Total red</th>
+                <th className="py-2 pl-3 font-semibold text-right">Total red</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -430,7 +421,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                 );
                 return (
                   <tr key={product.id} className="hover:bg-slate-50/70">
-                    <td className="py-2.5 pr-4">
+                    <td className="py-2 pr-4">
                       <p className="font-semibold text-slate-900">{product.name}</p>
                       <p className="text-[11px] text-slate-500">
                         <span className="font-mono">{product.sku}</span> · {product.category}
@@ -443,7 +434,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                       return (
                         <td
                           key={branch.id}
-                          className={`py-2.5 px-3 text-right font-mono font-semibold tabular-nums ${
+                          className={`py-2 px-3 text-right font-mono font-semibold tabular-nums ${
                             isZero
                               ? 'text-red-600'
                               : isLow
@@ -455,7 +446,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                         </td>
                       );
                     })}
-                    <td className="py-2.5 pl-3 text-right font-mono font-bold tabular-nums text-slate-900">
+                    <td className="py-2 pl-3 text-right font-mono font-bold tabular-nums text-slate-900">
                       {totalNetwork}
                     </td>
                   </tr>
@@ -466,10 +457,9 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
         </div>
       </section>
 
-      {/* Transfer & Stock Load History */}
-      <section className="rounded-xl border border-slate-200 bg-white p-5 space-y-4">
+      <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 space-y-3.5">
         <div className="border-b border-slate-200 pb-3">
-          <h2 className="text-base font-bold text-slate-900">
+          <h2 className="text-sm font-bold text-slate-900">
             Historial de cargas y traslados ({transfers.length})
           </h2>
           <p className="text-xs text-slate-500">
@@ -478,7 +468,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
         </div>
 
         {transfers.length === 0 ? (
-          <p className="py-8 text-center text-xs text-slate-500">
+          <p className="py-6 text-center text-xs text-slate-500">
             Aún no se han registrado cargas de inventario ni traslados entre sucursales.
           </p>
         ) : (
@@ -486,15 +476,15 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
             {transfers.map((movement) => (
               <div
                 key={movement.id}
-                className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between"
+                className="flex flex-col gap-1.5 py-2.5 sm:flex-row sm:items-center sm:justify-between"
               >
                 <div className="min-w-0">
-                  <p className="text-sm font-semibold text-slate-900">
+                  <p className="text-xs font-semibold text-slate-900">
                     {movement.type === 'load' ? 'Carga de stock' : 'Traslado'}:{' '}
-                    <span className="font-mono text-emerald-700">+{movement.quantity} und</span> ·{' '}
+                    <span className="font-mono text-[#558B00] tabular-nums">+{movement.quantity} und</span> ·{' '}
                     {movement.productName}
                   </p>
-                  <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
+                  <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">
                     {movement.type === 'transfer' ? (
                       <>
                         <span className="font-medium text-slate-700">
@@ -511,7 +501,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                     <span aria-hidden="true">·</span>
                     <span>{movement.cashierName}</span>
                     <span aria-hidden="true">·</span>
-                    <span className="font-mono">
+                    <span className="font-mono tabular-nums">
                       {new Date(movement.createdAt).toLocaleString('es-VE', {
                         dateStyle: 'short',
                         timeStyle: 'short',
@@ -519,13 +509,13 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                     </span>
                   </p>
                   {movement.notes && (
-                    <p className="mt-0.5 text-xs text-slate-600">Nota: {movement.notes}</p>
+                    <p className="mt-0.5 text-[11px] text-slate-600">Nota: {movement.notes}</p>
                   )}
                 </div>
 
                 <span
                   className={`text-xs font-semibold whitespace-nowrap shrink-0 ${
-                    movement.syncStatus === 'synced' ? 'text-emerald-700' : 'text-amber-700'
+                    movement.syncStatus === 'synced' ? 'text-[#558B00]' : 'text-amber-700'
                   }`}
                 >
                   {movement.syncStatus === 'synced' ? 'Sincronizado' : 'Pendiente offline'}

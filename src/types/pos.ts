@@ -4,6 +4,14 @@ export type SaleType = 'cash' | 'credit';
 
 export type SyncStatus = 'pending' | 'synced';
 
+export type CloudSyncState =
+  | 'synced'
+  | 'syncing'
+  | 'pending'
+  | 'offline'
+  | 'local'
+  | 'error';
+
 export type SyncEntityType =
   | 'sale'
   | 'shift'
@@ -12,7 +20,19 @@ export type SyncEntityType =
   | 'customer'
   | 'product'
   | 'supplierQuote'
-  | 'branch';
+  | 'branch'
+  | 'businessSettings';
+
+export interface BusinessSettings {
+  businessName: string;
+  rif: string;
+  phone: string;
+  address: string;
+  exchangeRate: number;
+  updatedAt: string;
+  syncStatus: SyncStatus;
+  syncedAt?: string;
+}
 
 export type SyncOperationType =
   | 'create'

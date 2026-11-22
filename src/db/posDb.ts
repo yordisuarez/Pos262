@@ -1,6 +1,7 @@
 import Dexie, { type EntityTable } from 'dexie';
 import type {
   Branch,
+  BusinessSettings,
   Cashier,
   Customer,
   Expense,
@@ -457,6 +458,72 @@ export const DEFAULT_EXPENSES: Expense[] = [
   },
 ];
 
+export const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
+  businessName: 'Comercial 262 Suárez',
+  rif: 'J-00000000-0',
+  phone: '+58 412-5550101',
+  address: 'Av. Bolívar, Edif. Comercial Local 4',
+  exchangeRate: 64.5,
+  updatedAt: '2026-01-01T08:00:00.000Z',
+  syncStatus: 'synced',
+};
+
+export async function getLocalBusinessSettings(): Promise<BusinessSettings> {
+  const entries = await db.settings.bulkGet([
+    'businessName',
+    'businessRif',
+    'businessPhone',
+    'businessAddress',
+    'exchangeRate',
+    'businessSettingsUpdatedAt',
+    'businessSettingsSyncStatus',
+    'businessSettingsSyncedAt',
+  ]);
+
+  const map = new Map<string, string>();
+  entries.forEach((entry) => {
+    if (entry) map.set(entry.key, entry.value);
+  });
+
+  const parsedRate = parseFloat((map.get('exchangeRate') || '').replace(',', '.'));
+  const exchangeRate =
+    Number.isFinite(parsedRate) && parsedRate > 0
+      ? parsedRate
+      : DEFAULT_BUSINESS_SETTINGS.exchangeRate;
+
+  const rawSyncStatus = map.get('businessSettingsSyncStatus');
+  const syncStatus = rawSyncStatus === 'pending' ? 'pending' : 'synced';
+
+  return {
+    businessName: map.get('businessName') || DEFAULT_BUSINESS_SETTINGS.businessName,
+    rif: map.get('businessRif') ?? DEFAULT_BUSINESS_SETTINGS.rif,
+    phone: map.get('businessPhone') ?? DEFAULT_BUSINESS_SETTINGS.phone,
+    address: map.get('businessAddress') ?? DEFAULT_BUSINESS_SETTINGS.address,
+    exchangeRate,
+    updatedAt: map.get('businessSettingsUpdatedAt') || DEFAULT_BUSINESS_SETTINGS.updatedAt,
+    syncStatus,
+    syncedAt: map.get('businessSettingsSyncedAt') || undefined,
+  };
+}
+
+export async function saveLocalBusinessSettings(settings: BusinessSettings): Promise<void> {
+  const entries: SettingEntry[] = [
+    { key: 'businessName', value: settings.businessName },
+    { key: 'businessRif', value: settings.rif },
+    { key: 'businessPhone', value: settings.phone },
+    { key: 'businessAddress', value: settings.address },
+    { key: 'exchangeRate', value: settings.exchangeRate.toFixed(2) },
+    { key: 'businessSettingsUpdatedAt', value: settings.updatedAt },
+    { key: 'businessSettingsSyncStatus', value: settings.syncStatus },
+  ];
+
+  if (settings.syncedAt) {
+    entries.push({ key: 'businessSettingsSyncedAt', value: settings.syncedAt });
+  }
+
+  await db.settings.bulkPut(entries);
+}
+
 export async function seedDatabaseIfNeeded(): Promise<void> {
   const [branchCount, cashierCount, productCount, customerCount, quoteCount, expenseCount] =
     await Promise.all([
@@ -474,4 +541,9 @@ export async function seedDatabaseIfNeeded(): Promise<void> {
   if (customerCount === 0) await db.customers.bulkPut(DEFAULT_CUSTOMERS);
   if (quoteCount === 0) await db.supplierQuotes.bulkPut(DEFAULT_SUPPLIER_QUOTES);
   if (expenseCount === 0) await db.expenses.bulkPut(DEFAULT_EXPENSES);
+
+  const existingName = await db.settings.get('businessName');
+  if (!existingName) {
+    await saveLocalBusinessSettings(DEFAULT_BUSINESS_SETTINGS);
+  }
 }

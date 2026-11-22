@@ -65,31 +65,31 @@ export const CashierLoginModal: React.FC<CashierLoginModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4">
-      <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6">
-        <div className="flex items-center justify-between border-b border-slate-200 pb-4">
-          <div className="flex items-center gap-2.5">
-            <ShieldCheck className="h-5 w-5 text-emerald-600" />
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 p-4 backdrop-blur-[1px]">
+      <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-5">
+        <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="h-4 w-4 text-[#76B900]" />
             <div>
-              <h2 className="text-base font-bold text-slate-900">Acceso de Cajero / Admin</h2>
-              <p className="text-xs text-slate-500">Pos 262 — Selecciona usuario e ingresa tu PIN</p>
+              <h2 className="text-sm font-bold text-slate-900">Acceso de Cajero / Admin</h2>
+              <p className="text-xs text-slate-500">Pos 262 · Selecciona usuario e ingresa tu PIN</p>
             </div>
           </div>
           {onClose && activeCashier && (
             <button
               type="button"
               onClick={onClose}
-              className="text-xs font-semibold text-slate-500 hover:text-slate-900 cursor-pointer"
+              className="rounded-md px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-900 cursor-pointer whitespace-nowrap"
             >
               Cancelar
             </button>
           )}
         </div>
 
-        <form onSubmit={handleSubmit} className="mt-4 space-y-4">
-          <div className="space-y-2">
+        <form onSubmit={handleSubmit} className="mt-4 space-y-3.5">
+          <div className="space-y-1.5">
             <p className="text-xs font-semibold text-slate-600">Usuario</p>
-            <div className="grid grid-cols-1 gap-2">
+            <div className="grid grid-cols-1 gap-1.5">
               {cashiers.map((cashier) => {
                 const isSelected = cashier.id === selectedCashier?.id;
                 const branch = branches.find((b) => b.id === cashier.branchId);
@@ -101,15 +101,15 @@ export const CashierLoginModal: React.FC<CashierLoginModalProps> = ({
                       setSelectedCashierId(cashier.id);
                       setError('');
                     }}
-                    className={`flex items-center justify-between rounded-lg border px-3.5 py-2.5 text-left transition-colors cursor-pointer ${
+                    className={`flex items-center justify-between rounded-lg border px-3 py-2 text-left transition-colors cursor-pointer ${
                       isSelected
-                        ? 'border-emerald-600 bg-emerald-50 text-emerald-950'
-                        : 'border-slate-200 bg-white text-slate-800 hover:border-slate-400'
+                        ? 'border-[#76B900] bg-[#F7FEE7] text-slate-900'
+                        : 'border-slate-200 bg-white text-slate-800 hover:border-slate-300 hover:bg-slate-50'
                     }`}
                   >
                     <div>
-                      <p className="text-sm font-semibold">{cashier.name}</p>
-                      <p className="text-xs text-slate-500">
+                      <p className="text-xs font-semibold text-slate-900">{cashier.name}</p>
+                      <p className="text-[11px] text-slate-500">
                         {cashier.role === 'admin'
                           ? 'Administrador'
                           : cashier.role === 'manager'
@@ -118,7 +118,9 @@ export const CashierLoginModal: React.FC<CashierLoginModalProps> = ({
                         {branch ? ` · ${branch.name}` : ''}
                       </p>
                     </div>
-                    <span className="font-mono text-xs text-slate-500">PIN: {cashier.pin}</span>
+                    <span className="font-mono text-[11px] tabular-nums text-slate-500">
+                      PIN: {cashier.pin}
+                    </span>
                   </button>
                 );
               })}
@@ -129,8 +131,8 @@ export const CashierLoginModal: React.FC<CashierLoginModalProps> = ({
             <label htmlFor="cashier-pin" className="block text-xs font-semibold text-slate-600">
               PIN de acceso (4 dígitos)
             </label>
-            <div className="relative mt-1.5">
-              <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <div className="relative mt-1">
+              <KeyRound className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
               <input
                 id="cashier-pin"
                 type="password"
@@ -144,7 +146,7 @@ export const CashierLoginModal: React.FC<CashierLoginModalProps> = ({
                   setPinInput(e.target.value);
                   setError('');
                 }}
-                className="w-full rounded-lg border border-slate-300 bg-white py-2.5 pl-9 pr-3 font-mono text-base tracking-widest text-slate-900 focus:border-emerald-600 focus:outline-none"
+                className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-8 pr-3 font-mono text-sm tracking-widest text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
               />
             </div>
           </div>
@@ -157,9 +159,9 @@ export const CashierLoginModal: React.FC<CashierLoginModalProps> = ({
 
           <button
             type="submit"
-            className="flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 transition-colors cursor-pointer"
+            className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-[#84CC16] px-3 py-2 text-xs font-bold text-slate-950 hover:bg-[#76B900] transition-colors cursor-pointer"
           >
-            <UserCheck className="h-4 w-4" />
+            <UserCheck className="h-3.5 w-3.5" />
             Ingresar a caja
           </button>
         </form>
@@ -216,12 +218,10 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
   const [closeError, setCloseError] = useState<string>('');
   const [successMessage, setSuccessMessage] = useState<string>('');
 
-  // History filters
   const [filterFromDate, setFilterFromDate] = useState<string>('');
   const [filterToDate, setFilterToDate] = useState<string>('');
   const [filterBranchId, setFilterBranchId] = useState<string>('all');
 
-  // Compute expected cash and sales breakdown for active shift
   const activeShiftMetrics = useMemo(() => {
     if (!activeShift) {
       return {
@@ -367,21 +367,20 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
 
   const renderDiffLabel = (diff: number, formatter: (v: number) => string) => {
     if (Math.abs(diff) < 0.01) {
-      return <span className="font-semibold text-emerald-700">Cuadrado ({formatter(0)})</span>;
+      return <span className="font-semibold text-[#558B00]">Cuadrado ({formatter(0)})</span>;
     }
     if (diff > 0) {
-      return <span className="font-semibold text-emerald-700">Sobrante +{formatter(diff)}</span>;
+      return <span className="font-semibold text-[#558B00]">Sobrante +{formatter(diff)}</span>;
     }
     return <span className="font-semibold text-red-600">Faltante {formatter(diff)}</span>;
   };
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 p-4 lg:p-6">
-      {/* Active Session Summary Bar */}
-      <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
+    <div className="mx-auto max-w-6xl space-y-5 p-4 lg:p-5">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3">
         <div>
-          <p className="text-xs font-medium text-slate-500">Sesión activa</p>
-          <p className="text-base font-bold text-slate-900">
+          <p className="text-[11px] font-medium text-slate-500">Sesión activa</p>
+          <p className="text-sm font-bold text-slate-900">
             {activeCashier.name}{' '}
             <span className="font-normal text-slate-500">
               · {activeCashier.role === 'admin' ? 'Administrador' : activeCashier.role === 'manager' ? 'Encargado' : 'Cajero'} · {activeBranch.name}
@@ -391,34 +390,33 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
         <button
           type="button"
           onClick={onSwitchCashier}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 whitespace-nowrap shrink-0 cursor-pointer"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:text-slate-900 whitespace-nowrap shrink-0 cursor-pointer"
         >
-          <LogOut className="h-3.5 w-3.5" />
-          Cambiar cajero / PIN
+          <LogOut className="h-3.5 w-3.5 text-slate-500" />
+          Cambiar cajero
         </button>
       </div>
 
       {successMessage && (
-        <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs font-semibold text-emerald-800">
-          <CheckCircle2 className="h-4 w-4 shrink-0" />
+        <div className="flex items-center gap-2 rounded-lg border border-[#84CC16]/40 bg-[#F7FEE7] px-3.5 py-2 text-xs font-semibold text-[#3F6212]">
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-[#76B900]" />
           {successMessage}
         </div>
       )}
 
-      {/* Open or Close Shift Card */}
       {!activeShift ? (
-        <section className="rounded-xl border border-slate-200 bg-white p-5">
+        <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5">
           <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
-            <PlayCircle className="h-5 w-5 text-emerald-600" />
+            <PlayCircle className="h-4 w-4 text-[#76B900]" />
             <div>
-              <h2 className="text-base font-bold text-slate-900">Apertura de turno</h2>
+              <h2 className="text-sm font-bold text-slate-900">Apertura de turno</h2>
               <p className="text-xs text-slate-500">
                 Registra el fondo inicial en caja para {activeBranch.name} antes de iniciar ventas.
               </p>
             </div>
           </div>
 
-          <form onSubmit={handleOpenSubmit} className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <form onSubmit={handleOpenSubmit} className="mt-4 grid grid-cols-1 gap-3.5 sm:grid-cols-2">
             <div>
               <label className="block text-xs font-semibold text-slate-700">
                 Fondo inicial en Dólares (USD $) *
@@ -430,7 +428,7 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
                 required
                 value={openingFundUsdInput}
                 onChange={(e) => setOpeningFundUsdInput(e.target.value)}
-                className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm font-bold tabular-nums text-slate-900 focus:border-emerald-600 focus:outline-none"
+                className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 font-mono text-sm font-bold tabular-nums text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
               />
             </div>
 
@@ -445,7 +443,7 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
                 required
                 value={openingFundVesInput}
                 onChange={(e) => setOpeningFundVesInput(e.target.value)}
-                className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm font-bold tabular-nums text-slate-900 focus:border-emerald-600 focus:outline-none"
+                className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 font-mono text-sm font-bold tabular-nums text-[#558B00] focus:border-[#76B900] focus:bg-white focus:outline-none"
               />
             </div>
 
@@ -458,7 +456,7 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
                 placeholder="Ej: Sencillo en billetes de $1 y $5 recibido de turno anterior..."
                 value={openingNote}
                 onChange={(e) => setOpeningNote(e.target.value)}
-                className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-emerald-600 focus:outline-none"
+                className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-[#76B900] focus:bg-white focus:outline-none"
               />
             </div>
 
@@ -471,22 +469,22 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
             <div className="sm:col-span-2">
               <button
                 type="submit"
-                className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 transition-colors cursor-pointer"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-[#84CC16] px-4 py-2 text-xs font-bold text-slate-950 hover:bg-[#76B900] transition-colors cursor-pointer"
               >
-                <PlayCircle className="h-4 w-4" />
+                <PlayCircle className="h-3.5 w-3.5" />
                 Abrir turno en {activeBranch.name}
               </button>
             </div>
           </form>
         </section>
       ) : (
-        <section className="rounded-xl border border-slate-200 bg-white p-5 space-y-5">
+        <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-3">
             <div className="flex items-center gap-2">
-              <Lock className="h-5 w-5 text-amber-600" />
+              <Lock className="h-4 w-4 text-amber-600" />
               <div>
-                <h2 className="text-base font-bold text-slate-900">
-                  Cierre y arqueo de caja — Turno abierto
+                <h2 className="text-sm font-bold text-slate-900">
+                  Cierre y arqueo de caja · Turno abierto
                 </h2>
                 <p className="text-xs text-slate-500">
                   Abierto el{' '}
@@ -498,49 +496,48 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
                 </p>
               </div>
             </div>
-            <span className="text-xs font-semibold text-emerald-700">
+            <span className="text-xs font-semibold tabular-nums text-[#558B00]">
               {activeShiftMetrics.salesCount} ventas en este turno
             </span>
           </div>
 
-          {/* Expected System Totals Summary */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 font-mono tabular-nums">
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5">
-              <p className="font-sans text-xs font-medium text-slate-500">Esperado en caja ($)</p>
-              <p className="mt-1 text-lg font-bold text-slate-900">
+            <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+              <p className="font-sans text-[11px] font-medium text-slate-500">Esperado en caja ($)</p>
+              <p className="mt-1 text-base font-bold text-slate-900">
                 {formatUsd(activeShiftMetrics.expectedCashUsd)}
               </p>
-              <p className="mt-1 font-sans text-[11px] text-slate-500">
+              <p className="mt-0.5 font-sans text-[11px] text-slate-500">
                 Fondo {formatUsd(activeShift.openingFundUsd)} + Ventas {formatUsd(activeShiftMetrics.cashUsdIn)}
               </p>
             </div>
 
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5">
-              <p className="font-sans text-xs font-medium text-slate-500">Esperado en caja (Bs)</p>
-              <p className="mt-1 text-lg font-bold text-slate-900">
+            <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+              <p className="font-sans text-[11px] font-medium text-slate-500">Esperado en caja (Bs)</p>
+              <p className="mt-1 text-base font-bold text-[#558B00]">
                 {formatVes(activeShiftMetrics.expectedCashVes)}
               </p>
-              <p className="mt-1 font-sans text-[11px] text-slate-500">
+              <p className="mt-0.5 font-sans text-[11px] text-slate-500">
                 Fondo {formatVes(activeShift.openingFundVes)} + Ventas {formatVes(activeShiftMetrics.cashVesIn)}
               </p>
             </div>
 
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5">
-              <p className="font-sans text-xs font-medium text-slate-500">Pagos digitales / banco</p>
-              <p className="mt-1 text-lg font-bold text-slate-900">
+            <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+              <p className="font-sans text-[11px] font-medium text-slate-500">Pagos digitales / banco</p>
+              <p className="mt-1 text-base font-bold text-slate-900">
                 {formatUsd(activeShiftMetrics.digitalTotalUsd)}
               </p>
-              <p className="mt-1 font-sans text-[11px] text-slate-500">
+              <p className="mt-0.5 font-sans text-[11px] text-slate-500">
                 Pago Móvil, Biopago, Punto, USDT
               </p>
             </div>
 
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5">
-              <p className="font-sans text-xs font-medium text-slate-500">Créditos otorgados</p>
-              <p className="mt-1 text-lg font-bold text-slate-900">
+            <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+              <p className="font-sans text-[11px] font-medium text-slate-500">Créditos otorgados</p>
+              <p className="mt-1 text-base font-bold text-slate-900">
                 {formatUsd(activeShiftMetrics.creditTotalUsd)}
               </p>
-              <p className="mt-1 font-sans text-[11px] text-slate-500">
+              <p className="mt-0.5 font-sans text-[11px] text-slate-500">
                 Total vendido: {formatUsd(activeShiftMetrics.totalSalesUsd)}
               </p>
             </div>
@@ -553,9 +550,8 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
             </p>
           )}
 
-          {/* Physical Cash Count Comparison Form */}
-          <form onSubmit={handleCloseSubmit} className="space-y-4 border-t border-slate-200 pt-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <form onSubmit={handleCloseSubmit} className="space-y-3.5 border-t border-slate-200 pt-4">
+            <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
               <div>
                 <label className="block text-xs font-semibold text-slate-700">
                   Efectivo físico contado en USD ($) *
@@ -568,7 +564,7 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
                   placeholder={activeShiftMetrics.expectedCashUsd.toFixed(2)}
                   value={countedUsdInput}
                   onChange={(e) => setCountedUsdInput(e.target.value)}
-                  className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm font-bold tabular-nums text-slate-900 focus:border-emerald-600 focus:outline-none"
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 font-mono text-sm font-bold tabular-nums text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
                 />
                 {liveDiffUsd !== null && (
                   <p className="mt-1 text-xs font-mono tabular-nums">
@@ -589,7 +585,7 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
                   placeholder={activeShiftMetrics.expectedCashVes.toFixed(2)}
                   value={countedVesInput}
                   onChange={(e) => setCountedVesInput(e.target.value)}
-                  className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm font-bold tabular-nums text-slate-900 focus:border-emerald-600 focus:outline-none"
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 font-mono text-sm font-bold tabular-nums text-[#558B00] focus:border-[#76B900] focus:bg-white focus:outline-none"
                 />
                 {liveDiffVes !== null && (
                   <p className="mt-1 text-xs font-mono tabular-nums">
@@ -607,7 +603,7 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
                   placeholder="Ej: Retiro parcial guardado en caja fuerte, billetes deteriorados..."
                   value={closingNote}
                   onChange={(e) => setClosingNote(e.target.value)}
-                  className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-emerald-600 focus:outline-none"
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-[#76B900] focus:bg-white focus:outline-none"
                 />
               </div>
             </div>
@@ -620,60 +616,59 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
 
             <button
               type="submit"
-              className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 transition-colors cursor-pointer"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800 transition-colors cursor-pointer"
             >
-              <Lock className="h-4 w-4" />
+              <Lock className="h-3.5 w-3.5" />
               Cerrar turno y guardar arqueo
             </button>
           </form>
         </section>
       )}
 
-      {/* Shift History Filterable by Date */}
-      <section className="rounded-xl border border-slate-200 bg-white p-5 space-y-4">
-        <div className="flex flex-col gap-3 border-b border-slate-200 pb-4 lg:flex-row lg:items-end lg:justify-between">
+      <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 space-y-4">
+        <div className="flex flex-col gap-3 border-b border-slate-200 pb-3.5 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <h2 className="text-base font-bold text-slate-900">Historial de turnos y cierres</h2>
+            <h2 className="text-sm font-bold text-slate-900">Historial de turnos y cierres</h2>
             <p className="text-xs text-slate-500">
               {filteredShiftHistory.length} turnos registrados en IndexedDB
             </p>
           </div>
 
-          <div className="flex flex-wrap items-end gap-2.5">
+          <div className="flex flex-wrap items-end gap-2">
             <div>
-              <label className="block text-[11px] font-semibold text-slate-500">Desde</label>
-              <div className="relative mt-1">
-                <Calendar className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+              <label className="block text-[11px] font-medium text-slate-500">Desde</label>
+              <div className="relative mt-0.5">
+                <Calendar className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
                 <input
                   type="date"
                   value={filterFromDate}
                   onChange={(e) => setFilterFromDate(e.target.value)}
-                  className="rounded-lg border border-slate-300 bg-white py-1.5 pl-8 pr-2.5 font-mono text-xs text-slate-900 focus:border-emerald-600 focus:outline-none"
+                  className="rounded-lg border border-slate-200 bg-slate-50 py-1 pl-7 pr-2 font-mono text-xs text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
                 />
               </div>
             </div>
 
             <div>
-              <label className="block text-[11px] font-semibold text-slate-500">Hasta</label>
-              <div className="relative mt-1">
-                <Calendar className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+              <label className="block text-[11px] font-medium text-slate-500">Hasta</label>
+              <div className="relative mt-0.5">
+                <Calendar className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
                 <input
                   type="date"
                   value={filterToDate}
                   onChange={(e) => setFilterToDate(e.target.value)}
-                  className="rounded-lg border border-slate-300 bg-white py-1.5 pl-8 pr-2.5 font-mono text-xs text-slate-900 focus:border-emerald-600 focus:outline-none"
+                  className="rounded-lg border border-slate-200 bg-slate-50 py-1 pl-7 pr-2 font-mono text-xs text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
                 />
               </div>
             </div>
 
             <div>
-              <label className="block text-[11px] font-semibold text-slate-500">Sucursal</label>
+              <label className="block text-[11px] font-medium text-slate-500">Sucursal</label>
               <select
                 value={filterBranchId}
                 onChange={(e) => setFilterBranchId(e.target.value)}
-                className="mt-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-900 focus:border-emerald-600 focus:outline-none"
+                className="mt-0.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
               >
-                <option value="all">Todas las sucursales</option>
+                <option value="all">Todas</option>
                 {branches.map((b) => (
                   <option key={b.id} value={b.id}>
                     {b.name}
@@ -690,7 +685,7 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
                   setFilterToDate('');
                   setFilterBranchId('all');
                 }}
-                className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 cursor-pointer"
+                className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer"
               >
                 Limpiar
               </button>
@@ -699,10 +694,10 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
         </div>
 
         {filteredShiftHistory.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-10 text-center">
-            <Clock className="h-8 w-8 text-slate-300" />
-            <p className="mt-2 text-sm font-semibold text-slate-700">Sin turnos para el filtro seleccionado</p>
-            <p className="mt-1 text-xs text-slate-500">
+          <div className="flex flex-col items-center justify-center py-8 text-center">
+            <Clock className="h-7 w-7 text-slate-300" />
+            <p className="mt-2 text-xs font-semibold text-slate-700">Sin turnos para el filtro seleccionado</p>
+            <p className="mt-0.5 text-xs text-slate-500">
               Abre un turno o ajusta el rango de fechas para consultar cierres anteriores.
             </p>
           </div>
@@ -711,18 +706,18 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-200 text-slate-500">
-                  <th className="py-2.5 pr-4 font-semibold">Fecha / Cajero</th>
-                  <th className="py-2.5 px-3 font-semibold text-right">Fondo inicial</th>
-                  <th className="py-2.5 px-3 font-semibold text-right">Esperado</th>
-                  <th className="py-2.5 px-3 font-semibold text-right">Contado físico</th>
-                  <th className="py-2.5 px-3 font-semibold text-right">Diferencia</th>
-                  <th className="py-2.5 pl-3 font-semibold text-right">Estado / Sync</th>
+                  <th className="py-2 pr-4 font-semibold">Fecha / Cajero</th>
+                  <th className="py-2 px-3 font-semibold text-right">Fondo inicial</th>
+                  <th className="py-2 px-3 font-semibold text-right">Esperado</th>
+                  <th className="py-2 px-3 font-semibold text-right">Contado físico</th>
+                  <th className="py-2 px-3 font-semibold text-right">Diferencia</th>
+                  <th className="py-2 pl-3 font-semibold text-right">Estado / Sync</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredShiftHistory.map((shift) => (
                   <tr key={shift.id} className="align-top hover:bg-slate-50/70">
-                    <td className="py-3 pr-4">
+                    <td className="py-2.5 pr-4">
                       <p className="font-semibold text-slate-900">
                         {shift.cashierName} · {shift.branchName}
                       </p>
@@ -740,22 +735,22 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
                           : ''}
                       </p>
                       {(shift.openingNote || shift.closingNote) && (
-                        <p className="mt-1 text-[11px] text-slate-600">
+                        <p className="mt-0.5 text-[11px] text-slate-600">
                           {shift.openingNote ? `Apertura: ${shift.openingNote}` : ''}
                           {shift.openingNote && shift.closingNote ? ' | ' : ''}
                           {shift.closingNote ? `Cierre: ${shift.closingNote}` : ''}
                         </p>
                       )}
                     </td>
-                    <td className="py-3 px-3 text-right font-mono tabular-nums text-slate-700">
+                    <td className="py-2.5 px-3 text-right font-mono tabular-nums text-slate-700">
                       <p>{formatUsd(shift.openingFundUsd)}</p>
-                      <p className="text-[11px] text-slate-500">{formatVes(shift.openingFundVes)}</p>
+                      <p className="text-[11px] text-[#558B00]">{formatVes(shift.openingFundVes)}</p>
                     </td>
-                    <td className="py-3 px-3 text-right font-mono tabular-nums text-slate-700">
+                    <td className="py-2.5 px-3 text-right font-mono tabular-nums text-slate-700">
                       {shift.status === 'closed' ? (
                         <>
                           <p>{formatUsd(shift.expectedCashUsd ?? 0)}</p>
-                          <p className="text-[11px] text-slate-500">
+                          <p className="text-[11px] text-[#558B00]">
                             {formatVes(shift.expectedCashVes ?? 0)}
                           </p>
                         </>
@@ -763,11 +758,11 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
                         <span className="font-sans text-slate-400">En curso</span>
                       )}
                     </td>
-                    <td className="py-3 px-3 text-right font-mono tabular-nums text-slate-900 font-semibold">
+                    <td className="py-2.5 px-3 text-right font-mono tabular-nums text-slate-900 font-semibold">
                       {shift.status === 'closed' ? (
                         <>
                           <p>{formatUsd(shift.countedCashUsd ?? 0)}</p>
-                          <p className="text-[11px] font-normal text-slate-500">
+                          <p className="text-[11px] font-normal text-[#558B00]">
                             {formatVes(shift.countedCashVes ?? 0)}
                           </p>
                         </>
@@ -775,7 +770,7 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
                         <span className="font-sans font-normal text-slate-400">—</span>
                       )}
                     </td>
-                    <td className="py-3 px-3 text-right font-mono tabular-nums">
+                    <td className="py-2.5 px-3 text-right font-mono tabular-nums">
                       {shift.status === 'closed' ? (
                         <div className="space-y-0.5">
                           <p>{renderDiffLabel(shift.diffUsd ?? 0, formatUsd)}</p>
@@ -787,11 +782,11 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
                         <span className="font-sans text-slate-400">—</span>
                       )}
                     </td>
-                    <td className="py-3 pl-3 text-right whitespace-nowrap">
+                    <td className="py-2.5 pl-3 text-right whitespace-nowrap">
                       <p
                         className={
                           shift.status === 'open'
-                            ? 'font-semibold text-emerald-700'
+                            ? 'font-semibold text-[#558B00]'
                             : 'font-semibold text-slate-700'
                         }
                       >
@@ -799,7 +794,7 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
                       </p>
                       <p
                         className={`mt-0.5 text-[11px] font-semibold ${
-                          shift.syncStatus === 'synced' ? 'text-emerald-700' : 'text-amber-700'
+                          shift.syncStatus === 'synced' ? 'text-[#558B00]' : 'text-amber-700'
                         }`}
                       >
                         {shift.syncStatus === 'synced' ? 'Sincronizado' : 'Pendiente offline'}

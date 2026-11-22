@@ -173,7 +173,8 @@ export const ReportsManager: React.FC<ReportsManagerProps> = ({
             ? Object.values(product.stockByBranch).reduce((a, b) => a + b, 0)
             : product.stockByBranch[branchFilter] ?? 0;
         const soldQty = filteredData.soldQtyByProduct.get(product.id) ?? 0;
-        const threshold = branchFilter === 'all' ? product.minStock * branches.length : product.minStock;
+        const threshold =
+          branchFilter === 'all' ? product.minStock * branches.length : product.minStock;
         return {
           product,
           stock,
@@ -189,29 +190,31 @@ export const ReportsManager: React.FC<ReportsManagerProps> = ({
     setFeedback('');
     try {
       await onSettleReceivable(sale.id, sale.pendingUsd);
-      setFeedback(`Cobro registrado para recibo ${sale.receiptNumber} (${formatUsd(sale.pendingUsd)}).`);
+      setFeedback(
+        `Cobro registrado para recibo ${sale.receiptNumber} (${formatUsd(sale.pendingUsd)}).`
+      );
     } finally {
       setSettlingSaleId(null);
     }
   };
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 p-4 lg:p-6">
-      {/* Filter Controls Bar */}
+    <div className="mx-auto max-w-6xl space-y-5 p-4 lg:p-5">
       <section className="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-col gap-2.5 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-center gap-2">
-            <BarChart3 className="h-5 w-5 text-emerald-600" />
+            <BarChart3 className="h-4 w-4 text-[#76B900]" />
             <div>
-              <h2 className="text-base font-bold text-slate-900">Reportes de ventas y cuentas por cobrar</h2>
+              <h2 className="text-sm font-bold text-slate-900">
+                Reportes de ventas y cuentas por cobrar
+              </h2>
               <p className="text-xs text-slate-500">
                 Filtra por período, sucursal, categoría o nombre de producto
               </p>
             </div>
           </div>
 
-          {/* Period Tabs: Hoy / Semana / Mes / Todo */}
-          <div className="inline-flex items-center gap-1 rounded-lg bg-slate-100 p-1 self-start">
+          <div className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-0.5 self-start">
             {(
               [
                 { id: 'today', label: 'Hoy' },
@@ -224,9 +227,9 @@ export const ReportsManager: React.FC<ReportsManagerProps> = ({
                 key={opt.id}
                 type="button"
                 onClick={() => setPeriod(opt.id)}
-                className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+                className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
                   period === opt.id
-                    ? 'bg-slate-900 text-white'
+                    ? 'bg-[#84CC16] text-slate-950'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
@@ -236,15 +239,15 @@ export const ReportsManager: React.FC<ReportsManagerProps> = ({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
           <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
             <input
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Buscar producto, SKU o categoría..."
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-xs text-slate-900 focus:border-emerald-600 focus:bg-white focus:outline-none"
+              className="w-full rounded-lg border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-2.5 text-xs text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
             />
           </div>
 
@@ -252,7 +255,7 @@ export const ReportsManager: React.FC<ReportsManagerProps> = ({
             aria-label="Filtrar por categoría"
             value={categoryFilter}
             onChange={(e) => setCategoryFilter(e.target.value)}
-            className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-900 focus:border-emerald-600 focus:bg-white focus:outline-none"
+            className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
           >
             {categories.map((cat) => (
               <option key={cat} value={cat}>
@@ -265,7 +268,7 @@ export const ReportsManager: React.FC<ReportsManagerProps> = ({
             aria-label="Filtrar por sucursal"
             value={branchFilter}
             onChange={(e) => setBranchFilter(e.target.value)}
-            className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-900 focus:border-emerald-600 focus:bg-white focus:outline-none"
+            className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
           >
             <option value="all">Todas las sucursales</option>
             {branches.map((branch) => (
@@ -278,31 +281,36 @@ export const ReportsManager: React.FC<ReportsManagerProps> = ({
       </section>
 
       {feedback && (
-        <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs font-semibold text-emerald-800">
-          <CheckCircle2 className="h-4 w-4 shrink-0" />
+        <div className="flex items-center gap-2 rounded-lg border border-[#84CC16]/40 bg-[#F7FEE7] px-3.5 py-2 text-xs font-semibold text-[#3F6212]">
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-[#76B900]" />
           {feedback}
         </div>
       )}
 
-      {/* KPI Metrics Grid */}
       <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 font-mono tabular-nums">
         <div className="rounded-xl border border-slate-200 bg-white p-4">
           <p className="font-sans text-xs font-medium text-slate-500">Ingresos totales</p>
-          <p className="mt-1 text-xl font-bold text-slate-900">
+          <p
+            className={`mt-1 text-lg font-bold ${
+              currency === 'VES' ? 'text-[#558B00]' : 'text-slate-900'
+            }`}
+          >
             {formatPrimary(filteredData.totalRevenueUsd)}
           </p>
-          <p className="mt-1 text-xs text-slate-500">
-            {formatSecondary(filteredData.totalRevenueUsd)} ·{' '}
-            <span className="font-sans">{filteredData.matchedSales.length} pedidos</span>
+          <p className="mt-0.5 text-xs text-slate-500">
+            <span className={currency === 'USD' ? 'text-[#558B00] font-semibold' : ''}>
+              {formatSecondary(filteredData.totalRevenueUsd)}
+            </span>{' '}
+            · <span className="font-sans">{filteredData.matchedSales.length} pedidos</span>
           </p>
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-white p-4">
           <p className="font-sans text-xs font-medium text-slate-500">Ganancia y margen estimado</p>
-          <p className="mt-1 text-xl font-bold text-emerald-700">
+          <p className="mt-1 text-lg font-bold text-[#558B00]">
             {formatPrimary(filteredData.estimatedProfitUsd)}
           </p>
-          <p className="mt-1 text-xs text-slate-500">
+          <p className="mt-0.5 text-xs text-slate-500">
             Margen: <span className="font-bold text-slate-800">{filteredData.marginPercent}%</span> · Costo{' '}
             {formatUsd(filteredData.totalCostUsd)}
           </p>
@@ -310,35 +318,42 @@ export const ReportsManager: React.FC<ReportsManagerProps> = ({
 
         <div className="rounded-xl border border-slate-200 bg-white p-4">
           <p className="font-sans text-xs font-medium text-slate-500">Total cobrado (Pagado)</p>
-          <p className="mt-1 text-xl font-bold text-slate-900">
+          <p
+            className={`mt-1 text-lg font-bold ${
+              currency === 'VES' ? 'text-[#558B00]' : 'text-slate-900'
+            }`}
+          >
             {formatPrimary(filteredData.totalPaidUsd)}
           </p>
-          <p className="mt-1 text-xs text-slate-500">
-            {formatSecondary(filteredData.totalPaidUsd)}
+          <p className="mt-0.5 text-xs text-slate-500">
+            <span className={currency === 'USD' ? 'text-[#558B00] font-semibold' : ''}>
+              {formatSecondary(filteredData.totalPaidUsd)}
+            </span>
           </p>
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-white p-4">
           <p className="font-sans text-xs font-medium text-slate-500">Por cobrar (Crédito)</p>
           <p
-            className={`mt-1 text-xl font-bold ${
+            className={`mt-1 text-lg font-bold ${
               filteredData.totalReceivableUsd > 0 ? 'text-amber-700' : 'text-slate-900'
             }`}
           >
             {formatPrimary(filteredData.totalReceivableUsd)}
           </p>
-          <p className="mt-1 text-xs text-slate-500">
-            {formatSecondary(filteredData.totalReceivableUsd)} ·{' '}
-            <span className="font-sans">{openReceivables.length} pendientes</span>
+          <p className="mt-0.5 text-xs text-slate-500">
+            <span className={currency === 'USD' ? 'text-[#558B00] font-semibold' : ''}>
+              {formatSecondary(filteredData.totalReceivableUsd)}
+            </span>{' '}
+            · <span className="font-sans">{openReceivables.length} pendientes</span>
           </p>
         </div>
       </section>
 
-      {/* Open Receivables Table */}
-      <section className="rounded-xl border border-slate-200 bg-white p-5 space-y-3">
+      <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 space-y-3">
         <div className="flex items-center justify-between border-b border-slate-200 pb-3">
           <div className="flex items-center gap-2">
-            <CreditCard className="h-5 w-5 text-amber-600" />
+            <CreditCard className="h-4 w-4 text-amber-600" />
             <div>
               <h3 className="text-sm font-bold text-slate-900">
                 Cuentas por cobrar ({openReceivables.length})
@@ -370,30 +385,30 @@ export const ReportsManager: React.FC<ReportsManagerProps> = ({
               <tbody className="divide-y divide-slate-100">
                 {openReceivables.map((sale) => (
                   <tr key={sale.id} className="hover:bg-slate-50/70">
-                    <td className="py-2.5 pr-3">
+                    <td className="py-2 pr-3">
                       <p className="font-semibold text-slate-900">
                         <span className="font-mono">{sale.receiptNumber}</span> · {sale.customerName}
                       </p>
                       <p className="text-[11px] text-slate-500">{sale.branchName}</p>
                     </td>
-                    <td className="py-2.5 px-3 font-mono text-slate-600">
+                    <td className="py-2 px-3 font-mono tabular-nums text-slate-600">
                       {sale.dueDate || 'Sin fecha'}
                     </td>
-                    <td className="py-2.5 px-3 text-right font-mono tabular-nums text-slate-700">
+                    <td className="py-2 px-3 text-right font-mono tabular-nums text-slate-700">
                       {formatPrimary(sale.totalUsd)}
                     </td>
-                    <td className="py-2.5 px-3 text-right font-mono tabular-nums text-emerald-700">
+                    <td className="py-2 px-3 text-right font-mono tabular-nums text-[#558B00]">
                       {formatPrimary(sale.paidUsd)}
                     </td>
-                    <td className="py-2.5 px-3 text-right font-mono font-bold tabular-nums text-amber-700">
+                    <td className="py-2 px-3 text-right font-mono font-bold tabular-nums text-amber-700">
                       {formatPrimary(sale.pendingUsd)}
                     </td>
-                    <td className="py-2.5 pl-3 text-right">
+                    <td className="py-2 pl-3 text-right">
                       <button
                         type="button"
                         disabled={settlingSaleId === sale.id}
                         onClick={() => void handleMarkPaid(sale)}
-                        className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:bg-slate-300 whitespace-nowrap cursor-pointer"
+                        className="rounded-md bg-[#84CC16] px-2.5 py-1 text-xs font-bold text-slate-950 hover:bg-[#76B900] disabled:bg-slate-200 disabled:text-slate-500 whitespace-nowrap cursor-pointer"
                       >
                         Marcar pagado
                       </button>
@@ -406,10 +421,8 @@ export const ReportsManager: React.FC<ReportsManagerProps> = ({
         )}
       </section>
 
-      {/* Sales Detail + Stock Turnover Split */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        {/* Matching Sales List */}
-        <section className="rounded-xl border border-slate-200 bg-white p-5 space-y-3">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+        <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 space-y-3">
           <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
             <TrendingUp className="h-4 w-4 text-slate-700" />
             <h3 className="text-sm font-bold text-slate-900">
@@ -424,7 +437,7 @@ export const ReportsManager: React.FC<ReportsManagerProps> = ({
           ) : (
             <div className="max-h-80 overflow-y-auto divide-y divide-slate-100">
               {filteredData.matchedSales.map((sale) => (
-                <div key={sale.id} className="flex items-center justify-between gap-3 py-2.5 text-xs">
+                <div key={sale.id} className="flex items-center justify-between gap-3 py-2 text-xs">
                   <div className="min-w-0">
                     <p className="font-semibold text-slate-900 truncate">
                       <span className="font-mono">{sale.receiptNumber}</span> · {sale.customerName}
@@ -438,10 +451,16 @@ export const ReportsManager: React.FC<ReportsManagerProps> = ({
                     </p>
                   </div>
                   <div className="text-right font-mono tabular-nums shrink-0">
-                    <p className="font-bold text-slate-900">{formatPrimary(sale.totalUsd)}</p>
+                    <p
+                      className={`font-bold ${
+                        currency === 'VES' ? 'text-[#558B00]' : 'text-slate-900'
+                      }`}
+                    >
+                      {formatPrimary(sale.totalUsd)}
+                    </p>
                     <p
                       className={`text-[11px] font-sans font-semibold ${
-                        sale.pendingUsd > 0 ? 'text-amber-700' : 'text-emerald-700'
+                        sale.pendingUsd > 0 ? 'text-amber-700' : 'text-[#558B00]'
                       }`}
                     >
                       {sale.pendingUsd > 0 ? `Pend. ${formatUsd(sale.pendingUsd)}` : 'Cobrada'}
@@ -453,8 +472,7 @@ export const ReportsManager: React.FC<ReportsManagerProps> = ({
           )}
         </section>
 
-        {/* Low Stock & Turnover */}
-        <section className="rounded-xl border border-slate-200 bg-white p-5 space-y-3">
+        <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 space-y-3">
           <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
             <AlertTriangle className="h-4 w-4 text-amber-600" />
             <h3 className="text-sm font-bold text-slate-900">Rotación y alertas de stock bajo</h3>

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowLeftRight,
@@ -9,6 +9,8 @@ import {
   Check,
   CheckCircle2,
   Clock,
+  Cloud,
+  CloudOff,
   Copy,
   CreditCard,
   Download,
@@ -19,6 +21,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Settings,
   ShoppingCart,
   Smartphone,
   Trash2,
@@ -26,11 +29,18 @@ import {
   UserPlus,
   Users,
   Wallet,
-  Wifi,
   WifiOff,
   X,
 } from 'lucide-react';
-import { db, seedDatabaseIfNeeded } from './db/posDb';
+import type { User } from '@supabase/supabase-js';
+import {
+  DEFAULT_BUSINESS_SETTINGS,
+  db,
+  getLocalBusinessSettings,
+  saveLocalBusinessSettings,
+  seedDatabaseIfNeeded,
+} from './db/posDb';
+import { getSafeSession, supabase } from './lib/supabase';
 import {
   buildSyncQueueItem,
   computePendingSyncSummary,
@@ -41,10 +51,14 @@ import { CashierLoginModal, ShiftManager } from './components/ShiftManager';
 import { InventoryManager } from './components/InventoryManager';
 import { ReportsManager } from './components/ReportsManager';
 import { CostingManager } from './components/CostingManager';
+import { CloudAuthScreen } from './components/CloudAuthScreen';
+import { SettingsManager } from './components/SettingsManager';
 import type {
   Branch,
+  BusinessSettings,
   CartItem,
   Cashier,
+  CloudSyncState,
   CurrencyMode,
   Customer,
   Expense,
@@ -60,9 +74,10 @@ import type {
   SyncQueueItem,
 } from './types/pos';
 
-type WorkspaceTab = 'pos' | 'shifts' | 'inventory' | 'reports' | 'costing';
+type WorkspaceTab = 'pos' | 'shifts' | 'inventory' | 'reports' | 'costing' | 'settings';
 
 const RATE_STORAGE_KEY = 'pos_262_exchange_rate';
+const OFFLINE_BYPASS_KEY = 'pos_262_offline_auth_bypass';
 
 const PAYMENT_METHODS: Array<{
   method: PaymentMethod;
@@ -96,13 +111,15 @@ const formatVes = (amount: number): string =>
     maximumFractionDigits: 2,
   })}`;
 
-function buildWhatsAppReceiptText(sale: Sale): string {
+function buildWhatsAppReceiptText(sale: Sale, business?: BusinessSettings): string {
   const dateLabel = new Date(sale.createdAt).toLocaleString('es-VE', {
     dateStyle: 'short',
     timeStyle: 'short',
   });
+  const businessTitle = business?.businessName || 'Pos 262';
   const lines: string[] = [
-    `*POS 262 — ${sale.branchName}*`,
+    `*${businessTitle} — ${sale.branchName}*`,
+    ...(business?.rif ? [`RIF: ${business.rif}`] : []),
     `Recibo: ${sale.receiptNumber}`,
     `Fecha: ${dateLabel}`,
     `Cajero: ${sale.cashierName}`,
@@ -160,14 +177,14 @@ function buildWhatsAppReceiptText(sale: Sale): string {
   if (sale.notes) {
     lines.push(`Nota: ${sale.notes}`);
   }
-  lines.push('Gracias por su compra en Pos 262.');
+  lines.push(`Gracias por su compra en ${businessTitle}.`);
 
   return lines.join('\n');
 }
 
-function buildWhatsAppUrl(sale: Sale): string {
+function buildWhatsAppUrl(sale: Sale, business?: BusinessSettings): string {
   const cleanPhone = (sale.customerPhone || '').replace(/\D/g, '');
-  const encodedText = encodeURIComponent(buildWhatsAppReceiptText(sale));
+  const encodedText = encodeURIComponent(buildWhatsAppReceiptText(sale, business));
   return cleanPhone
     ? `https://wa.me/${cleanPhone}?text=${encodedText}`
     : `https://wa.me/?text=${encodedText}`;
@@ -175,6 +192,24 @@ function buildWhatsAppUrl(sale: Sale): string {
 
 export default function App() {
   const [isReady, setIsReady] = useState(false);
+  const [authChecked, setAuthChecked] = useState(false);
+  const [cloudUser, setCloudUser] = useState<User | null>(null);
+  const [offlineAuthBypass, setOfflineAuthBypass] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(OFFLINE_BYPASS_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [cloudAuthModalOpen, setCloudAuthModalOpen] = useState<boolean>(false);
+  const [lastSyncError, setLastSyncError] = useState<string | null>(null);
+  const [businessSettings, setBusinessSettings] = useState<BusinessSettings>(
+    DEFAULT_BUSINESS_SETTINGS
+  );
+
+  const cloudUserIdRef = useRef<string | null>(null);
+  const rateSyncTimerRef = useRef<number | null>(null);
+
   const [isOnline, setIsOnline] = useState<boolean>(
     typeof navigator !== 'undefined' ? navigator.onLine : true
   );
@@ -265,6 +300,7 @@ export default function App() {
       loadedQuotes,
       loadedExpenses,
       loadedSyncQueue,
+      loadedBusinessSettings,
     ] = await Promise.all([
       db.branches.toArray(),
       db.cashiers.toArray(),
@@ -276,6 +312,7 @@ export default function App() {
       db.supplierQuotes.orderBy('updatedAt').reverse().toArray(),
       db.expenses.orderBy('createdAt').reverse().toArray(),
       db.syncQueue.orderBy('timestamp').reverse().toArray(),
+      getLocalBusinessSettings(),
     ]);
 
     setBranches(loadedBranches);
@@ -288,8 +325,19 @@ export default function App() {
     setSupplierQuotes(loadedQuotes);
     setExpenses(loadedExpenses);
     setSyncQueue(loadedSyncQueue);
+    setBusinessSettings(loadedBusinessSettings);
 
-    return { loadedBranches, loadedCashiers };
+    if (loadedBusinessSettings.exchangeRate > 0) {
+      const normalized = loadedBusinessSettings.exchangeRate.toFixed(2);
+      setExchangeRateInput(normalized);
+      try {
+        localStorage.setItem(RATE_STORAGE_KEY, normalized);
+      } catch {
+        // Ignore storage quota errors
+      }
+    }
+
+    return { loadedBranches, loadedCashiers, loadedBusinessSettings };
   }, []);
 
   const showTemporarySyncNotice = useCallback((message: string) => {
@@ -300,29 +348,53 @@ export default function App() {
   }, []);
 
   const triggerSyncQueue = useCallback(
-    async (mode: 'auto' | 'manual' = 'auto') => {
+    async (mode: 'auto' | 'manual' = 'auto', overrideUserId?: string | null) => {
+      const targetUserId = overrideUserId !== undefined ? overrideUserId : cloudUserIdRef.current;
+
       if (typeof navigator !== 'undefined' && !navigator.onLine) {
         if (mode === 'manual') {
-          showTemporarySyncNotice('Sin conexión. Los cambios pendientes se sincronizarán al reconectar.');
+          showTemporarySyncNotice(
+            'Modo Offline. Los cambios pendientes se sincronizarán al reconectar.'
+          );
+        }
+        return null;
+      }
+
+      if (!targetUserId) {
+        if (mode === 'manual') {
+          showTemporarySyncNotice('Vincula tu cuenta en Configuración para sincronizar en la nube.');
         }
         return null;
       }
 
       setIsSyncing(true);
       try {
-        const result = await processSyncQueue();
-        if (result.ok && result.syncedCount > 0) {
+        const result = await processSyncQueue({
+          userId: targetUserId,
+          pullFromCloud: true,
+        });
+
+        if (result.ok) {
+          setLastSyncError(null);
           await reloadAllData();
           if (result.syncedAt) {
             setLastSyncedAt(result.syncedAt);
           }
-          showTemporarySyncNotice(
-            `Sincronizados ${result.syncedCount} ${
-              result.syncedCount === 1 ? 'registro pendiente' : 'registros pendientes'
-            }.`
-          );
-        } else if (mode === 'manual' && result.ok) {
-          showTemporarySyncNotice('No hay registros pendientes por sincronizar.');
+
+          if (result.pushedCount > 0 || result.pulledCount > 0) {
+            showTemporarySyncNotice(
+              `Nube sincronizada (${result.pushedCount} subidos · ${result.pulledCount} actualizados).`
+            );
+          } else if (mode === 'manual') {
+            showTemporarySyncNotice('Todo está sincronizado con Supabase.');
+          }
+        } else if (result.reason === 'error') {
+          setLastSyncError(result.errorMessage || 'No se pudo conectar con Supabase.');
+          if (mode === 'manual') {
+            showTemporarySyncNotice(
+              `No se pudo sincronizar ahora: ${result.errorMessage || 'revisa tu conexión'}.`
+            );
+          }
         }
         return result;
       } finally {
@@ -368,28 +440,25 @@ export default function App() {
 
   useEffect(() => {
     let active = true;
+
     async function init() {
       await seedDatabaseIfNeeded();
       const { loadedBranches, loadedCashiers } = await reloadAllData();
-      const [rateSetting, branchSetting, currSetting, cashierSetting, syncedSetting] =
-        await Promise.all([
-          db.settings.get('exchangeRate'),
-          db.settings.get('activeBranchId'),
-          db.settings.get('currencyMode'),
-          db.settings.get('activeCashierId'),
-          db.settings.get('lastSyncedAt'),
-        ]);
+      const [branchSetting, currSetting, cashierSetting, syncedSetting] = await Promise.all([
+        db.settings.get('activeBranchId'),
+        db.settings.get('currencyMode'),
+        db.settings.get('activeCashierId'),
+        db.settings.get('lastSyncedAt'),
+      ]);
+
+      const { user } = await getSafeSession();
 
       if (!active) return;
 
-      if (rateSetting?.value) {
-        setExchangeRateInput(rateSetting.value);
-        try {
-          localStorage.setItem(RATE_STORAGE_KEY, rateSetting.value);
-        } catch {
-          // Ignore storage quota errors
-        }
-      }
+      cloudUserIdRef.current = user?.id ?? null;
+      setCloudUser(user);
+      setAuthChecked(true);
+
       if (branchSetting?.value && loadedBranches.some((b) => b.id === branchSetting.value)) {
         setActiveBranchId(branchSetting.value);
       }
@@ -408,14 +477,27 @@ export default function App() {
 
       setIsReady(true);
 
-      if (navigator.onLine) {
-        await triggerSyncQueue('auto');
+      if (user && navigator.onLine) {
+        await triggerSyncQueue('auto', user.id);
       }
     }
 
     void init();
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!active) return;
+      const nextUser = session?.user ?? null;
+      cloudUserIdRef.current = nextUser?.id ?? null;
+      setCloudUser(nextUser);
+      setAuthChecked(true);
+    });
+
     return () => {
       active = false;
+      authListener.subscription.unsubscribe();
+      if (rateSyncTimerRef.current !== null) {
+        window.clearTimeout(rateSyncTimerRef.current);
+      }
     };
   }, [reloadAllData, triggerSyncQueue]);
 
@@ -452,15 +534,132 @@ export default function App() {
     setExchangeRateInput(val);
     const parsed = parseFloat(val.replace(',', '.'));
     if (Number.isFinite(parsed) && parsed > 0) {
-      const normalized = parsed.toFixed(2);
-      persistSetting('exchangeRate', normalized);
-      persistSetting('exchangeRateUpdatedAt', new Date().toISOString());
+      const rounded = round2(parsed);
+      const normalized = rounded.toFixed(2);
+      const nowIso = new Date().toISOString();
+      const updatedSettings: BusinessSettings = {
+        ...businessSettings,
+        exchangeRate: rounded,
+        updatedAt: nowIso,
+        syncStatus: 'pending',
+      };
+      setBusinessSettings(updatedSettings);
+      void saveLocalBusinessSettings(updatedSettings);
       try {
         localStorage.setItem(RATE_STORAGE_KEY, normalized);
       } catch {
         // Ignore storage quota errors
       }
+
+      if (rateSyncTimerRef.current !== null) {
+        window.clearTimeout(rateSyncTimerRef.current);
+      }
+      if (cloudUserIdRef.current && navigator.onLine) {
+        rateSyncTimerRef.current = window.setTimeout(() => {
+          void triggerSyncQueue('auto');
+        }, 900);
+      }
     }
+  };
+
+  const handleSaveBusinessSettings = async (next: {
+    businessName: string;
+    rif: string;
+    phone: string;
+    address: string;
+    exchangeRate: number;
+  }) => {
+    const nowIso = new Date().toISOString();
+    const updated: BusinessSettings = {
+      businessName: next.businessName,
+      rif: next.rif,
+      phone: next.phone,
+      address: next.address,
+      exchangeRate: round2(next.exchangeRate),
+      updatedAt: nowIso,
+      syncStatus: 'pending',
+    };
+
+    const queueItem = buildSyncQueueItem({
+      entityType: 'businessSettings',
+      entityId: 'business_settings',
+      operation: 'update',
+      summary: `Ajustes: ${updated.businessName} (Tasa Bs ${updated.exchangeRate.toFixed(2)})`,
+      timestamp: nowIso,
+    });
+
+    await saveLocalBusinessSettings(updated);
+    await db.syncQueue.put(queueItem);
+
+    try {
+      localStorage.setItem(RATE_STORAGE_KEY, updated.exchangeRate.toFixed(2));
+    } catch {
+      // Ignore storage quota errors
+    }
+
+    await reloadAllData();
+    if (navigator.onLine && cloudUserIdRef.current) {
+      await triggerSyncQueue('auto');
+    }
+  };
+
+  const handleCloudAuthSuccess = async (user: User, registeredBusinessName?: string) => {
+    cloudUserIdRef.current = user.id;
+    setCloudUser(user);
+    setCloudAuthModalOpen(false);
+    setOfflineAuthBypass(false);
+    try {
+      localStorage.removeItem(OFFLINE_BYPASS_KEY);
+    } catch {
+      // Ignore storage errors
+    }
+
+    if (registeredBusinessName && registeredBusinessName.trim()) {
+      const current = await getLocalBusinessSettings();
+      await saveLocalBusinessSettings({
+        ...current,
+        businessName: registeredBusinessName.trim(),
+        updatedAt: new Date().toISOString(),
+        syncStatus: 'pending',
+      });
+    }
+
+    if (!activeCashier) {
+      setLoginModalOpen(true);
+    }
+
+    await triggerSyncQueue('auto', user.id);
+  };
+
+  const handleContinueOffline = () => {
+    setOfflineAuthBypass(true);
+    setCloudAuthModalOpen(false);
+    try {
+      localStorage.setItem(OFFLINE_BYPASS_KEY, 'true');
+    } catch {
+      // Ignore storage errors
+    }
+    if (!activeCashier) {
+      setLoginModalOpen(true);
+    }
+  };
+
+  const handleSignOutCloud = async () => {
+    try {
+      await supabase.auth.signOut();
+    } catch {
+      // Even if offline, clear local cloud session reference
+    }
+    cloudUserIdRef.current = null;
+    setCloudUser(null);
+    setLastSyncError(null);
+    setOfflineAuthBypass(true);
+    try {
+      localStorage.setItem(OFFLINE_BYPASS_KEY, 'true');
+    } catch {
+      // Ignore storage errors
+    }
+    showTemporarySyncNotice('Sesión nube cerrada. Tus datos siguen disponibles offline en este equipo.');
   };
 
   const handleBranchChange = (branchId: string) => {
@@ -514,9 +713,19 @@ export default function App() {
         products,
         supplierQuotes,
         syncQueue,
+        businessSettings,
       }),
-    [sales, shifts, transfers, expenses, customers, products, supplierQuotes, syncQueue]
+    [sales, shifts, transfers, expenses, customers, products, supplierQuotes, syncQueue, businessSettings]
   );
+
+  const cloudSyncState: CloudSyncState = useMemo(() => {
+    if (!isOnline) return 'offline';
+    if (isSyncing) return 'syncing';
+    if (!cloudUser) return 'local';
+    if (lastSyncError) return 'error';
+    if (pendingSyncSummary.total > 0) return 'pending';
+    return 'synced';
+  }, [isOnline, isSyncing, cloudUser, lastSyncError, pendingSyncSummary.total]);
 
   // Shift Handlers
   const handleOpenShift = async (params: {
@@ -1347,7 +1556,7 @@ export default function App() {
 
   const handleCopyReceipt = async (sale: Sale) => {
     try {
-      await navigator.clipboard.writeText(buildWhatsAppReceiptText(sale));
+      await navigator.clipboard.writeText(buildWhatsAppReceiptText(sale, businessSettings));
       setCopiedReceiptId(sale.id);
       setTimeout(() => setCopiedReceiptId(null), 2000);
     } catch {
@@ -1357,7 +1566,7 @@ export default function App() {
 
   const renderCartContent = () => (
     <div className="flex h-full flex-col bg-white">
-      <div className="border-b border-slate-200 px-4 py-3">
+      <div className="border-b border-slate-200 px-3.5 py-2.5">
         <div className="flex items-center justify-between gap-2">
           <label
             htmlFor="customer-select"
@@ -1369,20 +1578,20 @@ export default function App() {
           <button
             type="button"
             onClick={() => setShowNewCustomerForm((prev) => !prev)}
-            className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 hover:text-emerald-800 whitespace-nowrap shrink-0 cursor-pointer"
+            className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-semibold text-[#558B00] hover:bg-[#F7FEE7] hover:text-[#3F6212] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
           >
             <UserPlus className="h-3.5 w-3.5" />
-            {showNewCustomerForm ? 'Cancelar' : 'Nuevo cliente'}
+            {showNewCustomerForm ? 'Cancelar' : 'Nuevo'}
           </button>
         </div>
 
         {!showNewCustomerForm ? (
-          <div className="mt-2">
+          <div className="mt-1.5">
             <select
               id="customer-select"
               value={selectedCustomerId}
               onChange={(e) => setSelectedCustomerId(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-900 focus:border-emerald-600 focus:bg-white focus:outline-none"
+              className="w-full rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
             >
               {customers.map((customer) => (
                 <option key={customer.id} value={customer.id}>
@@ -1391,55 +1600,58 @@ export default function App() {
               ))}
             </select>
             {selectedCustomer && selectedCustomer.balanceUsd > 0 && (
-              <p className="mt-1.5 text-xs text-amber-700 font-medium tabular-nums">
-                Saldo por cobrar: {formatUsd(selectedCustomer.balanceUsd)} ·{' '}
+              <p className="mt-1 text-[11px] font-medium text-amber-700 font-mono tabular-nums">
+                Por cobrar: {formatUsd(selectedCustomer.balanceUsd)} ·{' '}
                 {formatVes(round2(selectedCustomer.balanceUsd * exchangeRate))}
               </p>
             )}
           </div>
         ) : (
-          <form onSubmit={handleCreateCustomer} className="mt-2 space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+          <form
+            onSubmit={handleCreateCustomer}
+            className="mt-2 space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-2.5"
+          >
             <input
               type="text"
               required
               placeholder="Nombre o razón social *"
               value={newCustomerName}
               onChange={(e) => setNewCustomerName(e.target.value)}
-              className="w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-emerald-600 focus:outline-none"
+              className="w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-[#76B900] focus:outline-none"
             />
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 gap-1.5">
               <input
                 type="text"
                 placeholder="Cédula / RIF"
                 value={newCustomerDoc}
                 onChange={(e) => setNewCustomerDoc(e.target.value)}
-                className="w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-emerald-600 focus:outline-none"
+                className="w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-[#76B900] focus:outline-none"
               />
               <input
                 type="tel"
                 placeholder="WhatsApp (58412...)"
                 value={newCustomerPhone}
                 onChange={(e) => setNewCustomerPhone(e.target.value)}
-                className="w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-emerald-600 focus:outline-none"
+                className="w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-[#76B900] focus:outline-none"
               />
             </div>
             <button
               type="submit"
-              className="w-full rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 transition-colors cursor-pointer"
+              className="w-full rounded-md bg-[#84CC16] px-2.5 py-1.5 text-xs font-semibold text-slate-950 hover:bg-[#76B900] transition-colors cursor-pointer"
             >
-              Guardar y asignar cliente
+              Guardar y asignar
             </button>
           </form>
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4">
+      <div className="flex-1 overflow-y-auto px-3.5">
         {cart.length === 0 ? (
-          <div className="flex h-full min-h-[200px] flex-col items-center justify-center text-center py-8">
-            <ShoppingCart className="h-9 w-9 text-slate-300" />
-            <p className="mt-3 text-sm font-semibold text-slate-700">Carrito vacío</p>
-            <p className="mt-1 max-w-[220px] text-xs text-slate-500">
-              Selecciona productos del catálogo o escanea un código SKU para iniciar la venta.
+          <div className="flex h-full min-h-[190px] flex-col items-center justify-center py-8 text-center">
+            <ShoppingCart className="h-8 w-8 text-slate-300" />
+            <p className="mt-2.5 text-xs font-semibold text-slate-700">Carrito vacío</p>
+            <p className="mt-1 max-w-[210px] text-[11px] text-slate-500">
+              Toca productos del catálogo o escanea un código SKU para iniciar.
             </p>
           </div>
         ) : (
@@ -1450,11 +1662,11 @@ export default function App() {
               const maxStock = prod ? getBranchStock(prod) : item.quantity;
 
               return (
-                <li key={item.productId} className="py-3">
+                <li key={item.productId} className="py-2.5">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-semibold text-slate-900">{item.name}</p>
-                      <p className="mt-0.5 text-xs text-slate-500 font-mono tabular-nums">
+                      <p className="truncate text-xs font-semibold text-slate-900">{item.name}</p>
+                      <p className="mt-0.5 text-[11px] text-slate-500 font-mono tabular-nums">
                         {formatPrimary(item.priceUsd)} c/u · {item.sku}
                       </p>
                     </div>
@@ -1464,21 +1676,21 @@ export default function App() {
                       aria-label={`Eliminar ${item.name}`}
                       className="rounded-md p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 transition-colors cursor-pointer"
                     >
-                      <Trash2 className="h-4 w-4" />
+                      <Trash2 className="h-3.5 w-3.5" />
                     </button>
                   </div>
 
-                  <div className="mt-2 flex items-center justify-between gap-3">
-                    <div className="inline-flex items-center rounded-lg border border-slate-200 bg-slate-50">
+                  <div className="mt-1.5 flex items-center justify-between gap-2">
+                    <div className="inline-flex items-center rounded-md border border-slate-200 bg-slate-50">
                       <button
                         type="button"
                         onClick={() => updateCartQuantity(item.productId, -1)}
                         aria-label="Disminuir cantidad"
-                        className="flex h-8 w-8 items-center justify-center text-slate-700 hover:bg-slate-200/70 rounded-l-lg transition-colors cursor-pointer"
+                        className="flex h-7 w-7 items-center justify-center rounded-l-md text-slate-700 hover:bg-slate-200/70 transition-colors cursor-pointer"
                       >
-                        <Minus className="h-3.5 w-3.5" />
+                        <Minus className="h-3 w-3" />
                       </button>
-                      <span className="w-9 text-center text-sm font-semibold font-mono tabular-nums text-slate-900">
+                      <span className="w-7 text-center font-mono text-xs font-semibold tabular-nums text-slate-900">
                         {item.quantity}
                       </span>
                       <button
@@ -1486,15 +1698,27 @@ export default function App() {
                         disabled={item.quantity >= maxStock}
                         onClick={() => updateCartQuantity(item.productId, 1)}
                         aria-label="Aumentar cantidad"
-                        className="flex h-8 w-8 items-center justify-center text-slate-700 hover:bg-slate-200/70 rounded-r-lg disabled:opacity-40 transition-colors cursor-pointer"
+                        className="flex h-7 w-7 items-center justify-center rounded-r-md text-slate-700 hover:bg-slate-200/70 disabled:opacity-40 transition-colors cursor-pointer"
                       >
-                        <Plus className="h-3.5 w-3.5" />
+                        <Plus className="h-3 w-3" />
                       </button>
                     </div>
 
                     <div className="text-right font-mono tabular-nums">
-                      <p className="text-sm font-bold text-slate-900">{formatPrimary(lineUsd)}</p>
-                      <p className="text-[11px] text-slate-500">{formatSecondary(lineUsd)}</p>
+                      <p
+                        className={`text-xs font-bold ${
+                          currency === 'VES' ? 'text-[#558B00]' : 'text-slate-900'
+                        }`}
+                      >
+                        {formatPrimary(lineUsd)}
+                      </p>
+                      <p
+                        className={`text-[11px] ${
+                          currency === 'USD' ? 'text-[#558B00] font-medium' : 'text-slate-500'
+                        }`}
+                      >
+                        {formatSecondary(lineUsd)}
+                      </p>
                     </div>
                   </div>
                 </li>
@@ -1504,16 +1728,16 @@ export default function App() {
         )}
       </div>
 
-      <div className="border-t border-slate-200 bg-slate-50/80 px-4 py-3 space-y-3">
-        <div className="flex items-center justify-between gap-3">
-          <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer select-none">
+      <div className="border-t border-slate-200 bg-slate-50/80 px-3.5 py-2.5 space-y-2.5">
+        <div className="flex items-center justify-between gap-2">
+          <label className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-700 cursor-pointer select-none">
             <input
               type="checkbox"
               checked={applyTax}
               onChange={(e) => setApplyTax(e.target.checked)}
-              className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-600"
+              className="h-3.5 w-3.5 rounded border-slate-300 accent-[#76B900]"
             />
-            Aplicar IVA (16% gravables)
+            IVA 16% (gravables)
           </label>
           {cart.length > 0 && (
             <button
@@ -1531,7 +1755,7 @@ export default function App() {
           placeholder="Nota opcional del pedido..."
           value={orderNotes}
           onChange={(e) => setOrderNotes(e.target.value)}
-          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-emerald-600 focus:outline-none"
+          className="w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-[#76B900] focus:outline-none"
         />
 
         <div className="space-y-1 text-xs text-slate-600 font-mono tabular-nums">
@@ -1546,12 +1770,20 @@ export default function App() {
             </div>
           )}
           <div className="flex items-baseline justify-between border-t border-slate-200 pt-2">
-            <span className="font-sans text-sm font-bold text-slate-900">Total a pagar</span>
+            <span className="font-sans text-xs font-bold text-slate-900">Total a pagar</span>
             <div className="text-right">
-              <p className="text-lg font-bold text-slate-900">
+              <p
+                className={`text-base font-bold ${
+                  currency === 'VES' ? 'text-[#558B00]' : 'text-slate-900'
+                }`}
+              >
                 {formatPrimary(cartTotals.totalUsd)}
               </p>
-              <p className="text-xs font-medium text-slate-500">
+              <p
+                className={`text-xs font-semibold ${
+                  currency === 'USD' ? 'text-[#558B00]' : 'text-slate-500'
+                }`}
+              >
                 {formatSecondary(cartTotals.totalUsd)}
               </p>
             </div>
@@ -1562,31 +1794,43 @@ export default function App() {
           type="button"
           disabled={cart.length === 0 || !activeCashier}
           onClick={openCheckoutModal}
-          className="flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-700 disabled:bg-slate-300 disabled:text-slate-500 transition-colors cursor-pointer"
+          className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-[#84CC16] px-3.5 py-2.5 text-xs font-bold text-slate-950 hover:bg-[#76B900] disabled:bg-slate-200 disabled:text-slate-400 transition-colors cursor-pointer disabled:cursor-not-allowed"
         >
-          <CreditCard className="h-4 w-4" />
+          <CreditCard className="h-3.5 w-3.5" />
           Cobrar {cart.length > 0 ? formatPrimary(cartTotals.totalUsd) : ''}
         </button>
       </div>
     </div>
   );
 
+  if (authChecked && !cloudUser && !offlineAuthBypass) {
+    return (
+      <CloudAuthScreen
+        mode="fullscreen"
+        isOnline={isOnline}
+        defaultBusinessName={businessSettings.businessName}
+        onAuthSuccess={(user, name) => void handleCloudAuthSuccess(user, name)}
+        onContinueOffline={handleContinueOffline}
+      />
+    );
+  }
+
   return (
-    <div className="flex h-full min-h-screen flex-col bg-slate-50 text-slate-900">
-      <header className="sticky top-0 z-30 border-b border-slate-800 bg-slate-900 text-white">
-        <div className="mx-auto flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 xl:flex-nowrap lg:px-6">
-          <div className="flex flex-wrap items-center gap-2 min-w-0">
-            <span className="text-lg font-bold tracking-tight text-white whitespace-nowrap shrink-0">
-              Pos 262
+    <div className="flex h-full min-h-screen flex-col bg-[#F8FAFC] text-slate-900">
+      <header className="sticky top-0 z-30 border-b border-slate-200 bg-white text-slate-900">
+        <div className="mx-auto flex items-center justify-between gap-2 overflow-x-auto no-scrollbar whitespace-nowrap px-3 py-1.5 lg:px-5">
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="text-sm font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0">
+              Pos <span className="text-[#558B00]">262</span>
             </span>
 
-            <div className="relative flex items-center">
-              <Building2 className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-slate-400" />
+            <div className="relative flex items-center shrink-0">
+              <Building2 className="pointer-events-none absolute left-2 h-3.5 w-3.5 text-slate-400" />
               <select
                 aria-label="Seleccionar sucursal"
                 value={activeBranchId}
                 onChange={(e) => handleBranchChange(e.target.value)}
-                className="max-w-[155px] truncate rounded-lg border border-slate-700 bg-slate-800 py-1.5 pl-8 pr-5 text-xs font-semibold text-slate-100 focus:border-emerald-500 focus:outline-none cursor-pointer"
+                className="max-w-[120px] truncate rounded-md border border-slate-200 bg-slate-50 py-1 pl-6 pr-2 text-xs font-medium text-slate-800 focus:border-[#76B900] focus:bg-white focus:outline-none cursor-pointer"
               >
                 {branches.map((branch) => (
                   <option key={branch.id} value={branch.id}>
@@ -1596,25 +1840,28 @@ export default function App() {
               </select>
             </div>
 
-            <nav aria-label="Módulos" className="flex items-center gap-1 overflow-x-auto rounded-lg bg-slate-800 p-0.5">
+            <nav
+              aria-label="Módulos"
+              className="flex items-center gap-0.5 rounded-md border border-slate-200 bg-slate-50 p-0.5 shrink-0"
+            >
               <button
                 type="button"
                 onClick={() => setActiveTab('pos')}
-                className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                className={`rounded px-2 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   activeTab === 'pos'
-                    ? 'bg-white text-slate-900'
-                    : 'text-slate-300 hover:text-white'
+                    ? 'bg-[#84CC16] text-slate-950'
+                    : 'text-slate-600 hover:bg-white hover:text-slate-900'
                 }`}
               >
-                Caja POS
+                POS
               </button>
               <button
                 type="button"
                 onClick={() => setActiveTab('shifts')}
-                className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   activeTab === 'shifts'
-                    ? 'bg-white text-slate-900'
-                    : 'text-slate-300 hover:text-white'
+                    ? 'bg-[#84CC16] text-slate-950'
+                    : 'text-slate-600 hover:bg-white hover:text-slate-900'
                 }`}
               >
                 <Lock className="h-3 w-3" />
@@ -1623,10 +1870,10 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setActiveTab('inventory')}
-                className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   activeTab === 'inventory'
-                    ? 'bg-white text-slate-900'
-                    : 'text-slate-300 hover:text-white'
+                    ? 'bg-[#84CC16] text-slate-950'
+                    : 'text-slate-600 hover:bg-white hover:text-slate-900'
                 }`}
               >
                 <ArrowLeftRight className="h-3 w-3" />
@@ -1635,10 +1882,10 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setActiveTab('reports')}
-                className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   activeTab === 'reports'
-                    ? 'bg-white text-slate-900'
-                    : 'text-slate-300 hover:text-white'
+                    ? 'bg-[#84CC16] text-slate-950'
+                    : 'text-slate-600 hover:bg-white hover:text-slate-900'
                 }`}
               >
                 <BarChart3 className="h-3 w-3" />
@@ -1647,71 +1894,33 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setActiveTab('costing')}
-                className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   activeTab === 'costing'
-                    ? 'bg-white text-slate-900'
-                    : 'text-slate-300 hover:text-white'
+                    ? 'bg-[#84CC16] text-slate-950'
+                    : 'text-slate-600 hover:bg-white hover:text-slate-900'
                 }`}
               >
                 <Calculator className="h-3 w-3" />
-                Costos y Gastos
+                Costos
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('settings')}
+                className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                  activeTab === 'settings'
+                    ? 'bg-[#84CC16] text-slate-950'
+                    : 'text-slate-600 hover:bg-white hover:text-slate-900'
+                }`}
+              >
+                <Settings className="h-3 w-3" />
+                Config
               </button>
             </nav>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setLoginModalOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs font-semibold text-slate-100 hover:bg-slate-700 whitespace-nowrap shrink-0 cursor-pointer"
-            >
-              <UserCheck className="h-3.5 w-3.5 text-emerald-400" />
-              <span className="max-w-[95px] truncate">
-                {activeCashier ? activeCashier.name : 'Ingresar'}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setHistoryTab('queue');
-                setHistoryOpen(true);
-              }}
-              title="Ver cola de sincronización offline"
-              className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                isOnline
-                  ? 'border-emerald-800 bg-emerald-950/60 text-emerald-300 hover:bg-emerald-900/60'
-                  : 'border-amber-700 bg-amber-950/70 text-amber-300 hover:bg-amber-900/70'
-              }`}
-            >
-              {isOnline ? <Wifi className="h-3.5 w-3.5" /> : <WifiOff className="h-3.5 w-3.5" />}
-              <span>{isOnline ? 'En línea' : 'Offline'}</span>
-              <span
-                className={`font-mono tabular-nums ${
-                  pendingSyncSummary.total > 0 ? 'text-amber-300 font-bold' : 'text-slate-300'
-                }`}
-              >
-                · {pendingSyncSummary.total} {pendingSyncSummary.total === 1 ? 'pendiente' : 'pendientes'}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              disabled={!isOnline || isSyncing}
-              onClick={() => void triggerSyncQueue('manual')}
-              title={
-                !isOnline
-                  ? 'Sin conexión a internet'
-                  : 'Procesar y sincronizar registros pendientes ahora'
-              }
-              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-700 bg-emerald-700 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-emerald-600 disabled:border-slate-700 disabled:bg-slate-800 disabled:text-slate-400 transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:cursor-not-allowed"
-            >
-              <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-              <span>{isSyncing ? 'Sincronizando...' : 'Sincronizar ahora'}</span>
-            </button>
-
-            <label className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-2 py-1 text-xs">
-              <span className="font-medium text-slate-400 whitespace-nowrap">Bs/$</span>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <label className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs focus-within:border-[#76B900] focus-within:bg-white shrink-0">
+              <span className="font-medium text-slate-500 whitespace-nowrap">Bs/$</span>
               <input
                 type="number"
                 step="0.01"
@@ -1719,22 +1928,22 @@ export default function App() {
                 aria-label="Tasa diaria de cambio en Bolívares por Dólar"
                 value={exchangeRateInput}
                 onChange={(e) => handleExchangeRateChange(e.target.value)}
-                className="w-14 bg-transparent text-right font-mono text-xs font-bold tabular-nums text-white focus:outline-none"
+                className="w-12 bg-transparent text-right font-mono text-xs font-bold tabular-nums text-[#558B00] focus:outline-none"
               />
             </label>
 
             <div
               role="group"
               aria-label="Moneda de visualización"
-              className="inline-flex items-center rounded-lg border border-slate-700 bg-slate-800 p-0.5 shrink-0"
+              className="inline-flex items-center rounded-md border border-slate-200 bg-slate-50 p-0.5 shrink-0"
             >
               <button
                 type="button"
                 onClick={() => handleCurrencyChange('USD')}
-                className={`rounded-md px-2 py-1 text-xs font-bold transition-colors whitespace-nowrap cursor-pointer ${
+                className={`rounded px-2 py-0.5 text-xs font-bold transition-colors whitespace-nowrap cursor-pointer ${
                   currency === 'USD'
-                    ? 'bg-emerald-600 text-white'
-                    : 'text-slate-300 hover:text-white'
+                    ? 'bg-[#84CC16] text-slate-950'
+                    : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 $
@@ -1742,10 +1951,10 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => handleCurrencyChange('VES')}
-                className={`rounded-md px-2 py-1 text-xs font-bold transition-colors whitespace-nowrap cursor-pointer ${
+                className={`rounded px-2 py-0.5 text-xs font-bold transition-colors whitespace-nowrap cursor-pointer ${
                   currency === 'VES'
-                    ? 'bg-emerald-600 text-white'
-                    : 'text-slate-300 hover:text-white'
+                    ? 'bg-[#84CC16] text-slate-950'
+                    : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 Bs
@@ -1755,11 +1964,82 @@ export default function App() {
             <button
               type="button"
               onClick={() => {
+                if (!cloudUser) {
+                  setActiveTab('settings');
+                } else {
+                  setHistoryTab('queue');
+                  setHistoryOpen(true);
+                }
+              }}
+              title={
+                cloudUser
+                  ? `Cuenta nube: ${cloudUser.email} · Clic para ver cola`
+                  : 'Clic para vincular cuenta en la nube en Configuración'
+              }
+              className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                cloudSyncState === 'offline'
+                  ? 'border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100/70'
+                  : cloudSyncState === 'synced'
+                  ? 'border-[#84CC16]/40 bg-[#F7FEE7] text-[#3F6212] hover:bg-[#ECFCCB]'
+                  : cloudSyncState === 'error'
+                  ? 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100/70'
+                  : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              {cloudSyncState === 'offline' ? (
+                <WifiOff className="h-3.5 w-3.5 text-amber-600" />
+              ) : cloudSyncState === 'syncing' ? (
+                <RefreshCw className="h-3 w-3 animate-spin text-[#76B900]" />
+              ) : cloudSyncState === 'local' ? (
+                <CloudOff className="h-3.5 w-3.5 text-slate-400" />
+              ) : (
+                <Cloud
+                  className={`h-3.5 w-3.5 ${
+                    cloudSyncState === 'error' ? 'text-red-500' : 'text-[#76B900]'
+                  }`}
+                />
+              )}
+              <span>
+                {cloudSyncState === 'offline'
+                  ? 'Modo Offline'
+                  : cloudSyncState === 'syncing'
+                  ? 'Sincronizando...'
+                  : cloudSyncState === 'synced'
+                  ? 'Sincronizado'
+                  : cloudSyncState === 'local'
+                  ? 'Solo local'
+                  : cloudSyncState === 'error'
+                  ? 'Reintentar sync'
+                  : 'Pendiente'}
+              </span>
+              {pendingSyncSummary.total > 0 && cloudSyncState !== 'syncing' && (
+                <span className="font-mono font-bold tabular-nums text-amber-700">
+                  · {pendingSyncSummary.total}
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setLoginModalOpen(true)}
+              title="Cambiar cajero"
+              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              <UserCheck className="h-3.5 w-3.5 text-[#76B900]" />
+              <span className="max-w-[80px] truncate">
+                {activeCashier ? activeCashier.name : 'Ingresar'}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
                 setHistoryTab('sales');
                 setHistoryOpen(true);
               }}
               aria-label="Historial de ventas y sincronización"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              title="Historial de ventas y cola offline"
+              className="inline-flex items-center justify-center rounded-md border border-slate-200 bg-white p-1.5 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors shrink-0 cursor-pointer"
             >
               <History className="h-3.5 w-3.5" />
             </button>
@@ -1768,16 +2048,16 @@ export default function App() {
               <button
                 type="button"
                 onClick={deferredPrompt ? handleInstallPWA : () => setShowIOSInstallGuide(true)}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                className="inline-flex items-center gap-1 rounded-md bg-[#84CC16] px-2 py-1 text-xs font-semibold text-slate-950 hover:bg-[#76B900] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
               >
-                <Download className="h-3.5 w-3.5" />
+                <Download className="h-3 w-3" />
                 <span>Instalar</span>
               </button>
             )}
           </div>
         </div>
         {syncNotice && (
-          <div className="border-t border-slate-800 bg-slate-950 px-4 py-1.5 text-xs text-emerald-300 lg:px-6">
+          <div className="border-t border-[#84CC16]/30 bg-[#F7FEE7] px-3 py-1 text-xs font-medium text-[#3F6212] lg:px-5">
             {syncNotice}
           </div>
         )}
@@ -1786,18 +2066,18 @@ export default function App() {
       {activeTab === 'pos' && (
         <>
           {!activeShift && activeCashier && (
-            <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900 lg:px-6">
+            <div className="border-b border-amber-200 bg-amber-50/80 px-3 py-1.5 text-xs text-amber-900 lg:px-5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="inline-flex items-center gap-1.5 font-medium">
-                  <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
-                  No tienes un turno abierto en {activeBranch?.name}. Abre un turno con fondo inicial para llevar el arqueo de caja.
+                  <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+                  Sin turno abierto en {activeBranch?.name}. Abre un turno con fondo inicial para llevar el arqueo.
                 </span>
                 <button
                   type="button"
                   onClick={() => setActiveTab('shifts')}
                   className="font-semibold text-amber-950 underline underline-offset-2 hover:text-amber-700 cursor-pointer whitespace-nowrap"
                 >
-                  Abrir turno ahora
+                  Abrir turno
                 </button>
               </div>
             </div>
@@ -1805,26 +2085,28 @@ export default function App() {
 
           <main className="flex flex-1 overflow-hidden">
             <section className="flex flex-1 flex-col overflow-hidden">
-              <div className="border-b border-slate-200 bg-white px-4 py-3 lg:px-6">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="relative flex-1 max-w-xl">
-                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <div className="border-b border-slate-200 bg-white px-3.5 py-2.5 lg:px-5">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="relative flex-1 max-w-lg">
+                    <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
                     <input
                       type="search"
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       onKeyDown={handleSearchKeyDown}
-                      placeholder="Buscar por nombre, SKU o código de barras (Enter para agregar)..."
-                      className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-emerald-600 focus:bg-white focus:outline-none"
+                      placeholder="Buscar por nombre, SKU o código de barras (Enter)..."
+                      className="w-full rounded-md border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-3 text-xs text-slate-900 placeholder:text-slate-400 focus:border-[#76B900] focus:bg-white focus:outline-none"
                     />
                   </div>
                   <p className="text-xs font-medium text-slate-500 whitespace-nowrap shrink-0">
                     {filteredProducts.length} productos · {activeBranch?.name ?? 'Sucursal'}
-                    {activeShift ? ' · Turno abierto' : ''}
+                    {activeShift ? (
+                      <span className="text-[#558B00] font-semibold"> · Turno abierto</span>
+                    ) : null}
                   </p>
                 </div>
 
-                <div className="mt-3 flex items-center gap-1.5 overflow-x-auto pb-0.5">
+                <div className="mt-2 flex items-center gap-1 overflow-x-auto no-scrollbar">
                   {categories.map((category) => {
                     const isActive = selectedCategory === category;
                     return (
@@ -1832,10 +2114,10 @@ export default function App() {
                         key={category}
                         type="button"
                         onClick={() => setSelectedCategory(category)}
-                        className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                        className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                           isActive
-                            ? 'bg-slate-900 text-white'
-                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900'
+                            ? 'bg-[#84CC16] text-slate-950'
+                            : 'border border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900'
                         }`}
                       >
                         {category}
@@ -1845,20 +2127,20 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-4 pb-24 lg:p-6 lg:pb-6">
+              <div className="flex-1 overflow-y-auto p-3.5 pb-20 lg:p-5 lg:pb-5">
                 {!isReady ? (
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                  <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
                     {Array.from({ length: 6 }).map((_, idx) => (
                       <div
                         key={idx}
-                        className="h-32 animate-pulse rounded-xl border border-slate-200 bg-white p-4"
+                        className="h-28 animate-pulse rounded-lg border border-slate-200 bg-white p-3"
                       />
                     ))}
                   </div>
                 ) : filteredProducts.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center rounded-xl border border-slate-200 bg-white py-14 text-center">
-                    <Search className="h-8 w-8 text-slate-300" />
-                    <p className="mt-3 text-sm font-semibold text-slate-800">
+                  <div className="flex flex-col items-center justify-center rounded-lg border border-slate-200 bg-white py-12 text-center">
+                    <Search className="h-7 w-7 text-slate-300" />
+                    <p className="mt-2.5 text-sm font-semibold text-slate-800">
                       No se encontraron productos
                     </p>
                     <p className="mt-1 text-xs text-slate-500">
@@ -1870,13 +2152,13 @@ export default function App() {
                         setSearchQuery('');
                         setSelectedCategory('Todos');
                       }}
-                      className="mt-4 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800 transition-colors cursor-pointer"
+                      className="mt-3 rounded-md bg-[#84CC16] px-3 py-1.5 text-xs font-semibold text-slate-950 hover:bg-[#76B900] transition-colors cursor-pointer"
                     >
                       Limpiar filtros
                     </button>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                  <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
                     {filteredProducts.map((product) => {
                       const stock = getBranchStock(product);
                       const inCartQty = getCartQuantity(product.id);
@@ -1889,26 +2171,26 @@ export default function App() {
                           type="button"
                           disabled={outOfStock}
                           onClick={() => addToCart(product)}
-                          className={`group flex flex-col justify-between rounded-xl border p-4 text-left transition-all cursor-pointer ${
+                          className={`group flex flex-col justify-between rounded-lg border p-3 text-left transition-all cursor-pointer ${
                             outOfStock
                               ? 'border-slate-200 bg-slate-100/70 opacity-60 cursor-not-allowed'
                               : inCartQty > 0
-                              ? 'border-emerald-600 bg-white ring-1 ring-emerald-600/20'
-                              : 'border-slate-200 bg-white hover:border-slate-400'
+                              ? 'border-[#76B900] bg-[#F7FEE7]/50 ring-1 ring-[#84CC16]/30'
+                              : 'border-slate-200 bg-white hover:border-[#76B900]/60'
                           }`}
                         >
                           <div>
                             <div className="flex items-start justify-between gap-2">
-                              <h2 className="text-sm font-semibold leading-snug text-slate-900 group-hover:text-emerald-700 transition-colors">
+                              <h2 className="text-xs font-semibold leading-snug text-slate-900 group-hover:text-[#3F6212] transition-colors">
                                 {product.name}
                               </h2>
                               {inCartQty > 0 && (
-                                <span className="shrink-0 font-mono text-xs font-bold tabular-nums text-emerald-700">
+                                <span className="shrink-0 font-mono text-xs font-bold tabular-nums text-[#558B00]">
                                   ×{inCartQty}
                                 </span>
                               )}
                             </div>
-                            <p className="mt-1 text-xs text-slate-500">
+                            <p className="mt-1 text-[11px] text-slate-500">
                               <span className="font-mono">{product.sku}</span>
                               <span aria-hidden="true"> · </span>
                               <span>{product.category}</span>
@@ -1921,23 +2203,31 @@ export default function App() {
                             </p>
                           </div>
 
-                          <div className="mt-4 flex items-end justify-between gap-2 border-t border-slate-100 pt-3">
+                          <div className="mt-3 flex items-end justify-between gap-2 border-t border-slate-100 pt-2">
                             <div className="font-mono tabular-nums">
-                              <p className="text-base font-bold text-slate-900">
+                              <p
+                                className={`text-sm font-bold ${
+                                  currency === 'VES' ? 'text-[#558B00]' : 'text-slate-900'
+                                }`}
+                              >
                                 {formatPrimary(product.priceUsd)}
                               </p>
-                              <p className="text-[11px] text-slate-500">
+                              <p
+                                className={`text-[11px] ${
+                                  currency === 'USD' ? 'text-[#558B00] font-medium' : 'text-slate-500'
+                                }`}
+                              >
                                 {formatSecondary(product.priceUsd)}
                               </p>
                             </div>
 
-                            <div className="text-right text-xs font-semibold tabular-nums">
+                            <div className="text-right text-[11px] font-semibold tabular-nums">
                               {outOfStock ? (
                                 <span className="text-red-600">Agotado</span>
                               ) : lowStock ? (
-                                <span className="text-amber-700">Stock bajo: {stock}</span>
+                                <span className="text-amber-700">Bajo: {stock}</span>
                               ) : (
-                                <span className="text-slate-600">Stock: {stock}</span>
+                                <span className="text-slate-500">Stock: {stock}</span>
                               )}
                             </div>
                           </div>
@@ -1949,20 +2239,20 @@ export default function App() {
               </div>
             </section>
 
-            <aside className="hidden w-[380px] shrink-0 border-l border-slate-200 lg:block xl:w-[410px]">
+            <aside className="hidden w-[350px] shrink-0 border-l border-slate-200 lg:block xl:w-[380px]">
               {renderCartContent()}
             </aside>
           </main>
 
-          <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white px-4 py-2.5 lg:hidden">
-            <div className="flex items-center justify-between gap-3">
+          <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white px-3 py-2 lg:hidden">
+            <div className="flex items-center justify-between gap-2">
               <button
                 type="button"
                 onClick={() => setMobileCartOpen(true)}
-                className="flex flex-1 items-center justify-between rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white cursor-pointer"
+                className="flex flex-1 items-center justify-between rounded-lg border border-slate-200 bg-slate-900 px-3 py-2 text-xs font-semibold text-white cursor-pointer"
               >
-                <span className="inline-flex items-center gap-2">
-                  <ShoppingCart className="h-4 w-4" />
+                <span className="inline-flex items-center gap-1.5">
+                  <ShoppingCart className="h-3.5 w-3.5" />
                   Carrito ({cartTotals.itemCount})
                 </span>
                 <span className="font-mono tabular-nums">
@@ -1973,7 +2263,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={openCheckoutModal}
-                  className="rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 whitespace-nowrap shrink-0 cursor-pointer"
+                  className="rounded-lg bg-[#84CC16] px-3.5 py-2 text-xs font-bold text-slate-950 hover:bg-[#76B900] whitespace-nowrap shrink-0 cursor-pointer"
                 >
                   Cobrar
                 </button>
@@ -2047,7 +2337,52 @@ export default function App() {
         </div>
       )}
 
-      {loginModalOpen && cashiers.length > 0 && (
+      {activeTab === 'settings' && (
+        <div className="flex-1 overflow-y-auto">
+          <SettingsManager
+            cloudUser={cloudUser}
+            isOnline={isOnline}
+            isSyncing={isSyncing}
+            cloudSyncState={cloudSyncState}
+            lastSyncedAt={lastSyncedAt}
+            lastSyncError={lastSyncError}
+            pendingSyncSummary={pendingSyncSummary}
+            businessSettings={businessSettings}
+            counts={{
+              products: products.length,
+              customers: customers.length,
+              sales: sales.length,
+              shifts: shifts.length,
+              transfers: transfers.length,
+              quotes: supplierQuotes.length,
+              expenses: expenses.length,
+            }}
+            onSaveBusinessSettings={handleSaveBusinessSettings}
+            onManualSync={async () => {
+              await triggerSyncQueue('manual');
+            }}
+            onOpenCloudAuth={() => setCloudAuthModalOpen(true)}
+            onSignOutCloud={handleSignOutCloud}
+            onOpenSyncQueue={() => {
+              setHistoryTab('queue');
+              setHistoryOpen(true);
+            }}
+          />
+        </div>
+      )}
+
+      {cloudAuthModalOpen && (
+        <CloudAuthScreen
+          mode="modal"
+          isOnline={isOnline}
+          defaultBusinessName={businessSettings.businessName}
+          onAuthSuccess={(user, name) => void handleCloudAuthSuccess(user, name)}
+          onContinueOffline={handleContinueOffline}
+          onClose={() => setCloudAuthModalOpen(false)}
+        />
+      )}
+
+      {loginModalOpen && !cloudAuthModalOpen && cashiers.length > 0 && (
         <CashierLoginModal
           cashiers={cashiers}
           branches={branches}
@@ -2060,17 +2395,17 @@ export default function App() {
       {mobileCartOpen && (
         <div className="fixed inset-0 z-40 flex justify-end bg-slate-950/50 lg:hidden">
           <div className="flex h-full w-full max-w-md flex-col bg-white">
-            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-              <h2 className="text-base font-bold text-slate-900">
+            <div className="flex items-center justify-between border-b border-slate-200 px-3.5 py-2.5">
+              <h2 className="text-sm font-bold text-slate-900">
                 Carrito ({cartTotals.itemCount})
               </h2>
               <button
                 type="button"
                 onClick={() => setMobileCartOpen(false)}
                 aria-label="Cerrar carrito"
-                className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 cursor-pointer"
+                className="rounded-md p-1 text-slate-500 hover:bg-slate-100 cursor-pointer"
               >
-                <X className="h-5 w-5" />
+                <X className="h-4 w-4" />
               </button>
             </div>
             <div className="flex-1 overflow-hidden">{renderCartContent()}</div>
@@ -2079,11 +2414,11 @@ export default function App() {
       )}
 
       {checkoutOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-3 sm:p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-3 sm:p-4">
           <div className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white">
-            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3.5">
+            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
               <div>
-                <h2 className="text-base font-bold text-slate-900">
+                <h2 className="text-sm font-bold text-slate-900">
                   {completedSale ? 'Venta registrada' : 'Finalizar cobro'}
                 </h2>
                 <p className="text-xs text-slate-500">
@@ -2097,65 +2432,75 @@ export default function App() {
                   setCompletedSale(null);
                 }}
                 aria-label="Cerrar ventana de cobro"
-                className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 cursor-pointer"
+                className="rounded-md p-1 text-slate-500 hover:bg-slate-100 cursor-pointer"
               >
-                <X className="h-5 w-5" />
+                <X className="h-4 w-4" />
               </button>
             </div>
 
             {completedSale ? (
-              <div className="flex-1 overflow-y-auto p-5 space-y-5">
-                <div className="flex items-start justify-between gap-4 border-b border-slate-200 pb-4">
-                  <div className="flex items-start gap-3">
-                    <CheckCircle2 className="mt-0.5 h-6 w-6 shrink-0 text-emerald-600" />
+              <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                <div className="flex items-start justify-between gap-4 border-b border-slate-200 pb-3">
+                  <div className="flex items-start gap-2.5">
+                    <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-[#76B900]" />
                     <div>
-                      <p className="text-base font-bold text-slate-900">
+                      <p className="text-sm font-bold text-slate-900">
                         Recibo {completedSale.receiptNumber}
                       </p>
                       <p className="mt-0.5 text-xs text-slate-600">
                         {completedSale.saleType === 'cash' ? 'Venta de Contado' : 'Venta a Crédito'}
                         <span aria-hidden="true"> · </span>
-                        {completedSale.syncStatus === 'synced'
-                          ? 'Sincronizada'
-                          : 'Guardada offline (pendiente por sincronizar)'}
+                        <span
+                          className={
+                            completedSale.syncStatus === 'synced'
+                              ? 'font-semibold text-[#558B00]'
+                              : 'font-semibold text-amber-700'
+                          }
+                        >
+                          {completedSale.syncStatus === 'synced'
+                            ? 'Sincronizada'
+                            : 'Guardada offline (pendiente)'}
+                        </span>
                       </p>
                     </div>
                   </div>
                   <div className="text-right font-mono tabular-nums">
-                    <p className="text-lg font-bold text-slate-900">
+                    <p className="text-base font-bold text-slate-900">
                       {formatUsd(completedSale.totalUsd)}
                     </p>
-                    <p className="text-xs text-slate-500">{formatVes(completedSale.totalVes)}</p>
+                    <p className="text-xs font-semibold text-[#558B00]">
+                      {formatVes(completedSale.totalVes)}
+                    </p>
                   </div>
                 </div>
 
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 font-mono text-xs leading-relaxed text-slate-700 whitespace-pre-wrap">
-                  {buildWhatsAppReceiptText(completedSale)}
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5 font-mono text-xs leading-relaxed text-slate-700 whitespace-pre-wrap">
+                  {buildWhatsAppReceiptText(completedSale, businessSettings)}
                 </div>
 
-                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                   <a
-                    href={buildWhatsAppUrl(completedSale)}
+                    href={buildWhatsAppUrl(completedSale, businessSettings)}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 transition-colors sm:col-span-2"
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#84CC16] px-3.5 py-2 text-xs font-bold text-slate-950 hover:bg-[#76B900] transition-colors sm:col-span-2"
                   >
-                    <MessageCircle className="h-4 w-4" />
+                    <MessageCircle className="h-3.5 w-3.5" />
                     Enviar recibo por WhatsApp
                   </a>
                   <button
                     type="button"
                     onClick={() => void handleCopyReceipt(completedSale)}
-                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
                   >
                     {copiedReceiptId === completedSale.id ? (
                       <>
-                        <Check className="h-4 w-4 text-emerald-600" />
+                        <Check className="h-3.5 w-3.5 text-[#76B900]" />
                         Copiado
                       </>
                     ) : (
                       <>
-                        <Copy className="h-4 w-4" />
+                        <Copy className="h-3.5 w-3.5" />
                         Copiar texto
                       </>
                     )}
@@ -2168,40 +2513,40 @@ export default function App() {
                     setCheckoutOpen(false);
                     setCompletedSale(null);
                   }}
-                  className="w-full rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 transition-colors cursor-pointer"
+                  className="w-full rounded-lg bg-slate-900 px-3.5 py-2 text-xs font-semibold text-white hover:bg-slate-800 transition-colors cursor-pointer"
                 >
                   Nueva venta
                 </button>
               </div>
             ) : (
-              <div className="flex-1 overflow-y-auto p-5 space-y-5">
-                <div className="grid grid-cols-2 gap-4 rounded-lg border border-slate-200 bg-slate-50 p-4 font-mono tabular-nums">
+              <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                <div className="grid grid-cols-2 gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 font-mono tabular-nums">
                   <div>
-                    <p className="font-sans text-xs font-medium text-slate-500">Total en Dólares</p>
-                    <p className="mt-0.5 text-xl font-bold text-slate-900">
+                    <p className="font-sans text-[11px] font-medium text-slate-500">Total en Dólares</p>
+                    <p className="mt-0.5 text-lg font-bold text-slate-900">
                       {formatUsd(cartTotals.totalUsd)}
                     </p>
                   </div>
                   <div className="text-right">
-                    <p className="font-sans text-xs font-medium text-slate-500">
+                    <p className="font-sans text-[11px] font-medium text-slate-500">
                       Total en Bolívares (Tasa {exchangeRate.toFixed(2)})
                     </p>
-                    <p className="mt-0.5 text-xl font-bold text-slate-900">
+                    <p className="mt-0.5 text-lg font-bold text-[#558B00]">
                       {formatVes(cartTotals.totalVes)}
                     </p>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-1.5 rounded-lg bg-slate-100 p-1">
+                <div className="grid grid-cols-2 gap-1 rounded-lg border border-slate-200 bg-slate-50 p-0.5">
                   <button
                     type="button"
                     onClick={() => {
                       setSaleType('cash');
                       setCheckoutError('');
                     }}
-                    className={`rounded-md py-2 text-sm font-semibold transition-colors cursor-pointer ${
+                    className={`rounded-md py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
                       saleType === 'cash'
-                        ? 'bg-white text-slate-900 shadow-xs'
+                        ? 'bg-[#84CC16] text-slate-950'
                         : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
@@ -2213,9 +2558,9 @@ export default function App() {
                       setSaleType('credit');
                       setCheckoutError('');
                     }}
-                    className={`rounded-md py-2 text-sm font-semibold transition-colors cursor-pointer ${
+                    className={`rounded-md py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
                       saleType === 'credit'
-                        ? 'bg-white text-slate-900 shadow-xs'
+                        ? 'bg-[#84CC16] text-slate-950'
                         : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
@@ -2224,7 +2569,7 @@ export default function App() {
                 </div>
 
                 {saleType === 'credit' && (
-                  <div className="grid grid-cols-1 gap-3 rounded-lg border border-amber-200 bg-amber-50/70 p-3.5 sm:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-2.5 rounded-lg border border-amber-200 bg-amber-50/70 p-3 sm:grid-cols-2">
                     <div>
                       <label className="block text-xs font-semibold text-slate-700">
                         Cliente asignado al crédito
@@ -2235,7 +2580,7 @@ export default function App() {
                           setSelectedCustomerId(e.target.value);
                           setCheckoutError('');
                         }}
-                        className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 focus:border-emerald-600 focus:outline-none"
+                        className="mt-1 w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-[#76B900] focus:outline-none"
                       >
                         {customers.map((c) => (
                           <option key={c.id} value={c.id}>
@@ -2252,7 +2597,7 @@ export default function App() {
                         type="date"
                         value={creditDueDate}
                         onChange={(e) => setCreditDueDate(e.target.value)}
-                        className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm font-mono text-slate-900 focus:border-emerald-600 focus:outline-none"
+                        className="mt-1 w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs text-slate-900 focus:border-[#76B900] focus:outline-none"
                       />
                     </div>
                   </div>
@@ -2262,7 +2607,7 @@ export default function App() {
                   <p className="text-xs font-semibold text-slate-600">
                     Método de pago {saleType === 'credit' ? '(opcional abono inicial)' : ''}
                   </p>
-                  <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  <div className="mt-1.5 grid grid-cols-2 gap-1.5 sm:grid-cols-3">
                     {PAYMENT_METHODS.map((pm) => {
                       const active = selectedMethod === pm.method;
                       const Icon =
@@ -2279,13 +2624,13 @@ export default function App() {
                           key={pm.method}
                           type="button"
                           onClick={() => handleSelectMethod(pm.method)}
-                          className={`flex items-center gap-2 rounded-lg border px-3 py-2.5 text-left text-xs font-semibold transition-colors cursor-pointer ${
+                          className={`flex items-center gap-1.5 rounded-md border px-2.5 py-2 text-left text-xs font-semibold transition-colors cursor-pointer ${
                             active
-                              ? 'border-emerald-600 bg-emerald-50 text-emerald-900'
-                              : 'border-slate-200 bg-white text-slate-700 hover:border-slate-400'
+                              ? 'border-[#76B900] bg-[#F7FEE7] text-slate-950'
+                              : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
                           }`}
                         >
-                          <Icon className="h-4 w-4 shrink-0" />
+                          <Icon className={`h-3.5 w-3.5 shrink-0 ${active ? 'text-[#558B00]' : 'text-slate-400'}`} />
                           <span className="truncate">{pm.method}</span>
                         </button>
                       );
@@ -2293,7 +2638,7 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-12">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-12">
                   <div className="sm:col-span-5">
                     <label className="block text-xs font-medium text-slate-600">
                       Monto ({activeMethodConfig.currency === 'VES' ? 'Bs' : 'USD $'})
@@ -2305,38 +2650,38 @@ export default function App() {
                       value={paymentAmountInput}
                       onChange={(e) => setPaymentAmountInput(e.target.value)}
                       placeholder="0.00"
-                      className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm font-bold tabular-nums text-slate-900 focus:border-emerald-600 focus:outline-none"
+                      className="mt-1 w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs font-bold tabular-nums text-slate-900 focus:border-[#76B900] focus:outline-none"
                     />
                   </div>
                   <div className="sm:col-span-4">
                     <label className="block text-xs font-medium text-slate-600">
-                      Referencia {activeMethodConfig.requiresRef ? '(últimos 4-6 díg.)' : '(opcional)'}
+                      Referencia {activeMethodConfig.requiresRef ? '(últimos 4-6)' : '(opcional)'}
                     </label>
                     <input
                       type="text"
                       value={paymentReference}
                       onChange={(e) => setPaymentReference(e.target.value)}
                       placeholder="Ej: 482910"
-                      className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900 focus:border-emerald-600 focus:outline-none"
+                      className="mt-1 w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs text-slate-900 focus:border-[#76B900] focus:outline-none"
                     />
                   </div>
                   <div className="flex items-end sm:col-span-3">
                     <button
                       type="button"
                       onClick={handleAddPaymentLine}
-                      className="w-full rounded-lg border border-slate-300 bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-200 transition-colors whitespace-nowrap cursor-pointer"
+                      className="w-full rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-100 transition-colors whitespace-nowrap cursor-pointer"
                     >
-                      + Agregar pago
+                      + Agregar
                     </button>
                   </div>
                 </div>
 
                 {payments.length > 0 && (
-                  <div className="rounded-lg border border-slate-200 bg-white divide-y divide-slate-100">
+                  <div className="divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white">
                     {payments.map((payment, index) => (
                       <div
                         key={`${payment.method}-${index}`}
-                        className="flex items-center justify-between px-3.5 py-2 text-xs"
+                        className="flex items-center justify-between px-3 py-2 text-xs"
                       >
                         <div>
                           <span className="font-semibold text-slate-900">{payment.method}</span>
@@ -2346,9 +2691,10 @@ export default function App() {
                             </span>
                           )}
                         </div>
-                        <div className="flex items-center gap-3 font-mono tabular-nums">
+                        <div className="flex items-center gap-2.5 font-mono tabular-nums">
                           <span className="font-semibold text-slate-900">
-                            {formatUsd(payment.amountUsd)} ({formatVes(payment.amountVes)})
+                            {formatUsd(payment.amountUsd)}{' '}
+                            <span className="text-[#558B00]">({formatVes(payment.amountVes)})</span>
                           </span>
                           <button
                             type="button"
@@ -2364,20 +2710,20 @@ export default function App() {
                   </div>
                 )}
 
-                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-3 text-xs font-mono tabular-nums">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-2.5 text-xs font-mono tabular-nums">
                   <div>
                     <span className="font-sans text-slate-500">Registrado: </span>
                     <span className="font-bold text-slate-900">{formatUsd(paidTotalUsd)}</span>
                   </div>
                   {remainingUsd > 0 ? (
-                    <div className="text-amber-700 font-bold">
+                    <div className="font-bold text-amber-700">
                       <span className="font-sans font-medium">
                         {saleType === 'credit' ? 'Queda a crédito: ' : 'Faltante: '}
                       </span>
                       {formatUsd(remainingUsd)} ({formatVes(round2(remainingUsd * exchangeRate))})
                     </div>
                   ) : (
-                    <div className="text-emerald-700 font-bold">
+                    <div className="font-bold text-[#558B00]">
                       <span className="font-sans font-medium">Vuelto: </span>
                       {formatUsd(changeUsd)} ({formatVes(round2(changeUsd * exchangeRate))})
                     </div>
@@ -2385,25 +2731,25 @@ export default function App() {
                 </div>
 
                 {checkoutError && (
-                  <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-700">
+                  <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-700">
                     {checkoutError}
                   </p>
                 )}
 
-                <div className="flex items-center justify-end gap-2.5 pt-1">
+                <div className="flex items-center justify-end gap-2 pt-1">
                   <button
                     type="button"
                     onClick={() => setCheckoutOpen(false)}
-                    className="rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
+                    className="rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
                   >
                     Cancelar
                   </button>
                   <button
                     type="button"
                     onClick={() => void handleConfirmSale()}
-                    className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 transition-colors cursor-pointer"
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-[#84CC16] px-4 py-2 text-xs font-bold text-slate-950 hover:bg-[#76B900] transition-colors cursor-pointer"
                   >
-                    <CheckCircle2 className="h-4 w-4" />
+                    <CheckCircle2 className="h-3.5 w-3.5" />
                     {saleType === 'credit' ? 'Registrar crédito' : 'Confirmar venta'}
                   </button>
                 </div>
@@ -2414,17 +2760,17 @@ export default function App() {
       )}
 
       {historyOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-3 sm:p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-3 sm:p-4">
           <div className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-3.5">
+            <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-slate-200 px-4 py-3">
               <div>
-                <h2 className="text-base font-bold text-slate-900">
+                <h2 className="text-sm font-bold text-slate-900">
                   Cola de sincronización offline e historial
                 </h2>
                 <p className="text-xs text-slate-500">
-                  Estado: <strong>{isOnline ? 'En línea' : 'Sin conexión (Offline)'}</strong> ·
-                  Pendientes: <strong>{pendingSyncSummary.total}</strong> ({pendingSyncSummary.pendingSales} ventas,{' '}
-                  {pendingSyncSummary.pendingShifts} turnos, {pendingSyncSummary.pendingTransfers} stock/traslados,{' '}
+                  Estado: <strong>{isOnline ? 'En línea' : 'Offline'}</strong> · Pendientes:{' '}
+                  <strong className="font-mono tabular-nums">{pendingSyncSummary.total}</strong> ({pendingSyncSummary.pendingSales} ventas,{' '}
+                  {pendingSyncSummary.pendingShifts} turnos, {pendingSyncSummary.pendingTransfers} stock,{' '}
                   {pendingSyncSummary.pendingExpenses} gastos
                   {pendingSyncSummary.pendingOther > 0 ? `, ${pendingSyncSummary.pendingOther} otros` : ''})
                   {lastSyncedAt
@@ -2435,58 +2781,58 @@ export default function App() {
                     : ''}
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
                 <button
                   type="button"
                   disabled={!isOnline || isSyncing}
                   onClick={() => void triggerSyncQueue('manual')}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:bg-slate-300 disabled:text-slate-600 transition-colors cursor-pointer disabled:cursor-not-allowed"
+                  className="inline-flex items-center gap-1 rounded-md bg-[#84CC16] px-2.5 py-1.5 text-xs font-semibold text-slate-950 hover:bg-[#76B900] disabled:bg-slate-200 disabled:text-slate-500 transition-colors cursor-pointer disabled:cursor-not-allowed"
                 >
-                  <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                  <RefreshCw className={`h-3 w-3 ${isSyncing ? 'animate-spin' : ''}`} />
                   {isSyncing ? 'Sincronizando...' : 'Sincronizar ahora'}
                 </button>
                 <button
                   type="button"
                   onClick={() => setHistoryOpen(false)}
                   aria-label="Cerrar historial"
-                  className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 cursor-pointer"
+                  className="rounded-md p-1 text-slate-500 hover:bg-slate-100 cursor-pointer"
                 >
-                  <X className="h-5 w-5" />
+                  <X className="h-4 w-4" />
                 </button>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-5 py-2">
+            <div className="flex items-center gap-1.5 border-b border-slate-200 bg-slate-50 px-4 py-2">
               <button
                 type="button"
                 onClick={() => setHistoryTab('queue')}
-                className={`rounded-md px-3 py-1.5 text-xs font-semibold cursor-pointer ${
+                className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-colors cursor-pointer ${
                   historyTab === 'queue'
-                    ? 'bg-slate-900 text-white'
-                    : 'text-slate-600 hover:bg-slate-200'
+                    ? 'bg-[#84CC16] text-slate-950'
+                    : 'text-slate-600 hover:bg-white hover:text-slate-900'
                 }`}
               >
-                Cola offline ({pendingSyncSummary.total} pendientes / {syncQueue.length} total)
+                Cola offline ({pendingSyncSummary.total} pendientes / {syncQueue.length})
               </button>
               <button
                 type="button"
                 onClick={() => setHistoryTab('sales')}
-                className={`rounded-md px-3 py-1.5 text-xs font-semibold cursor-pointer ${
+                className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-colors cursor-pointer ${
                   historyTab === 'sales'
-                    ? 'bg-slate-900 text-white'
-                    : 'text-slate-600 hover:bg-slate-200'
+                    ? 'bg-[#84CC16] text-slate-950'
+                    : 'text-slate-600 hover:bg-white hover:text-slate-900'
                 }`}
               >
                 Historial de ventas ({sales.length})
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-5">
+            <div className="flex-1 overflow-y-auto p-4">
               {historyTab === 'queue' ? (
                 syncQueue.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-12 text-center">
-                    <CheckCircle2 className="h-8 w-8 text-emerald-500" />
-                    <p className="mt-3 text-sm font-semibold text-slate-700">
+                  <div className="flex flex-col items-center justify-center py-10 text-center">
+                    <CheckCircle2 className="h-7 w-7 text-[#76B900]" />
+                    <p className="mt-2.5 text-sm font-semibold text-slate-700">
                       Cola de sincronización al día
                     </p>
                     <p className="mt-1 text-xs text-slate-500">
@@ -2498,13 +2844,13 @@ export default function App() {
                     {syncQueue.map((item) => (
                       <div
                         key={item.id}
-                        className="flex flex-col gap-2 p-3.5 sm:flex-row sm:items-center sm:justify-between"
+                        className="flex flex-col gap-1.5 p-3 sm:flex-row sm:items-center sm:justify-between"
                       >
                         <div className="min-w-0">
-                          <p className="text-xs font-bold text-slate-900">
+                          <p className="text-xs font-semibold text-slate-900">
                             [{formatSyncEntityLabel(item.entityType)}] {item.summary}
                           </p>
-                          <p className="mt-0.5 font-mono text-[11px] text-slate-500">
+                          <p className="mt-0.5 font-mono text-[11px] text-slate-500 tabular-nums">
                             Creado:{' '}
                             {new Date(item.timestamp).toLocaleString('es-VE', {
                               dateStyle: 'short',
@@ -2524,7 +2870,7 @@ export default function App() {
 
                         <span
                           className={`text-xs font-semibold whitespace-nowrap shrink-0 ${
-                            item.syncStatus === 'synced' ? 'text-emerald-700' : 'text-amber-700'
+                            item.syncStatus === 'synced' ? 'text-[#558B00]' : 'text-amber-700'
                           }`}
                         >
                           {item.syncStatus === 'synced' ? 'Sincronizado' : 'Pendiente offline'}
@@ -2534,9 +2880,9 @@ export default function App() {
                   </div>
                 )
               ) : sales.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <Clock className="h-8 w-8 text-slate-300" />
-                  <p className="mt-3 text-sm font-semibold text-slate-700">
+                <div className="flex flex-col items-center justify-center py-10 text-center">
+                  <Clock className="h-7 w-7 text-slate-300" />
+                  <p className="mt-2.5 text-sm font-semibold text-slate-700">
                     Aún no hay ventas registradas
                   </p>
                   <p className="mt-1 text-xs text-slate-500">
@@ -2544,19 +2890,19 @@ export default function App() {
                   </p>
                 </div>
               ) : (
-                <div className="divide-y divide-slate-200 border border-slate-200 rounded-lg">
+                <div className="divide-y divide-slate-200 rounded-lg border border-slate-200">
                   {sales.map((sale) => (
                     <div
                       key={sale.id}
-                      className="flex flex-col gap-3 p-3.5 sm:flex-row sm:items-center sm:justify-between"
+                      className="flex flex-col gap-2.5 p-3 sm:flex-row sm:items-center sm:justify-between"
                     >
                       <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2 text-sm font-bold text-slate-900">
+                        <div className="flex flex-wrap items-center gap-1.5 text-xs font-bold text-slate-900">
                           <span className="font-mono">{sale.receiptNumber}</span>
                           <span aria-hidden="true" className="text-slate-300">·</span>
                           <span className="truncate">{sale.customerName}</span>
                         </div>
-                        <p className="mt-0.5 text-xs text-slate-500">
+                        <p className="mt-0.5 text-[11px] text-slate-500">
                           {sale.branchName} · {sale.cashierName} ·{' '}
                           {sale.saleType === 'cash' ? 'Contado' : 'Crédito'} ·{' '}
                           {new Date(sale.createdAt).toLocaleString('es-VE', {
@@ -2567,7 +2913,7 @@ export default function App() {
                           <span
                             className={
                               sale.syncStatus === 'synced'
-                                ? 'font-semibold text-emerald-700'
+                                ? 'font-semibold text-[#558B00]'
                                 : 'font-semibold text-amber-700'
                             }
                           >
@@ -2576,18 +2922,20 @@ export default function App() {
                         </p>
                       </div>
 
-                      <div className="flex items-center justify-between gap-3 sm:justify-end">
+                      <div className="flex items-center justify-between gap-2.5 sm:justify-end">
                         <div className="text-left sm:text-right font-mono tabular-nums">
-                          <p className="text-sm font-bold text-slate-900">
+                          <p className="text-xs font-bold text-slate-900">
                             {formatUsd(sale.totalUsd)}
                           </p>
-                          <p className="text-[11px] text-slate-500">{formatVes(sale.totalVes)}</p>
+                          <p className="text-[11px] font-medium text-[#558B00]">
+                            {formatVes(sale.totalVes)}
+                          </p>
                         </div>
                         <a
-                          href={buildWhatsAppUrl(sale)}
+                          href={buildWhatsAppUrl(sale, businessSettings)}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 whitespace-nowrap shrink-0"
+                          className="inline-flex items-center gap-1 rounded-md border border-[#84CC16]/60 bg-[#F7FEE7] px-2.5 py-1 text-xs font-semibold text-[#3F6212] hover:bg-[#ECFCCB] whitespace-nowrap shrink-0"
                         >
                           <MessageCircle className="h-3.5 w-3.5" />
                           WhatsApp
@@ -2603,10 +2951,10 @@ export default function App() {
       )}
 
       {showIOSInstallGuide && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
-          <div className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-5">
-            <h3 className="text-base font-bold text-slate-900">Instalar Pos 262 en iOS</h3>
-            <p className="mt-2 text-sm text-slate-600">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+          <div className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-4">
+            <h3 className="text-sm font-bold text-slate-900">Instalar Pos 262 en iOS</h3>
+            <p className="mt-2 text-xs text-slate-600 leading-relaxed">
               1. Toca el botón <strong>Compartir</strong> en la barra inferior de Safari.
               <br />
               2. Desliza y selecciona <strong>Agregar a pantalla de inicio</strong>.
@@ -2614,7 +2962,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => setShowIOSInstallGuide(false)}
-              className="mt-4 w-full rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-800 cursor-pointer"
+              className="mt-3.5 w-full rounded-lg bg-[#84CC16] py-2 text-xs font-bold text-slate-950 hover:bg-[#76B900] cursor-pointer"
             >
               Entendido
             </button>

@@ -87,7 +87,7 @@ export default defineConfig(() => {
       }),
       {
         name: 'copy-unbundled-src-assets',
-        apply: 'build',
+        apply: 'build' as const,
         closeBundle(error?: Error): void {
           if (error) {
             return;

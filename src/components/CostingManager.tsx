@@ -81,7 +81,6 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
   onAddExpense,
   onDeleteExpense,
 }) => {
-  // 1. Bulk Pricing Calculator State
   const [calcProductId, setCalcProductId] = useState<string>(products[0]?.id || '');
   const [bulkInputCurrency, setBulkInputCurrency] = useState<CurrencyMode>('USD');
   const [bulkCostInput, setBulkCostInput] = useState<string>('24.00');
@@ -90,7 +89,6 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
   const [pricingFormula, setPricingFormula] = useState<'markup' | 'grossMargin'>('markup');
   const [pricingFeedback, setPricingFeedback] = useState<string>('');
 
-  // 2. Supplier Comparison State
   const [compareProductId, setCompareProductId] = useState<string>(products[0]?.id || '');
   const [supplierName, setSupplierName] = useState<string>('');
   const [supplierPhone, setSupplierPhone] = useState<string>('');
@@ -99,7 +97,6 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
   const [quoteNotes, setQuoteNotes] = useState<string>('');
   const [supplierFeedback, setSupplierFeedback] = useState<string>('');
 
-  // 3. Expenses & Break-Even State
   const [expenseBranchId, setExpenseBranchId] = useState<string>(activeBranchId);
   const [expenseType, setExpenseType] = useState<ExpenseType>('fixed');
   const [expenseCategory, setExpenseCategory] = useState<string>('Operativo');
@@ -112,7 +109,6 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
   const formatPrimary = (usd: number): string =>
     currency === 'USD' ? formatUsd(usd) : formatVes(round2(usd * exchangeRate));
 
-  // Bulk Pricing Math
   const pricingCalc = useMemo(() => {
     const rawBulk = parseFloat(bulkCostInput.replace(',', '.'));
     const units = parseFloat(unitCountInput.replace(',', '.'));
@@ -161,7 +157,6 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
     );
   };
 
-  // Supplier Comparison sorted by lowest unit cost
   const quotesForSelectedProduct = useMemo(() => {
     return supplierQuotes
       .filter((q) => q.productId === compareProductId)
@@ -173,7 +168,14 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
     setSupplierFeedback('');
     const bulk = parseFloat(quoteBulkCostInput.replace(',', '.'));
     const units = parseInt(quoteUnitsInput, 10);
-    if (!supplierName.trim() || !compareProductId || !Number.isFinite(bulk) || bulk <= 0 || !Number.isFinite(units) || units <= 0) {
+    if (
+      !supplierName.trim() ||
+      !compareProductId ||
+      !Number.isFinite(bulk) ||
+      bulk <= 0 ||
+      !Number.isFinite(units) ||
+      units <= 0
+    ) {
       return;
     }
 
@@ -201,7 +203,6 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
     setPricingFeedback(`Cargado costo de ${quote.supplierName} en la calculadora.`);
   };
 
-  // Expenses & Break-Even Point Math
   const breakEvenMetrics = useMemo(() => {
     const totalFixedUsd = round2(
       expenses.filter((e) => e.type === 'fixed').reduce((sum, e) => sum + e.amountUsd, 0)
@@ -219,7 +220,6 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
       )
     );
 
-    // Contribution margin ratio from actual sales (or catalog average if no sales recorded yet)
     let contributionMarginRatio = 0;
     let marginSourceLabel = 'margen real de ventas';
 
@@ -282,14 +282,13 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
   };
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 p-4 lg:p-6">
-      {/* Section 1: Bulk Pricing Calculator */}
-      <section className="rounded-xl border border-slate-200 bg-white p-5 space-y-4">
+    <div className="mx-auto max-w-6xl space-y-5 p-4 lg:p-5">
+      <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-3">
           <div className="flex items-center gap-2">
-            <Calculator className="h-5 w-5 text-emerald-600" />
+            <Calculator className="h-4 w-4 text-[#76B900]" />
             <div>
-              <h2 className="text-base font-bold text-slate-900">
+              <h2 className="text-sm font-bold text-slate-900">
                 Calculadora de precios por bulto y margen
               </h2>
               <p className="text-xs text-slate-500">
@@ -298,12 +297,14 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
             </div>
           </div>
 
-          <div className="inline-flex rounded-lg bg-slate-100 p-0.5 text-xs font-semibold">
+          <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-xs font-semibold">
             <button
               type="button"
               onClick={() => setPricingFormula('markup')}
-              className={`rounded-md px-2.5 py-1 cursor-pointer ${
-                pricingFormula === 'markup' ? 'bg-slate-900 text-white' : 'text-slate-600'
+              className={`rounded-md px-2.5 py-1 whitespace-nowrap cursor-pointer ${
+                pricingFormula === 'markup'
+                  ? 'bg-[#84CC16] text-slate-950'
+                  : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               Sobre costo (%)
@@ -311,8 +312,10 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
             <button
               type="button"
               onClick={() => setPricingFormula('grossMargin')}
-              className={`rounded-md px-2.5 py-1 cursor-pointer ${
-                pricingFormula === 'grossMargin' ? 'bg-slate-900 text-white' : 'text-slate-600'
+              className={`rounded-md px-2.5 py-1 whitespace-nowrap cursor-pointer ${
+                pricingFormula === 'grossMargin'
+                  ? 'bg-[#84CC16] text-slate-950'
+                  : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               Margen bruto (%)
@@ -332,7 +335,7 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
                   setCalcProductId(e.target.value);
                   setPricingFeedback('');
                 }}
-                className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-emerald-600 focus:outline-none"
+                className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
               >
                 {products.map((p) => (
                   <option key={p.id} value={p.id}>
@@ -343,16 +346,16 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
               </select>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
               <div>
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-semibold text-slate-700">Costo bulto</label>
-                  <div className="inline-flex gap-1 text-[11px] font-bold">
+                  <div className="inline-flex gap-1.5 text-[11px] font-bold">
                     <button
                       type="button"
                       onClick={() => setBulkInputCurrency('USD')}
                       className={`cursor-pointer ${
-                        bulkInputCurrency === 'USD' ? 'text-emerald-700 underline' : 'text-slate-400'
+                        bulkInputCurrency === 'USD' ? 'text-[#558B00] underline' : 'text-slate-400'
                       }`}
                     >
                       USD
@@ -361,7 +364,7 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
                       type="button"
                       onClick={() => setBulkInputCurrency('VES')}
                       className={`cursor-pointer ${
-                        bulkInputCurrency === 'VES' ? 'text-emerald-700 underline' : 'text-slate-400'
+                        bulkInputCurrency === 'VES' ? 'text-[#558B00] underline' : 'text-slate-400'
                       }`}
                     >
                       Bs
@@ -374,7 +377,7 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
                   min="0"
                   value={bulkCostInput}
                   onChange={(e) => setBulkCostInput(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm font-bold tabular-nums text-slate-900 focus:border-emerald-600 focus:outline-none"
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 font-mono text-xs font-bold tabular-nums text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
                 />
               </div>
 
@@ -388,7 +391,7 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
                   min="1"
                   value={unitCountInput}
                   onChange={(e) => setUnitCountInput(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm font-bold tabular-nums text-slate-900 focus:border-emerald-600 focus:outline-none"
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 font-mono text-xs font-bold tabular-nums text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
                 />
               </div>
 
@@ -401,14 +404,14 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
                   max="500"
                   value={marginPercentInput}
                   onChange={(e) => setMarginPercentInput(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm font-bold tabular-nums text-slate-900 focus:border-emerald-600 focus:outline-none"
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 font-mono text-xs font-bold tabular-nums text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
                 />
               </div>
             </div>
 
             {pricingFeedback && (
-              <p className="flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800">
-                <CheckCircle2 className="h-4 w-4 shrink-0" />
+              <p className="flex items-center gap-1.5 rounded-lg border border-[#84CC16]/40 bg-[#F7FEE7] px-3 py-1.5 text-xs font-medium text-[#3F6212]">
+                <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-[#76B900]" />
                 {pricingFeedback}
               </p>
             )}
@@ -416,37 +419,41 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
             <button
               type="button"
               onClick={() => void handleApplyPricing()}
-              className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700 transition-colors cursor-pointer"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[#84CC16] px-3.5 py-1.5 text-xs font-bold text-slate-950 hover:bg-[#76B900] transition-colors cursor-pointer"
             >
-              <CheckCircle2 className="h-4 w-4" />
-              Aplicar costo y precio al producto en POS
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              Aplicar precio al POS
             </button>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4 font-mono tabular-nums lg:col-span-5">
+          <div className="grid grid-cols-2 gap-3 rounded-lg border border-slate-200 bg-slate-50/70 p-3.5 font-mono tabular-nums lg:col-span-5">
             <div>
-              <p className="font-sans text-[11px] font-semibold text-slate-500">Costo unitario</p>
-              <p className="mt-0.5 text-lg font-bold text-slate-900">
+              <p className="font-sans text-[11px] font-medium text-slate-500">Costo unitario</p>
+              <p className="mt-0.5 text-base font-bold text-slate-900">
                 {formatUsd(pricingCalc.unitCostUsd)}
               </p>
-              <p className="text-[11px] text-slate-500">{formatVes(pricingCalc.unitCostVes)}</p>
+              <p className="text-[11px] font-semibold text-[#558B00]">
+                {formatVes(pricingCalc.unitCostVes)}
+              </p>
             </div>
             <div>
-              <p className="font-sans text-[11px] font-semibold text-slate-500">Precio venta sugerido</p>
-              <p className="mt-0.5 text-lg font-bold text-emerald-700">
+              <p className="font-sans text-[11px] font-medium text-slate-500">Precio venta sugerido</p>
+              <p className="mt-0.5 text-base font-bold text-slate-900">
                 {formatUsd(pricingCalc.salePriceUsd)}
               </p>
-              <p className="text-[11px] text-slate-500">{formatVes(pricingCalc.salePriceVes)}</p>
+              <p className="text-[11px] font-semibold text-[#558B00]">
+                {formatVes(pricingCalc.salePriceVes)}
+              </p>
             </div>
-            <div className="border-t border-slate-200 pt-2.5">
-              <p className="font-sans text-[11px] font-semibold text-slate-500">Ganancia / unidad</p>
-              <p className="mt-0.5 text-sm font-bold text-slate-900">
+            <div className="border-t border-slate-200 pt-2">
+              <p className="font-sans text-[11px] font-medium text-slate-500">Ganancia / unidad</p>
+              <p className="mt-0.5 text-xs font-bold text-slate-900">
                 {formatUsd(pricingCalc.profitPerUnitUsd)} ({pricingCalc.actualGrossMarginPct}%)
               </p>
             </div>
-            <div className="border-t border-slate-200 pt-2.5">
-              <p className="font-sans text-[11px] font-semibold text-slate-500">Ganancia por bulto</p>
-              <p className="mt-0.5 text-sm font-bold text-emerald-700">
+            <div className="border-t border-slate-200 pt-2">
+              <p className="font-sans text-[11px] font-medium text-slate-500">Ganancia por bulto</p>
+              <p className="mt-0.5 text-xs font-bold text-[#558B00]">
                 {formatUsd(pricingCalc.totalBulkProfitUsd)}
               </p>
             </div>
@@ -454,17 +461,16 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
         </div>
       </section>
 
-      {/* Section 2: Supplier Price Comparison */}
-      <section className="rounded-xl border border-slate-200 bg-white p-5 space-y-4">
-        <div className="flex flex-col gap-3 border-b border-slate-200 pb-3 sm:flex-row sm:items-center sm:justify-between">
+      <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 space-y-3.5">
+        <div className="flex flex-col gap-2.5 border-b border-slate-200 pb-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2">
-            <Truck className="h-5 w-5 text-slate-800" />
+            <Truck className="h-4 w-4 text-slate-700" />
             <div>
-              <h2 className="text-base font-bold text-slate-900">
+              <h2 className="text-sm font-bold text-slate-900">
                 Comparador de proveedores (menor costo unitario)
               </h2>
               <p className="text-xs text-slate-500">
-                Ordena automáticamente del proveedor más económico al más costoso por producto
+                Ordena automáticamente del proveedor más económico al más costoso
               </p>
             </div>
           </div>
@@ -473,7 +479,7 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
             aria-label="Producto a comparar"
             value={compareProductId}
             onChange={(e) => setCompareProductId(e.target.value)}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-900 focus:border-emerald-600 focus:outline-none"
+            className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-semibold text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
           >
             {products.map((p) => (
               <option key={p.id} value={p.id}>
@@ -483,10 +489,9 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
           </select>
         </div>
 
-        {/* Add Supplier Quote Form */}
         <form
           onSubmit={handleCreateSupplierQuote}
-          className="grid grid-cols-1 gap-2.5 rounded-lg border border-slate-200 bg-slate-50 p-3.5 sm:grid-cols-12"
+          className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-slate-50/70 p-3 sm:grid-cols-12"
         >
           <input
             type="text"
@@ -494,14 +499,14 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
             placeholder="Nombre del proveedor *"
             value={supplierName}
             onChange={(e) => setSupplierName(e.target.value)}
-            className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 sm:col-span-3 focus:border-emerald-600 focus:outline-none"
+            className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 sm:col-span-3 focus:border-[#76B900] focus:outline-none"
           />
           <input
             type="text"
             placeholder="Teléfono"
             value={supplierPhone}
             onChange={(e) => setSupplierPhone(e.target.value)}
-            className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 sm:col-span-2 focus:border-emerald-600 focus:outline-none"
+            className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 sm:col-span-2 focus:border-[#76B900] focus:outline-none"
           />
           <input
             type="number"
@@ -511,7 +516,7 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
             placeholder="Costo bulto $"
             value={quoteBulkCostInput}
             onChange={(e) => setQuoteBulkCostInput(e.target.value)}
-            className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 font-mono text-xs text-slate-900 sm:col-span-2 focus:border-emerald-600 focus:outline-none"
+            className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs tabular-nums text-slate-900 sm:col-span-2 focus:border-[#76B900] focus:outline-none"
           />
           <input
             type="number"
@@ -521,19 +526,19 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
             placeholder="Und/bulto"
             value={quoteUnitsInput}
             onChange={(e) => setQuoteUnitsInput(e.target.value)}
-            className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 font-mono text-xs text-slate-900 sm:col-span-2 focus:border-emerald-600 focus:outline-none"
+            className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs tabular-nums text-slate-900 sm:col-span-2 focus:border-[#76B900] focus:outline-none"
           />
           <button
             type="submit"
             className="inline-flex items-center justify-center gap-1 rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 sm:col-span-3 cursor-pointer"
           >
             <Plus className="h-3.5 w-3.5" />
-            Agregar cotización
+            Agregar
           </button>
         </form>
 
         {supplierFeedback && (
-          <p className="text-xs font-semibold text-emerald-700">{supplierFeedback}</p>
+          <p className="text-xs font-semibold text-[#558B00]">{supplierFeedback}</p>
         )}
 
         {quotesForSelectedProduct.length === 0 ? (
@@ -549,7 +554,7 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
                   <th className="py-2 px-3 font-semibold text-right">Bulto ($)</th>
                   <th className="py-2 px-3 font-semibold text-right">Unidades</th>
                   <th className="py-2 px-3 font-semibold text-right">Costo unitario</th>
-                  <th className="py-2 px-3 font-semibold text-right">Diferencia vs. mejor</th>
+                  <th className="py-2 px-3 font-semibold text-right">Diferencia</th>
                   <th className="py-2 pl-3 font-semibold text-right">Acciones</th>
                 </tr>
               </thead>
@@ -560,12 +565,12 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
                   const isBest = idx === 0;
 
                   return (
-                    <tr key={quote.id} className={isBest ? 'bg-emerald-50/50' : ''}>
-                      <td className="py-2.5 pr-3">
+                    <tr key={quote.id} className={isBest ? 'bg-[#F7FEE7]/70' : ''}>
+                      <td className="py-2 pr-3">
                         <p className="font-semibold text-slate-900">
                           {quote.supplierName}{' '}
                           {isBest && (
-                            <span className="font-semibold text-emerald-700">· Mejor precio</span>
+                            <span className="font-semibold text-[#558B00]">· Mejor precio</span>
                           )}
                         </p>
                         <p className="text-[11px] text-slate-500">
@@ -573,31 +578,31 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
                           {quote.syncStatus === 'synced' ? 'Sincronizado' : 'Pendiente offline'}
                         </p>
                       </td>
-                      <td className="py-2.5 px-3 text-right font-mono tabular-nums text-slate-700">
+                      <td className="py-2 px-3 text-right font-mono tabular-nums text-slate-700">
                         {formatUsd(quote.bulkCostUsd)}
                       </td>
-                      <td className="py-2.5 px-3 text-right font-mono tabular-nums text-slate-700">
+                      <td className="py-2 px-3 text-right font-mono tabular-nums text-slate-700">
                         {quote.unitsPerBulk}
                       </td>
-                      <td className="py-2.5 px-3 text-right font-mono font-bold tabular-nums text-slate-900">
+                      <td className="py-2 px-3 text-right font-mono font-bold tabular-nums text-slate-900">
                         <p>{formatUsd(quote.unitCostUsd)}</p>
-                        <p className="text-[11px] font-normal text-slate-500">
+                        <p className="text-[11px] font-semibold text-[#558B00]">
                           {formatVes(round2(quote.unitCostUsd * exchangeRate))}
                         </p>
                       </td>
-                      <td className="py-2.5 px-3 text-right font-mono tabular-nums">
+                      <td className="py-2 px-3 text-right font-mono tabular-nums">
                         {isBest ? (
-                          <span className="font-semibold text-emerald-700">Base</span>
+                          <span className="font-semibold text-[#558B00]">Base</span>
                         ) : (
                           <span className="text-red-600">+{formatUsd(diffPerUnit)}/und</span>
                         )}
                       </td>
-                      <td className="py-2.5 pl-3 text-right">
-                        <div className="inline-flex items-center gap-2">
+                      <td className="py-2 pl-3 text-right">
+                        <div className="inline-flex items-center gap-1.5">
                           <button
                             type="button"
                             onClick={() => handleUseQuoteInCalculator(quote)}
-                            className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                            className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:border-[#76B900] hover:text-slate-900 cursor-pointer whitespace-nowrap"
                           >
                             Usar costo
                           </button>
@@ -605,7 +610,7 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
                             type="button"
                             onClick={() => void onDeleteSupplierQuote(quote.id)}
                             aria-label="Eliminar cotización"
-                            className="p-1 text-slate-400 hover:text-red-600 cursor-pointer"
+                            className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 cursor-pointer"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
@@ -620,25 +625,27 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
         )}
       </section>
 
-      {/* Section 3: Fixed & Variable Expenses + Break-Even Point */}
-      <section className="rounded-xl border border-slate-200 bg-white p-5 space-y-5">
+      <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 space-y-4">
         <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
-          <Scale className="h-5 w-5 text-slate-800" />
+          <Scale className="h-4 w-4 text-slate-700" />
           <div>
-            <h2 className="text-base font-bold text-slate-900">
+            <h2 className="text-sm font-bold text-slate-900">
               Gastos fijos / variables y punto de equilibrio
             </h2>
             <p className="text-xs text-slate-500">
-              Registrado por {activeCashier.name} · Calculado con {breakEvenMetrics.marginSourceLabel} ({breakEvenMetrics.contributionMarginPct}%)
+              {activeCashier.name} · Calculado con {breakEvenMetrics.marginSourceLabel} ({breakEvenMetrics.contributionMarginPct}%)
             </p>
           </div>
         </div>
 
-        {/* Break-Even KPI Strip */}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 font-mono tabular-nums">
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5">
-            <p className="font-sans text-xs font-medium text-slate-500">Gastos fijos</p>
-            <p className="mt-1 text-lg font-bold text-slate-900">
+          <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+            <p className="font-sans text-[11px] font-medium text-slate-500">Gastos fijos</p>
+            <p
+              className={`mt-1 text-base font-bold ${
+                currency === 'VES' ? 'text-[#558B00]' : 'text-slate-900'
+              }`}
+            >
               {formatPrimary(breakEvenMetrics.totalFixedUsd)}
             </p>
             <p className="text-[11px] text-slate-500">
@@ -646,19 +653,19 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
             </p>
           </div>
 
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5">
-            <p className="font-sans text-xs font-medium text-slate-500">Punto de equilibrio</p>
-            <p className="mt-1 text-lg font-bold text-slate-900">
-              {formatPrimary(breakEvenMetrics.breakEvenSalesUsd)}
+          <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+            <p className="font-sans text-[11px] font-medium text-slate-500">Punto de equilibrio</p>
+            <p className="mt-1 text-base font-bold text-slate-900">
+              {formatUsd(breakEvenMetrics.breakEvenSalesUsd)}
             </p>
-            <p className="text-[11px] text-slate-500">
+            <p className="text-[11px] font-semibold text-[#558B00]">
               {formatVes(round2(breakEvenMetrics.breakEvenSalesUsd * exchangeRate))}
             </p>
           </div>
 
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5">
-            <p className="font-sans text-xs font-medium text-slate-500">Avance vs. equilibrio</p>
-            <p className="mt-1 text-lg font-bold text-emerald-700">
+          <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+            <p className="font-sans text-[11px] font-medium text-slate-500">Avance vs. equilibrio</p>
+            <p className="mt-1 text-base font-bold text-[#558B00]">
               {breakEvenMetrics.progressPct}%
             </p>
             <p className="text-[11px] text-slate-500">
@@ -668,11 +675,11 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
             </p>
           </div>
 
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5">
-            <p className="font-sans text-xs font-medium text-slate-500">Utilidad neta estimada</p>
+          <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+            <p className="font-sans text-[11px] font-medium text-slate-500">Utilidad neta estimada</p>
             <p
-              className={`mt-1 text-lg font-bold ${
-                breakEvenMetrics.netProfitUsd >= 0 ? 'text-emerald-700' : 'text-red-600'
+              className={`mt-1 text-base font-bold ${
+                breakEvenMetrics.netProfitUsd >= 0 ? 'text-[#558B00]' : 'text-red-600'
               }`}
             >
               {formatPrimary(breakEvenMetrics.netProfitUsd)}
@@ -683,15 +690,14 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
           </div>
         </div>
 
-        {/* Add Expense Form */}
         <form
           onSubmit={handleCreateExpense}
-          className="grid grid-cols-1 gap-2.5 rounded-lg border border-slate-200 bg-slate-50 p-3.5 sm:grid-cols-12"
+          className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-slate-50/70 p-3 sm:grid-cols-12"
         >
           <select
             value={expenseType}
             onChange={(e) => setExpenseType(e.target.value as ExpenseType)}
-            className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-900 sm:col-span-2 focus:border-emerald-600 focus:outline-none"
+            className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-900 sm:col-span-2 focus:border-[#76B900] focus:outline-none"
           >
             <option value="fixed">Gasto Fijo</option>
             <option value="variable">Gasto Variable</option>
@@ -700,7 +706,7 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
           <select
             value={expenseBranchId}
             onChange={(e) => setExpenseBranchId(e.target.value)}
-            className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 sm:col-span-2 focus:border-emerald-600 focus:outline-none"
+            className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 sm:col-span-2 focus:border-[#76B900] focus:outline-none"
           >
             {branches.map((b) => (
               <option key={b.id} value={b.id}>
@@ -712,10 +718,10 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
           <input
             type="text"
             required
-            placeholder="Descripción del gasto (ej: Nómina, Flete) *"
+            placeholder="Descripción (ej: Nómina, Flete) *"
             value={expenseDescription}
             onChange={(e) => setExpenseDescription(e.target.value)}
-            className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 sm:col-span-3 focus:border-emerald-600 focus:outline-none"
+            className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 sm:col-span-3 focus:border-[#76B900] focus:outline-none"
           />
 
           <div className="flex sm:col-span-2">
@@ -723,7 +729,7 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
               aria-label="Moneda del gasto"
               value={expenseCurrency}
               onChange={(e) => setExpenseCurrency(e.target.value as CurrencyMode)}
-              className="rounded-l-md border border-r-0 border-slate-300 bg-slate-100 px-2 py-1.5 text-xs font-bold text-slate-700 focus:outline-none"
+              className="rounded-l-md border border-r-0 border-slate-200 bg-slate-100 px-2 py-1.5 text-xs font-bold text-slate-700 focus:outline-none"
             >
               <option value="USD">$</option>
               <option value="VES">Bs</option>
@@ -736,7 +742,7 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
               placeholder="Monto"
               value={expenseAmountInput}
               onChange={(e) => setExpenseAmountInput(e.target.value)}
-              className="w-full rounded-r-md border border-slate-300 bg-white px-2.5 py-1.5 font-mono text-xs text-slate-900 focus:border-emerald-600 focus:outline-none"
+              className="w-full rounded-r-md border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs tabular-nums text-slate-900 focus:border-[#76B900] focus:outline-none"
             />
           </div>
 
@@ -744,23 +750,22 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
             type="date"
             value={expenseDate}
             onChange={(e) => setExpenseDate(e.target.value)}
-            className="rounded-md border border-slate-300 bg-white px-2 py-1.5 font-mono text-xs text-slate-900 sm:col-span-1 focus:border-emerald-600 focus:outline-none"
+            className="rounded-md border border-slate-200 bg-white px-2 py-1.5 font-mono text-xs text-slate-900 sm:col-span-1 focus:border-[#76B900] focus:outline-none"
           />
 
           <button
             type="submit"
-            className="inline-flex items-center justify-center gap-1 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 sm:col-span-2 cursor-pointer"
+            className="inline-flex items-center justify-center gap-1 rounded-md bg-[#84CC16] px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-[#76B900] sm:col-span-2 cursor-pointer whitespace-nowrap"
           >
             <Receipt className="h-3.5 w-3.5" />
-            Registrar gasto
+            Registrar
           </button>
         </form>
 
         {expenseFeedback && (
-          <p className="text-xs font-semibold text-emerald-700">{expenseFeedback}</p>
+          <p className="text-xs font-semibold text-[#558B00]">{expenseFeedback}</p>
         )}
 
-        {/* Expenses List */}
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead>
@@ -775,27 +780,27 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
             <tbody className="divide-y divide-slate-100">
               {expenses.map((expense) => (
                 <tr key={expense.id} className="hover:bg-slate-50/70">
-                  <td className="py-2.5 pr-3">
+                  <td className="py-2 pr-3">
                     <p className="font-semibold text-slate-900">{expense.description}</p>
-                    <p className="text-[11px] font-mono text-slate-500">
+                    <p className="text-[11px] font-mono tabular-nums text-slate-500">
                       {expense.expenseDate} · {expense.category}
                     </p>
                   </td>
-                  <td className="py-2.5 px-3 font-semibold text-slate-700">
+                  <td className="py-2 px-3 font-semibold text-slate-700">
                     {expense.type === 'fixed' ? 'Fijo' : 'Variable'}
                   </td>
-                  <td className="py-2.5 px-3 text-slate-600">{expense.branchName}</td>
-                  <td className="py-2.5 px-3 text-right font-mono font-bold tabular-nums text-slate-900">
+                  <td className="py-2 px-3 text-slate-600">{expense.branchName}</td>
+                  <td className="py-2 px-3 text-right font-mono font-bold tabular-nums text-slate-900">
                     <p>{formatUsd(expense.amountUsd)}</p>
-                    <p className="text-[11px] font-normal text-slate-500">
+                    <p className="text-[11px] font-semibold text-[#558B00]">
                       {formatVes(round2(expense.amountUsd * exchangeRate))}
                     </p>
                   </td>
-                  <td className="py-2.5 pl-3 text-right">
-                    <div className="inline-flex items-center gap-2.5">
+                  <td className="py-2 pl-3 text-right">
+                    <div className="inline-flex items-center gap-2">
                       <span
                         className={`text-[11px] font-semibold ${
-                          expense.syncStatus === 'synced' ? 'text-emerald-700' : 'text-amber-700'
+                          expense.syncStatus === 'synced' ? 'text-[#558B00]' : 'text-amber-700'
                         }`}
                       >
                         {expense.syncStatus === 'synced' ? 'Sincronizado' : 'Pendiente'}
@@ -804,7 +809,7 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
                         type="button"
                         onClick={() => void onDeleteExpense(expense.id)}
                         aria-label="Eliminar gasto"
-                        className="p-1 text-slate-400 hover:text-red-600 cursor-pointer"
+                        className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 cursor-pointer"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
