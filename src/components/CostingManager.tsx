@@ -1,0 +1,821 @@
+import React, { useMemo, useState } from 'react';
+import {
+  Calculator,
+  CheckCircle2,
+  Plus,
+  Receipt,
+  Scale,
+  Trash2,
+  Truck,
+} from 'lucide-react';
+import type {
+  Branch,
+  Cashier,
+  CurrencyMode,
+  Expense,
+  ExpenseType,
+  Product,
+  Sale,
+  SupplierQuote,
+} from '../types/pos';
+
+const round2 = (value: number): number => Math.round((value + Number.EPSILON) * 100) / 100;
+
+const formatUsd = (amount: number): string =>
+  `$${amount.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+
+const formatVes = (amount: number): string =>
+  `Bs ${amount.toLocaleString('es-VE', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+
+interface CostingManagerProps {
+  products: Product[];
+  branches: Branch[];
+  activeBranchId: string;
+  activeCashier: Cashier;
+  supplierQuotes: SupplierQuote[];
+  expenses: Expense[];
+  sales: Sale[];
+  currency: CurrencyMode;
+  exchangeRate: number;
+  onUpdateProductPricing: (productId: string, costUsd: number, priceUsd: number) => Promise<void>;
+  onAddSupplierQuote: (params: {
+    supplierName: string;
+    supplierPhone?: string;
+    productId: string;
+    bulkCostUsd: number;
+    unitsPerBulk: number;
+    notes?: string;
+  }) => Promise<void>;
+  onDeleteSupplierQuote: (quoteId: string) => Promise<void>;
+  onAddExpense: (params: {
+    branchId: string;
+    type: ExpenseType;
+    category: string;
+    description: string;
+    amountUsd: number;
+    expenseDate: string;
+    notes?: string;
+  }) => Promise<void>;
+  onDeleteExpense: (expenseId: string) => Promise<void>;
+}
+
+export const CostingManager: React.FC<CostingManagerProps> = ({
+  products,
+  branches,
+  activeBranchId,
+  activeCashier,
+  supplierQuotes,
+  expenses,
+  sales,
+  currency,
+  exchangeRate,
+  onUpdateProductPricing,
+  onAddSupplierQuote,
+  onDeleteSupplierQuote,
+  onAddExpense,
+  onDeleteExpense,
+}) => {
+  // 1. Bulk Pricing Calculator State
+  const [calcProductId, setCalcProductId] = useState<string>(products[0]?.id || '');
+  const [bulkInputCurrency, setBulkInputCurrency] = useState<CurrencyMode>('USD');
+  const [bulkCostInput, setBulkCostInput] = useState<string>('24.00');
+  const [unitCountInput, setUnitCountInput] = useState<string>('12');
+  const [marginPercentInput, setMarginPercentInput] = useState<string>('30');
+  const [pricingFormula, setPricingFormula] = useState<'markup' | 'grossMargin'>('markup');
+  const [pricingFeedback, setPricingFeedback] = useState<string>('');
+
+  // 2. Supplier Comparison State
+  const [compareProductId, setCompareProductId] = useState<string>(products[0]?.id || '');
+  const [supplierName, setSupplierName] = useState<string>('');
+  const [supplierPhone, setSupplierPhone] = useState<string>('');
+  const [quoteBulkCostInput, setQuoteBulkCostInput] = useState<string>('');
+  const [quoteUnitsInput, setQuoteUnitsInput] = useState<string>('12');
+  const [quoteNotes, setQuoteNotes] = useState<string>('');
+  const [supplierFeedback, setSupplierFeedback] = useState<string>('');
+
+  // 3. Expenses & Break-Even State
+  const [expenseBranchId, setExpenseBranchId] = useState<string>(activeBranchId);
+  const [expenseType, setExpenseType] = useState<ExpenseType>('fixed');
+  const [expenseCategory, setExpenseCategory] = useState<string>('Operativo');
+  const [expenseDescription, setExpenseDescription] = useState<string>('');
+  const [expenseCurrency, setExpenseCurrency] = useState<CurrencyMode>('USD');
+  const [expenseAmountInput, setExpenseAmountInput] = useState<string>('');
+  const [expenseDate, setExpenseDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [expenseFeedback, setExpenseFeedback] = useState<string>('');
+
+  const formatPrimary = (usd: number): string =>
+    currency === 'USD' ? formatUsd(usd) : formatVes(round2(usd * exchangeRate));
+
+  // Bulk Pricing Math
+  const pricingCalc = useMemo(() => {
+    const rawBulk = parseFloat(bulkCostInput.replace(',', '.'));
+    const units = parseFloat(unitCountInput.replace(',', '.'));
+    const margin = parseFloat(marginPercentInput.replace(',', '.'));
+
+    const validBulk = Number.isFinite(rawBulk) && rawBulk > 0 ? rawBulk : 0;
+    const bulkCostUsd =
+      bulkInputCurrency === 'VES' ? round2(validBulk / exchangeRate) : round2(validBulk);
+    const validUnits = Number.isFinite(units) && units > 0 ? units : 1;
+    const validMargin = Number.isFinite(margin) && margin >= 0 ? margin : 0;
+
+    const unitCostUsd = round2(bulkCostUsd / validUnits);
+    let salePriceUsd = unitCostUsd;
+    if (pricingFormula === 'markup') {
+      salePriceUsd = round2(unitCostUsd * (1 + validMargin / 100));
+    } else {
+      const clampedMargin = Math.min(95, validMargin);
+      salePriceUsd = round2(unitCostUsd / (1 - clampedMargin / 100));
+    }
+
+    const profitPerUnitUsd = round2(salePriceUsd - unitCostUsd);
+    const totalBulkProfitUsd = round2(profitPerUnitUsd * validUnits);
+    const actualGrossMarginPct =
+      salePriceUsd > 0 ? round2((profitPerUnitUsd / salePriceUsd) * 100) : 0;
+
+    return {
+      bulkCostUsd,
+      unitCostUsd,
+      unitCostVes: round2(unitCostUsd * exchangeRate),
+      salePriceUsd,
+      salePriceVes: round2(salePriceUsd * exchangeRate),
+      profitPerUnitUsd,
+      totalBulkProfitUsd,
+      actualGrossMarginPct,
+    };
+  }, [bulkCostInput, bulkInputCurrency, unitCountInput, marginPercentInput, pricingFormula, exchangeRate]);
+
+  const handleApplyPricing = async () => {
+    if (!calcProductId || pricingCalc.unitCostUsd <= 0 || pricingCalc.salePriceUsd <= 0) return;
+    await onUpdateProductPricing(calcProductId, pricingCalc.unitCostUsd, pricingCalc.salePriceUsd);
+    const target = products.find((p) => p.id === calcProductId);
+    setPricingFeedback(
+      `Actualizado "${target?.name ?? ''}": Costo ${formatUsd(
+        pricingCalc.unitCostUsd
+      )} · Venta ${formatUsd(pricingCalc.salePriceUsd)} (${formatVes(pricingCalc.salePriceVes)}).`
+    );
+  };
+
+  // Supplier Comparison sorted by lowest unit cost
+  const quotesForSelectedProduct = useMemo(() => {
+    return supplierQuotes
+      .filter((q) => q.productId === compareProductId)
+      .sort((a, b) => a.unitCostUsd - b.unitCostUsd);
+  }, [supplierQuotes, compareProductId]);
+
+  const handleCreateSupplierQuote = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSupplierFeedback('');
+    const bulk = parseFloat(quoteBulkCostInput.replace(',', '.'));
+    const units = parseInt(quoteUnitsInput, 10);
+    if (!supplierName.trim() || !compareProductId || !Number.isFinite(bulk) || bulk <= 0 || !Number.isFinite(units) || units <= 0) {
+      return;
+    }
+
+    await onAddSupplierQuote({
+      supplierName: supplierName.trim(),
+      supplierPhone: supplierPhone.trim() || undefined,
+      productId: compareProductId,
+      bulkCostUsd: round2(bulk),
+      unitsPerBulk: units,
+      notes: quoteNotes.trim() || undefined,
+    });
+
+    setSupplierName('');
+    setSupplierPhone('');
+    setQuoteBulkCostInput('');
+    setQuoteNotes('');
+    setSupplierFeedback('Cotización de proveedor guardada en IndexedDB.');
+  };
+
+  const handleUseQuoteInCalculator = (quote: SupplierQuote) => {
+    setCalcProductId(quote.productId);
+    setBulkInputCurrency('USD');
+    setBulkCostInput(quote.bulkCostUsd.toFixed(2));
+    setUnitCountInput(String(quote.unitsPerBulk));
+    setPricingFeedback(`Cargado costo de ${quote.supplierName} en la calculadora.`);
+  };
+
+  // Expenses & Break-Even Point Math
+  const breakEvenMetrics = useMemo(() => {
+    const totalFixedUsd = round2(
+      expenses.filter((e) => e.type === 'fixed').reduce((sum, e) => sum + e.amountUsd, 0)
+    );
+    const totalVariableUsd = round2(
+      expenses.filter((e) => e.type === 'variable').reduce((sum, e) => sum + e.amountUsd, 0)
+    );
+    const totalExpensesUsd = round2(totalFixedUsd + totalVariableUsd);
+
+    const salesRevenueUsd = round2(sales.reduce((sum, s) => sum + s.totalUsd, 0));
+    const salesCogsUsd = round2(
+      sales.reduce(
+        (sum, s) => sum + s.items.reduce((itemSum, i) => itemSum + i.costUsd * i.quantity, 0),
+        0
+      )
+    );
+
+    // Contribution margin ratio from actual sales (or catalog average if no sales recorded yet)
+    let contributionMarginRatio = 0;
+    let marginSourceLabel = 'margen real de ventas';
+
+    if (salesRevenueUsd > 0) {
+      const totalVariableCosts = salesCogsUsd + totalVariableUsd;
+      contributionMarginRatio = (salesRevenueUsd - totalVariableCosts) / salesRevenueUsd;
+    } else if (products.length > 0) {
+      const avgRatio =
+        products.reduce(
+          (sum, p) => sum + (p.priceUsd > 0 ? (p.priceUsd - p.costUsd) / p.priceUsd : 0),
+          0
+        ) / products.length;
+      contributionMarginRatio = avgRatio;
+      marginSourceLabel = 'margen promedio del catálogo';
+    }
+
+    const safeMarginRatio = Math.max(0, contributionMarginRatio);
+    const breakEvenSalesUsd =
+      safeMarginRatio > 0 ? round2(totalFixedUsd / safeMarginRatio) : 0;
+    const progressPct =
+      breakEvenSalesUsd > 0 ? round2(Math.min(100, (salesRevenueUsd / breakEvenSalesUsd) * 100)) : 0;
+    const missingToBreakEvenUsd = round2(Math.max(0, breakEvenSalesUsd - salesRevenueUsd));
+    const netProfitUsd = round2(salesRevenueUsd - salesCogsUsd - totalExpensesUsd);
+
+    return {
+      totalFixedUsd,
+      totalVariableUsd,
+      totalExpensesUsd,
+      salesRevenueUsd,
+      contributionMarginPct: round2(safeMarginRatio * 100),
+      marginSourceLabel,
+      breakEvenSalesUsd,
+      progressPct,
+      missingToBreakEvenUsd,
+      netProfitUsd,
+    };
+  }, [expenses, sales, products]);
+
+  const handleCreateExpense = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setExpenseFeedback('');
+    const raw = parseFloat(expenseAmountInput.replace(',', '.'));
+    if (!expenseDescription.trim() || !Number.isFinite(raw) || raw <= 0) return;
+
+    const amountUsd =
+      expenseCurrency === 'VES' ? round2(raw / exchangeRate) : round2(raw);
+
+    await onAddExpense({
+      branchId: expenseBranchId,
+      type: expenseType,
+      category: expenseCategory.trim() || 'General',
+      description: expenseDescription.trim(),
+      amountUsd,
+      expenseDate,
+    });
+
+    setExpenseDescription('');
+    setExpenseAmountInput('');
+    setExpenseFeedback('Gasto registrado en IndexedDB.');
+  };
+
+  return (
+    <div className="mx-auto max-w-6xl space-y-6 p-4 lg:p-6">
+      {/* Section 1: Bulk Pricing Calculator */}
+      <section className="rounded-xl border border-slate-200 bg-white p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-3">
+          <div className="flex items-center gap-2">
+            <Calculator className="h-5 w-5 text-emerald-600" />
+            <div>
+              <h2 className="text-base font-bold text-slate-900">
+                Calculadora de precios por bulto y margen
+              </h2>
+              <p className="text-xs text-slate-500">
+                Calcula costo unitario y precio de venta al detal y aplícalo directamente al catálogo
+              </p>
+            </div>
+          </div>
+
+          <div className="inline-flex rounded-lg bg-slate-100 p-0.5 text-xs font-semibold">
+            <button
+              type="button"
+              onClick={() => setPricingFormula('markup')}
+              className={`rounded-md px-2.5 py-1 cursor-pointer ${
+                pricingFormula === 'markup' ? 'bg-slate-900 text-white' : 'text-slate-600'
+              }`}
+            >
+              Sobre costo (%)
+            </button>
+            <button
+              type="button"
+              onClick={() => setPricingFormula('grossMargin')}
+              className={`rounded-md px-2.5 py-1 cursor-pointer ${
+                pricingFormula === 'grossMargin' ? 'bg-slate-900 text-white' : 'text-slate-600'
+              }`}
+            >
+              Margen bruto (%)
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
+          <div className="space-y-3 lg:col-span-7">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700">
+                Producto del catálogo
+              </label>
+              <select
+                value={calcProductId}
+                onChange={(e) => {
+                  setCalcProductId(e.target.value);
+                  setPricingFeedback('');
+                }}
+                className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-emerald-600 focus:outline-none"
+              >
+                {products.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.sku} — {p.name} (Actual: Costo {formatUsd(p.costUsd)} / Venta{' '}
+                    {formatUsd(p.priceUsd)})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-slate-700">Costo bulto</label>
+                  <div className="inline-flex gap-1 text-[11px] font-bold">
+                    <button
+                      type="button"
+                      onClick={() => setBulkInputCurrency('USD')}
+                      className={`cursor-pointer ${
+                        bulkInputCurrency === 'USD' ? 'text-emerald-700 underline' : 'text-slate-400'
+                      }`}
+                    >
+                      USD
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBulkInputCurrency('VES')}
+                      className={`cursor-pointer ${
+                        bulkInputCurrency === 'VES' ? 'text-emerald-700 underline' : 'text-slate-400'
+                      }`}
+                    >
+                      Bs
+                    </button>
+                  </div>
+                </div>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={bulkCostInput}
+                  onChange={(e) => setBulkCostInput(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm font-bold tabular-nums text-slate-900 focus:border-emerald-600 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700">
+                  Unidades / bulto
+                </label>
+                <input
+                  type="number"
+                  step="1"
+                  min="1"
+                  value={unitCountInput}
+                  onChange={(e) => setUnitCountInput(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm font-bold tabular-nums text-slate-900 focus:border-emerald-600 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700">Margen (%)</label>
+                <input
+                  type="number"
+                  step="0.5"
+                  min="0"
+                  max="500"
+                  value={marginPercentInput}
+                  onChange={(e) => setMarginPercentInput(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm font-bold tabular-nums text-slate-900 focus:border-emerald-600 focus:outline-none"
+                />
+              </div>
+            </div>
+
+            {pricingFeedback && (
+              <p className="flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800">
+                <CheckCircle2 className="h-4 w-4 shrink-0" />
+                {pricingFeedback}
+              </p>
+            )}
+
+            <button
+              type="button"
+              onClick={() => void handleApplyPricing()}
+              className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700 transition-colors cursor-pointer"
+            >
+              <CheckCircle2 className="h-4 w-4" />
+              Aplicar costo y precio al producto en POS
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4 font-mono tabular-nums lg:col-span-5">
+            <div>
+              <p className="font-sans text-[11px] font-semibold text-slate-500">Costo unitario</p>
+              <p className="mt-0.5 text-lg font-bold text-slate-900">
+                {formatUsd(pricingCalc.unitCostUsd)}
+              </p>
+              <p className="text-[11px] text-slate-500">{formatVes(pricingCalc.unitCostVes)}</p>
+            </div>
+            <div>
+              <p className="font-sans text-[11px] font-semibold text-slate-500">Precio venta sugerido</p>
+              <p className="mt-0.5 text-lg font-bold text-emerald-700">
+                {formatUsd(pricingCalc.salePriceUsd)}
+              </p>
+              <p className="text-[11px] text-slate-500">{formatVes(pricingCalc.salePriceVes)}</p>
+            </div>
+            <div className="border-t border-slate-200 pt-2.5">
+              <p className="font-sans text-[11px] font-semibold text-slate-500">Ganancia / unidad</p>
+              <p className="mt-0.5 text-sm font-bold text-slate-900">
+                {formatUsd(pricingCalc.profitPerUnitUsd)} ({pricingCalc.actualGrossMarginPct}%)
+              </p>
+            </div>
+            <div className="border-t border-slate-200 pt-2.5">
+              <p className="font-sans text-[11px] font-semibold text-slate-500">Ganancia por bulto</p>
+              <p className="mt-0.5 text-sm font-bold text-emerald-700">
+                {formatUsd(pricingCalc.totalBulkProfitUsd)}
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Section 2: Supplier Price Comparison */}
+      <section className="rounded-xl border border-slate-200 bg-white p-5 space-y-4">
+        <div className="flex flex-col gap-3 border-b border-slate-200 pb-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2">
+            <Truck className="h-5 w-5 text-slate-800" />
+            <div>
+              <h2 className="text-base font-bold text-slate-900">
+                Comparador de proveedores (menor costo unitario)
+              </h2>
+              <p className="text-xs text-slate-500">
+                Ordena automáticamente del proveedor más económico al más costoso por producto
+              </p>
+            </div>
+          </div>
+
+          <select
+            aria-label="Producto a comparar"
+            value={compareProductId}
+            onChange={(e) => setCompareProductId(e.target.value)}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-900 focus:border-emerald-600 focus:outline-none"
+          >
+            {products.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.sku} — {p.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Add Supplier Quote Form */}
+        <form
+          onSubmit={handleCreateSupplierQuote}
+          className="grid grid-cols-1 gap-2.5 rounded-lg border border-slate-200 bg-slate-50 p-3.5 sm:grid-cols-12"
+        >
+          <input
+            type="text"
+            required
+            placeholder="Nombre del proveedor *"
+            value={supplierName}
+            onChange={(e) => setSupplierName(e.target.value)}
+            className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 sm:col-span-3 focus:border-emerald-600 focus:outline-none"
+          />
+          <input
+            type="text"
+            placeholder="Teléfono"
+            value={supplierPhone}
+            onChange={(e) => setSupplierPhone(e.target.value)}
+            className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 sm:col-span-2 focus:border-emerald-600 focus:outline-none"
+          />
+          <input
+            type="number"
+            step="0.01"
+            min="0.01"
+            required
+            placeholder="Costo bulto $"
+            value={quoteBulkCostInput}
+            onChange={(e) => setQuoteBulkCostInput(e.target.value)}
+            className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 font-mono text-xs text-slate-900 sm:col-span-2 focus:border-emerald-600 focus:outline-none"
+          />
+          <input
+            type="number"
+            step="1"
+            min="1"
+            required
+            placeholder="Und/bulto"
+            value={quoteUnitsInput}
+            onChange={(e) => setQuoteUnitsInput(e.target.value)}
+            className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 font-mono text-xs text-slate-900 sm:col-span-2 focus:border-emerald-600 focus:outline-none"
+          />
+          <button
+            type="submit"
+            className="inline-flex items-center justify-center gap-1 rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 sm:col-span-3 cursor-pointer"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Agregar cotización
+          </button>
+        </form>
+
+        {supplierFeedback && (
+          <p className="text-xs font-semibold text-emerald-700">{supplierFeedback}</p>
+        )}
+
+        {quotesForSelectedProduct.length === 0 ? (
+          <p className="py-6 text-center text-xs text-slate-500">
+            No hay cotizaciones registradas para este producto. Agrega al menos dos proveedores para comparar.
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-slate-200 text-slate-500">
+                  <th className="py-2 pr-3 font-semibold">Proveedor</th>
+                  <th className="py-2 px-3 font-semibold text-right">Bulto ($)</th>
+                  <th className="py-2 px-3 font-semibold text-right">Unidades</th>
+                  <th className="py-2 px-3 font-semibold text-right">Costo unitario</th>
+                  <th className="py-2 px-3 font-semibold text-right">Diferencia vs. mejor</th>
+                  <th className="py-2 pl-3 font-semibold text-right">Acciones</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {quotesForSelectedProduct.map((quote, idx) => {
+                  const bestUnitCost = quotesForSelectedProduct[0].unitCostUsd;
+                  const diffPerUnit = round2(quote.unitCostUsd - bestUnitCost);
+                  const isBest = idx === 0;
+
+                  return (
+                    <tr key={quote.id} className={isBest ? 'bg-emerald-50/50' : ''}>
+                      <td className="py-2.5 pr-3">
+                        <p className="font-semibold text-slate-900">
+                          {quote.supplierName}{' '}
+                          {isBest && (
+                            <span className="font-semibold text-emerald-700">· Mejor precio</span>
+                          )}
+                        </p>
+                        <p className="text-[11px] text-slate-500">
+                          {quote.supplierPhone || 'Sin teléfono'} ·{' '}
+                          {quote.syncStatus === 'synced' ? 'Sincronizado' : 'Pendiente offline'}
+                        </p>
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono tabular-nums text-slate-700">
+                        {formatUsd(quote.bulkCostUsd)}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono tabular-nums text-slate-700">
+                        {quote.unitsPerBulk}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono font-bold tabular-nums text-slate-900">
+                        <p>{formatUsd(quote.unitCostUsd)}</p>
+                        <p className="text-[11px] font-normal text-slate-500">
+                          {formatVes(round2(quote.unitCostUsd * exchangeRate))}
+                        </p>
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono tabular-nums">
+                        {isBest ? (
+                          <span className="font-semibold text-emerald-700">Base</span>
+                        ) : (
+                          <span className="text-red-600">+{formatUsd(diffPerUnit)}/und</span>
+                        )}
+                      </td>
+                      <td className="py-2.5 pl-3 text-right">
+                        <div className="inline-flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleUseQuoteInCalculator(quote)}
+                            className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                          >
+                            Usar costo
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void onDeleteSupplierQuote(quote.id)}
+                            aria-label="Eliminar cotización"
+                            className="p-1 text-slate-400 hover:text-red-600 cursor-pointer"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {/* Section 3: Fixed & Variable Expenses + Break-Even Point */}
+      <section className="rounded-xl border border-slate-200 bg-white p-5 space-y-5">
+        <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
+          <Scale className="h-5 w-5 text-slate-800" />
+          <div>
+            <h2 className="text-base font-bold text-slate-900">
+              Gastos fijos / variables y punto de equilibrio
+            </h2>
+            <p className="text-xs text-slate-500">
+              Registrado por {activeCashier.name} · Calculado con {breakEvenMetrics.marginSourceLabel} ({breakEvenMetrics.contributionMarginPct}%)
+            </p>
+          </div>
+        </div>
+
+        {/* Break-Even KPI Strip */}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 font-mono tabular-nums">
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5">
+            <p className="font-sans text-xs font-medium text-slate-500">Gastos fijos</p>
+            <p className="mt-1 text-lg font-bold text-slate-900">
+              {formatPrimary(breakEvenMetrics.totalFixedUsd)}
+            </p>
+            <p className="text-[11px] text-slate-500">
+              Variables: {formatPrimary(breakEvenMetrics.totalVariableUsd)}
+            </p>
+          </div>
+
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5">
+            <p className="font-sans text-xs font-medium text-slate-500">Punto de equilibrio</p>
+            <p className="mt-1 text-lg font-bold text-slate-900">
+              {formatPrimary(breakEvenMetrics.breakEvenSalesUsd)}
+            </p>
+            <p className="text-[11px] text-slate-500">
+              {formatVes(round2(breakEvenMetrics.breakEvenSalesUsd * exchangeRate))}
+            </p>
+          </div>
+
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5">
+            <p className="font-sans text-xs font-medium text-slate-500">Avance vs. equilibrio</p>
+            <p className="mt-1 text-lg font-bold text-emerald-700">
+              {breakEvenMetrics.progressPct}%
+            </p>
+            <p className="text-[11px] text-slate-500">
+              {breakEvenMetrics.missingToBreakEvenUsd > 0
+                ? `Faltan ${formatUsd(breakEvenMetrics.missingToBreakEvenUsd)}`
+                : 'Equilibrio superado'}
+            </p>
+          </div>
+
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5">
+            <p className="font-sans text-xs font-medium text-slate-500">Utilidad neta estimada</p>
+            <p
+              className={`mt-1 text-lg font-bold ${
+                breakEvenMetrics.netProfitUsd >= 0 ? 'text-emerald-700' : 'text-red-600'
+              }`}
+            >
+              {formatPrimary(breakEvenMetrics.netProfitUsd)}
+            </p>
+            <p className="text-[11px] text-slate-500">
+              Ventas: {formatUsd(breakEvenMetrics.salesRevenueUsd)}
+            </p>
+          </div>
+        </div>
+
+        {/* Add Expense Form */}
+        <form
+          onSubmit={handleCreateExpense}
+          className="grid grid-cols-1 gap-2.5 rounded-lg border border-slate-200 bg-slate-50 p-3.5 sm:grid-cols-12"
+        >
+          <select
+            value={expenseType}
+            onChange={(e) => setExpenseType(e.target.value as ExpenseType)}
+            className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-900 sm:col-span-2 focus:border-emerald-600 focus:outline-none"
+          >
+            <option value="fixed">Gasto Fijo</option>
+            <option value="variable">Gasto Variable</option>
+          </select>
+
+          <select
+            value={expenseBranchId}
+            onChange={(e) => setExpenseBranchId(e.target.value)}
+            className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 sm:col-span-2 focus:border-emerald-600 focus:outline-none"
+          >
+            {branches.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name}
+              </option>
+            ))}
+          </select>
+
+          <input
+            type="text"
+            required
+            placeholder="Descripción del gasto (ej: Nómina, Flete) *"
+            value={expenseDescription}
+            onChange={(e) => setExpenseDescription(e.target.value)}
+            className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 sm:col-span-3 focus:border-emerald-600 focus:outline-none"
+          />
+
+          <div className="flex sm:col-span-2">
+            <select
+              aria-label="Moneda del gasto"
+              value={expenseCurrency}
+              onChange={(e) => setExpenseCurrency(e.target.value as CurrencyMode)}
+              className="rounded-l-md border border-r-0 border-slate-300 bg-slate-100 px-2 py-1.5 text-xs font-bold text-slate-700 focus:outline-none"
+            >
+              <option value="USD">$</option>
+              <option value="VES">Bs</option>
+            </select>
+            <input
+              type="number"
+              step="0.01"
+              min="0.01"
+              required
+              placeholder="Monto"
+              value={expenseAmountInput}
+              onChange={(e) => setExpenseAmountInput(e.target.value)}
+              className="w-full rounded-r-md border border-slate-300 bg-white px-2.5 py-1.5 font-mono text-xs text-slate-900 focus:border-emerald-600 focus:outline-none"
+            />
+          </div>
+
+          <input
+            type="date"
+            value={expenseDate}
+            onChange={(e) => setExpenseDate(e.target.value)}
+            className="rounded-md border border-slate-300 bg-white px-2 py-1.5 font-mono text-xs text-slate-900 sm:col-span-1 focus:border-emerald-600 focus:outline-none"
+          />
+
+          <button
+            type="submit"
+            className="inline-flex items-center justify-center gap-1 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 sm:col-span-2 cursor-pointer"
+          >
+            <Receipt className="h-3.5 w-3.5" />
+            Registrar gasto
+          </button>
+        </form>
+
+        {expenseFeedback && (
+          <p className="text-xs font-semibold text-emerald-700">{expenseFeedback}</p>
+        )}
+
+        {/* Expenses List */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead>
+              <tr className="border-b border-slate-200 text-slate-500">
+                <th className="py-2 pr-3 font-semibold">Fecha / Descripción</th>
+                <th className="py-2 px-3 font-semibold">Tipo</th>
+                <th className="py-2 px-3 font-semibold">Sucursal</th>
+                <th className="py-2 px-3 font-semibold text-right">Monto</th>
+                <th className="py-2 pl-3 font-semibold text-right">Sync / Acción</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {expenses.map((expense) => (
+                <tr key={expense.id} className="hover:bg-slate-50/70">
+                  <td className="py-2.5 pr-3">
+                    <p className="font-semibold text-slate-900">{expense.description}</p>
+                    <p className="text-[11px] font-mono text-slate-500">
+                      {expense.expenseDate} · {expense.category}
+                    </p>
+                  </td>
+                  <td className="py-2.5 px-3 font-semibold text-slate-700">
+                    {expense.type === 'fixed' ? 'Fijo' : 'Variable'}
+                  </td>
+                  <td className="py-2.5 px-3 text-slate-600">{expense.branchName}</td>
+                  <td className="py-2.5 px-3 text-right font-mono font-bold tabular-nums text-slate-900">
+                    <p>{formatUsd(expense.amountUsd)}</p>
+                    <p className="text-[11px] font-normal text-slate-500">
+                      {formatVes(round2(expense.amountUsd * exchangeRate))}
+                    </p>
+                  </td>
+                  <td className="py-2.5 pl-3 text-right">
+                    <div className="inline-flex items-center gap-2.5">
+                      <span
+                        className={`text-[11px] font-semibold ${
+                          expense.syncStatus === 'synced' ? 'text-emerald-700' : 'text-amber-700'
+                        }`}
+                      >
+                        {expense.syncStatus === 'synced' ? 'Sincronizado' : 'Pendiente'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => void onDeleteExpense(expense.id)}
+                        aria-label="Eliminar gasto"
+                        className="p-1 text-slate-400 hover:text-red-600 cursor-pointer"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  );
+};

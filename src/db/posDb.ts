@@ -3,10 +3,12 @@ import type {
   Branch,
   Cashier,
   Customer,
+  Expense,
   Product,
   Sale,
   Shift,
   StockTransfer,
+  SupplierQuote,
 } from '../types/pos';
 
 export interface SettingEntry {
@@ -22,6 +24,8 @@ class Pos262Database extends Dexie {
   sales!: EntityTable<Sale, 'id'>;
   shifts!: EntityTable<Shift, 'id'>;
   stockTransfers!: EntityTable<StockTransfer, 'id'>;
+  supplierQuotes!: EntityTable<SupplierQuote, 'id'>;
+  expenses!: EntityTable<Expense, 'id'>;
   settings!: EntityTable<SettingEntry, 'key'>;
 
   constructor() {
@@ -44,6 +48,19 @@ class Pos262Database extends Dexie {
       sales: 'id, receiptNumber, branchId, shiftId, customerId, createdAt, syncStatus',
       shifts: 'id, branchId, cashierId, status, openedAt, syncStatus',
       stockTransfers: 'id, type, productId, fromBranchId, toBranchId, createdAt, syncStatus',
+      settings: 'key',
+    });
+
+    this.version(3).stores({
+      branches: 'id, code, name, syncStatus',
+      cashiers: 'id, name, role, branchId',
+      products: 'id, sku, barcode, name, category, syncStatus',
+      customers: 'id, name, documentId, phone, syncStatus',
+      sales: 'id, receiptNumber, branchId, shiftId, customerId, createdAt, syncStatus',
+      shifts: 'id, branchId, cashierId, status, openedAt, syncStatus',
+      stockTransfers: 'id, type, productId, fromBranchId, toBranchId, createdAt, syncStatus',
+      supplierQuotes: 'id, productId, supplierName, unitCostUsd, updatedAt, syncStatus',
+      expenses: 'id, branchId, type, expenseDate, createdAt, syncStatus',
       settings: 'key',
     });
   }
@@ -314,18 +331,133 @@ export const DEFAULT_PRODUCTS: Product[] = [
   },
 ];
 
+export const DEFAULT_SUPPLIER_QUOTES: SupplierQuote[] = [
+  {
+    id: 'quote-01',
+    supplierName: 'Distribuidora Alimentos Centro C.A.',
+    supplierPhone: '0412-5559001',
+    productId: 'prod-01',
+    productName: 'Harina de Maíz Precocida 1 kg',
+    productSku: 'VIV-101',
+    bulkCostUsd: 20.4,
+    unitsPerBulk: 20,
+    unitCostUsd: 1.02,
+    notes: 'Entrega 24h en Sucursal Centro',
+    updatedAt: '2026-11-18T10:00:00.000Z',
+    syncStatus: 'synced',
+  },
+  {
+    id: 'quote-02',
+    supplierName: 'Mayorista La Gran Despensa',
+    supplierPhone: '0414-5558112',
+    productId: 'prod-01',
+    productName: 'Harina de Maíz Precocida 1 kg',
+    productSku: 'VIV-101',
+    bulkCostUsd: 21.6,
+    unitsPerBulk: 20,
+    unitCostUsd: 1.08,
+    notes: 'Pago de contado en divisa',
+    updatedAt: '2026-11-19T12:00:00.000Z',
+    syncStatus: 'synced',
+  },
+  {
+    id: 'quote-03',
+    supplierName: 'Importadora Los Andes',
+    supplierPhone: '0424-5557223',
+    productId: 'prod-03',
+    productName: 'Aceite Vegetal Comestible 1 L',
+    productSku: 'VIV-103',
+    bulkCostUsd: 34.2,
+    unitsPerBulk: 12,
+    unitCostUsd: 2.85,
+    notes: 'Caja de 12 botellas',
+    updatedAt: '2026-11-20T09:30:00.000Z',
+    syncStatus: 'synced',
+  },
+  {
+    id: 'quote-04',
+    supplierName: 'Mayorista La Gran Despensa',
+    supplierPhone: '0414-5558112',
+    productId: 'prod-03',
+    productName: 'Aceite Vegetal Comestible 1 L',
+    productSku: 'VIV-103',
+    bulkCostUsd: 36.0,
+    unitsPerBulk: 12,
+    unitCostUsd: 3.0,
+    notes: 'Retiro en almacén',
+    updatedAt: '2026-11-20T14:00:00.000Z',
+    syncStatus: 'synced',
+  },
+];
+
+export const DEFAULT_EXPENSES: Expense[] = [
+  {
+    id: 'exp-01',
+    branchId: 'branch-centro',
+    branchName: 'Sucursal Centro',
+    type: 'fixed',
+    category: 'Alquiler',
+    description: 'Alquiler mensual local comercial',
+    amountUsd: 450,
+    amountVes: 29025,
+    exchangeRate: 64.5,
+    expenseDate: new Date().toISOString().slice(0, 10),
+    cashierId: 'cashier-admin',
+    cashierName: 'Yordi Suárez (Admin)',
+    createdAt: new Date().toISOString(),
+    syncStatus: 'synced',
+  },
+  {
+    id: 'exp-02',
+    branchId: 'branch-centro',
+    branchName: 'Sucursal Centro',
+    type: 'fixed',
+    category: 'Servicios',
+    description: 'Electricidad, agua e internet fibra',
+    amountUsd: 95,
+    amountVes: 6127.5,
+    exchangeRate: 64.5,
+    expenseDate: new Date().toISOString().slice(0, 10),
+    cashierId: 'cashier-admin',
+    cashierName: 'Yordi Suárez (Admin)',
+    createdAt: new Date().toISOString(),
+    syncStatus: 'synced',
+  },
+  {
+    id: 'exp-03',
+    branchId: 'branch-centro',
+    branchName: 'Sucursal Centro',
+    type: 'variable',
+    category: 'Insumos',
+    description: 'Bolsas plásticas y rollos térmicos',
+    amountUsd: 32,
+    amountVes: 2064,
+    exchangeRate: 64.5,
+    expenseDate: new Date().toISOString().slice(0, 10),
+    cashierId: 'cashier-admin',
+    cashierName: 'Yordi Suárez (Admin)',
+    createdAt: new Date().toISOString(),
+    syncStatus: 'synced',
+  },
+];
+
 export async function seedDatabaseIfNeeded(): Promise<void> {
-  const [branchCount, cashierCount, productCount, customerCount] = await Promise.all([
-    db.branches.count(),
-    db.cashiers.count(),
-    db.products.count(),
-    db.customers.count(),
-  ]);
+  const [branchCount, cashierCount, productCount, customerCount, quoteCount, expenseCount] =
+    await Promise.all([
+      db.branches.count(),
+      db.cashiers.count(),
+      db.products.count(),
+      db.customers.count(),
+      db.supplierQuotes.count(),
+      db.expenses.count(),
+    ]);
 
   if (branchCount === 0) await db.branches.bulkPut(DEFAULT_BRANCHES);
   if (cashierCount === 0) await db.cashiers.bulkPut(DEFAULT_CASHIERS);
   if (productCount === 0) await db.products.bulkPut(DEFAULT_PRODUCTS);
   if (customerCount === 0) await db.customers.bulkPut(DEFAULT_CUSTOMERS);
+  if (quoteCount === 0) await db.supplierQuotes.bulkPut(DEFAULT_SUPPLIER_QUOTES);
+  if (expenseCount === 0) await db.expenses.bulkPut(DEFAULT_EXPENSES);
 }
 
 export async function syncAllPendingRecords(): Promise<number> {
@@ -335,15 +467,25 @@ export async function syncAllPendingRecords(): Promise<number> {
 
   const now = new Date().toISOString();
 
-  const [pendingSales, pendingShifts, pendingTransfers, pendingCustomers, pendingProducts, pendingBranches] =
-    await Promise.all([
-      db.sales.where('syncStatus').equals('pending').toArray(),
-      db.shifts.where('syncStatus').equals('pending').toArray(),
-      db.stockTransfers.where('syncStatus').equals('pending').toArray(),
-      db.customers.where('syncStatus').equals('pending').toArray(),
-      db.products.where('syncStatus').equals('pending').toArray(),
-      db.branches.where('syncStatus').equals('pending').toArray(),
-    ]);
+  const [
+    pendingSales,
+    pendingShifts,
+    pendingTransfers,
+    pendingCustomers,
+    pendingProducts,
+    pendingBranches,
+    pendingQuotes,
+    pendingExpenses,
+  ] = await Promise.all([
+    db.sales.where('syncStatus').equals('pending').toArray(),
+    db.shifts.where('syncStatus').equals('pending').toArray(),
+    db.stockTransfers.where('syncStatus').equals('pending').toArray(),
+    db.customers.where('syncStatus').equals('pending').toArray(),
+    db.products.where('syncStatus').equals('pending').toArray(),
+    db.branches.where('syncStatus').equals('pending').toArray(),
+    db.supplierQuotes.where('syncStatus').equals('pending').toArray(),
+    db.expenses.where('syncStatus').equals('pending').toArray(),
+  ]);
 
   const totalPending =
     pendingSales.length +
@@ -351,13 +493,24 @@ export async function syncAllPendingRecords(): Promise<number> {
     pendingTransfers.length +
     pendingCustomers.length +
     pendingProducts.length +
-    pendingBranches.length;
+    pendingBranches.length +
+    pendingQuotes.length +
+    pendingExpenses.length;
 
   if (totalPending === 0) return 0;
 
   await db.transaction(
     'rw',
-    [db.sales, db.shifts, db.stockTransfers, db.customers, db.products, db.branches],
+    [
+      db.sales,
+      db.shifts,
+      db.stockTransfers,
+      db.customers,
+      db.products,
+      db.branches,
+      db.supplierQuotes,
+      db.expenses,
+    ],
     async () => {
       await Promise.all([
         ...pendingSales.map((r) => db.sales.update(r.id, { syncStatus: 'synced', syncedAt: now })),
@@ -373,6 +526,12 @@ export async function syncAllPendingRecords(): Promise<number> {
         ),
         ...pendingBranches.map((r) =>
           db.branches.update(r.id, { syncStatus: 'synced', syncedAt: now })
+        ),
+        ...pendingQuotes.map((r) =>
+          db.supplierQuotes.update(r.id, { syncStatus: 'synced', syncedAt: now })
+        ),
+        ...pendingExpenses.map((r) =>
+          db.expenses.update(r.id, { syncStatus: 'synced', syncedAt: now })
         ),
       ]);
     }

@@ -6,6 +6,10 @@ export type SyncStatus = 'synced' | 'pending' | 'failed';
 
 export type StockMovementType = 'load' | 'transfer';
 
+export type ExpenseType = 'fixed' | 'variable';
+
+export type ReportPeriod = 'today' | 'week' | 'month' | 'all';
+
 export type PaymentMethod =
   | 'Efectivo Bs'
   | 'Pago Móvil'
@@ -112,6 +116,41 @@ export interface StockTransfer {
   toBranchId: string;
   toBranchName: string;
   quantity: number;
+  cashierId: string;
+  cashierName: string;
+  notes?: string;
+  createdAt: string;
+  syncStatus: SyncStatus;
+  syncedAt?: string;
+}
+
+export interface SupplierQuote {
+  id: string;
+  supplierName: string;
+  supplierPhone?: string;
+  productId: string;
+  productName: string;
+  productSku: string;
+  bulkCostUsd: number;
+  unitsPerBulk: number;
+  unitCostUsd: number;
+  notes?: string;
+  updatedAt: string;
+  syncStatus: SyncStatus;
+  syncedAt?: string;
+}
+
+export interface Expense {
+  id: string;
+  branchId: string;
+  branchName: string;
+  type: ExpenseType;
+  category: string;
+  description: string;
+  amountUsd: number;
+  amountVes: number;
+  exchangeRate: number;
+  expenseDate: string;
   cashierId: string;
   cashierName: string;
   notes?: string;

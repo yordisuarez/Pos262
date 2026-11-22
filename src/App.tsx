@@ -3,7 +3,9 @@ import {
   AlertTriangle,
   ArrowLeftRight,
   Banknote,
+  BarChart3,
   Building2,
+  Calculator,
   Check,
   CheckCircle2,
   Clock,
@@ -31,12 +33,16 @@ import {
 import { db, seedDatabaseIfNeeded, syncAllPendingRecords } from './db/posDb';
 import { CashierLoginModal, ShiftManager } from './components/ShiftManager';
 import { InventoryManager } from './components/InventoryManager';
+import { ReportsManager } from './components/ReportsManager';
+import { CostingManager } from './components/CostingManager';
 import type {
   Branch,
   CartItem,
   Cashier,
   CurrencyMode,
   Customer,
+  Expense,
+  ExpenseType,
   PaymentMethod,
   Product,
   Sale,
@@ -44,9 +50,12 @@ import type {
   SaleType,
   Shift,
   StockTransfer,
+  SupplierQuote,
 } from './types/pos';
 
-type WorkspaceTab = 'pos' | 'shifts' | 'inventory';
+type WorkspaceTab = 'pos' | 'shifts' | 'inventory' | 'reports' | 'costing';
+
+const RATE_STORAGE_KEY = 'pos_262_exchange_rate';
 
 const PAYMENT_METHODS: Array<{
   method: PaymentMethod;
@@ -163,9 +172,10 @@ export default function App() {
     typeof navigator !== 'undefined' ? navigator.onLine : true
   );
   const [isSyncing, setIsSyncing] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('pos');
 
-  // Persisted collections
+  // Persisted IndexedDB collections
   const [branches, setBranches] = useState<Branch[]>([]);
   const [cashiers, setCashiers] = useState<Cashier[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -173,15 +183,23 @@ export default function App() {
   const [sales, setSales] = useState<Sale[]>([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [transfers, setTransfers] = useState<StockTransfer[]>([]);
+  const [supplierQuotes, setSupplierQuotes] = useState<SupplierQuote[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
 
-  // Active cashier & branch session
+  // Active session state
   const [activeCashier, setActiveCashier] = useState<Cashier | null>(null);
   const [loginModalOpen, setLoginModalOpen] = useState<boolean>(false);
   const [activeBranchId, setActiveBranchId] = useState<string>('branch-centro');
 
-  // Global currency & rate
+  // Global currency & persisted offline USD->Bs rate
   const [currency, setCurrency] = useState<CurrencyMode>('USD');
-  const [exchangeRateInput, setExchangeRateInput] = useState<string>('64.50');
+  const [exchangeRateInput, setExchangeRateInput] = useState<string>(() => {
+    try {
+      return localStorage.getItem(RATE_STORAGE_KEY) || '64.50';
+    } catch {
+      return '64.50';
+    }
+  });
   const exchangeRate = useMemo(() => {
     const parsed = parseFloat(exchangeRateInput.replace(',', '.'));
     return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
@@ -234,6 +252,8 @@ export default function App() {
       loadedSales,
       loadedShifts,
       loadedTransfers,
+      loadedQuotes,
+      loadedExpenses,
     ] = await Promise.all([
       db.branches.toArray(),
       db.cashiers.toArray(),
@@ -242,6 +262,8 @@ export default function App() {
       db.sales.orderBy('createdAt').reverse().toArray(),
       db.shifts.orderBy('openedAt').reverse().toArray(),
       db.stockTransfers.orderBy('createdAt').reverse().toArray(),
+      db.supplierQuotes.orderBy('updatedAt').reverse().toArray(),
+      db.expenses.orderBy('createdAt').reverse().toArray(),
     ]);
 
     setBranches(loadedBranches);
@@ -251,6 +273,8 @@ export default function App() {
     setSales(loadedSales);
     setShifts(loadedShifts);
     setTransfers(loadedTransfers);
+    setSupplierQuotes(loadedQuotes);
+    setExpenses(loadedExpenses);
 
     return { loadedBranches, loadedCashiers };
   }, []);
@@ -262,13 +286,13 @@ export default function App() {
       const syncedCount = await syncAllPendingRecords();
       if (syncedCount > 0) {
         await reloadAllData();
+        setLastSyncedAt(new Date().toISOString());
       }
     } finally {
       setIsSyncing(false);
     }
   }, [reloadAllData]);
 
-  // PWA lifecycle listeners
   useEffect(() => {
     const isStandalone =
       window.matchMedia('(display-mode: standalone)').matches ||
@@ -303,7 +327,6 @@ export default function App() {
     }
   };
 
-  // Bootstrap IndexedDB
   useEffect(() => {
     let active = true;
     async function init() {
@@ -318,7 +341,14 @@ export default function App() {
 
       if (!active) return;
 
-      if (rateSetting?.value) setExchangeRateInput(rateSetting.value);
+      if (rateSetting?.value) {
+        setExchangeRateInput(rateSetting.value);
+        try {
+          localStorage.setItem(RATE_STORAGE_KEY, rateSetting.value);
+        } catch {
+          // Ignore storage quota errors
+        }
+      }
       if (branchSetting?.value && loadedBranches.some((b) => b.id === branchSetting.value)) {
         setActiveBranchId(branchSetting.value);
       }
@@ -345,7 +375,6 @@ export default function App() {
     };
   }, [reloadAllData, triggerSyncQueue]);
 
-  // Automatic sync queue trigger when network comes back online
   useEffect(() => {
     const handleOnline = () => {
       setIsOnline(true);
@@ -371,7 +400,14 @@ export default function App() {
     setExchangeRateInput(val);
     const parsed = parseFloat(val.replace(',', '.'));
     if (Number.isFinite(parsed) && parsed > 0) {
-      persistSetting('exchangeRate', parsed.toFixed(2));
+      const normalized = parsed.toFixed(2);
+      persistSetting('exchangeRate', normalized);
+      persistSetting('exchangeRateUpdatedAt', new Date().toISOString());
+      try {
+        localStorage.setItem(RATE_STORAGE_KEY, normalized);
+      } catch {
+        // Ignore storage quota errors
+      }
     }
   };
 
@@ -421,10 +457,27 @@ export default function App() {
     const pendingTransfers = transfers.filter((t) => t.syncStatus === 'pending').length;
     const pendingCustomers = customers.filter((c) => c.syncStatus === 'pending').length;
     const pendingProducts = products.filter((p) => p.syncStatus === 'pending').length;
+    const pendingQuotes = supplierQuotes.filter((q) => q.syncStatus === 'pending').length;
+    const pendingExpenses = expenses.filter((e) => e.syncStatus === 'pending').length;
     const total =
-      pendingSales + pendingShifts + pendingTransfers + pendingCustomers + pendingProducts;
-    return { total, pendingSales, pendingShifts, pendingTransfers, pendingCustomers, pendingProducts };
-  }, [sales, shifts, transfers, customers, products]);
+      pendingSales +
+      pendingShifts +
+      pendingTransfers +
+      pendingCustomers +
+      pendingProducts +
+      pendingQuotes +
+      pendingExpenses;
+    return {
+      total,
+      pendingSales,
+      pendingShifts,
+      pendingTransfers,
+      pendingCustomers,
+      pendingProducts,
+      pendingQuotes,
+      pendingExpenses,
+    };
+  }, [sales, shifts, transfers, customers, products, supplierQuotes, expenses]);
 
   // Shift Handlers
   const handleOpenShift = async (params: {
@@ -596,6 +649,146 @@ export default function App() {
       await db.stockTransfers.put(movement);
     });
 
+    await reloadAllData();
+  };
+
+  // Receivable settlement handler
+  const handleSettleReceivable = async (saleId: string, amountUsd: number) => {
+    const sale = await db.sales.get(saleId);
+    if (!sale || sale.pendingUsd <= 0) return;
+
+    const now = new Date().toISOString();
+    const onlineNow = navigator.onLine;
+    const syncStatus = onlineNow ? 'synced' : 'pending';
+    const appliedUsd = round2(Math.min(sale.pendingUsd, amountUsd));
+    const nextPending = round2(Math.max(0, sale.pendingUsd - appliedUsd));
+    const nextPaid = round2(sale.paidUsd + appliedUsd);
+
+    await db.transaction('rw', [db.sales, db.customers], async () => {
+      await db.sales.update(sale.id, {
+        paidUsd: nextPaid,
+        pendingUsd: nextPending,
+        payments: [
+          ...sale.payments,
+          {
+            method: 'Efectivo Divisa $',
+            amountUsd: appliedUsd,
+            amountVes: round2(appliedUsd * exchangeRate),
+            reference: 'Cobro de crédito',
+          },
+        ],
+        syncStatus,
+        syncedAt: onlineNow ? now : undefined,
+      });
+
+      const customer = await db.customers.get(sale.customerId);
+      if (customer) {
+        await db.customers.update(customer.id, {
+          balanceUsd: round2(Math.max(0, customer.balanceUsd - appliedUsd)),
+          syncStatus,
+          syncedAt: onlineNow ? now : undefined,
+        });
+      }
+    });
+
+    await reloadAllData();
+  };
+
+  // Bulk Pricing, Suppliers & Expenses Handlers
+  const handleUpdateProductPricing = async (
+    productId: string,
+    costUsd: number,
+    priceUsd: number
+  ) => {
+    const now = new Date().toISOString();
+    const onlineNow = navigator.onLine;
+    await db.products.update(productId, {
+      costUsd: round2(costUsd),
+      priceUsd: round2(priceUsd),
+      syncStatus: onlineNow ? 'synced' : 'pending',
+      syncedAt: onlineNow ? now : undefined,
+    });
+    await reloadAllData();
+  };
+
+  const handleAddSupplierQuote = async (params: {
+    supplierName: string;
+    supplierPhone?: string;
+    productId: string;
+    bulkCostUsd: number;
+    unitsPerBulk: number;
+    notes?: string;
+  }) => {
+    const product = products.find((p) => p.id === params.productId);
+    if (!product) return;
+
+    const now = new Date().toISOString();
+    const onlineNow = navigator.onLine;
+    const quote: SupplierQuote = {
+      id: `quote-${Date.now()}`,
+      supplierName: params.supplierName,
+      supplierPhone: params.supplierPhone,
+      productId: product.id,
+      productName: product.name,
+      productSku: product.sku,
+      bulkCostUsd: round2(params.bulkCostUsd),
+      unitsPerBulk: params.unitsPerBulk,
+      unitCostUsd: round2(params.bulkCostUsd / params.unitsPerBulk),
+      notes: params.notes,
+      updatedAt: now,
+      syncStatus: onlineNow ? 'synced' : 'pending',
+      syncedAt: onlineNow ? now : undefined,
+    };
+
+    await db.supplierQuotes.put(quote);
+    await reloadAllData();
+  };
+
+  const handleDeleteSupplierQuote = async (quoteId: string) => {
+    await db.supplierQuotes.delete(quoteId);
+    await reloadAllData();
+  };
+
+  const handleAddExpense = async (params: {
+    branchId: string;
+    type: ExpenseType;
+    category: string;
+    description: string;
+    amountUsd: number;
+    expenseDate: string;
+    notes?: string;
+  }) => {
+    if (!activeCashier) return;
+    const branch = branches.find((b) => b.id === params.branchId) || activeBranch;
+    if (!branch) return;
+
+    const now = new Date().toISOString();
+    const onlineNow = navigator.onLine;
+    const expense: Expense = {
+      id: `exp-${Date.now()}`,
+      branchId: branch.id,
+      branchName: branch.name,
+      type: params.type,
+      category: params.category,
+      description: params.description,
+      amountUsd: round2(params.amountUsd),
+      amountVes: round2(params.amountUsd * exchangeRate),
+      exchangeRate,
+      expenseDate: params.expenseDate,
+      cashierId: activeCashier.id,
+      cashierName: activeCashier.name,
+      notes: params.notes,
+      createdAt: now,
+      syncStatus: onlineNow ? 'synced' : 'pending',
+      syncedAt: onlineNow ? now : undefined,
+    };
+
+    await db.expenses.put(expense);
+    await reloadAllData();
+  };
+
+  const handleDeleteExpense = async (expenseId: string) => {
+    await db.expenses.delete(expenseId);
     await reloadAllData();
   };
 
@@ -1163,11 +1356,9 @@ export default function App() {
 
   return (
     <div className="flex h-full min-h-screen flex-col bg-slate-50 text-slate-900">
-      {/* Top Operational Bar */}
       <header className="sticky top-0 z-30 border-b border-slate-800 bg-slate-900 text-white">
-        <div className="mx-auto flex flex-wrap items-center justify-between gap-2.5 px-4 py-2.5 lg:flex-nowrap lg:px-6">
-          {/* Left: Brand, Branch Selector, Primary Module Tabs */}
-          <div className="flex flex-wrap items-center gap-2.5 min-w-0">
+        <div className="mx-auto flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 xl:flex-nowrap lg:px-6">
+          <div className="flex flex-wrap items-center gap-2 min-w-0">
             <span className="text-lg font-bold tracking-tight text-white whitespace-nowrap shrink-0">
               Pos 262
             </span>
@@ -1178,7 +1369,7 @@ export default function App() {
                 aria-label="Seleccionar sucursal"
                 value={activeBranchId}
                 onChange={(e) => handleBranchChange(e.target.value)}
-                className="max-w-[165px] truncate rounded-lg border border-slate-700 bg-slate-800 py-1.5 pl-8 pr-6 text-xs font-semibold text-slate-100 focus:border-emerald-500 focus:outline-none cursor-pointer"
+                className="max-w-[155px] truncate rounded-lg border border-slate-700 bg-slate-800 py-1.5 pl-8 pr-5 text-xs font-semibold text-slate-100 focus:border-emerald-500 focus:outline-none cursor-pointer"
               >
                 {branches.map((branch) => (
                   <option key={branch.id} value={branch.id}>
@@ -1188,11 +1379,11 @@ export default function App() {
               </select>
             </div>
 
-            <nav aria-label="Módulos" className="flex items-center gap-1 rounded-lg bg-slate-800 p-0.5">
+            <nav aria-label="Módulos" className="flex items-center gap-1 overflow-x-auto rounded-lg bg-slate-800 p-0.5">
               <button
                 type="button"
                 onClick={() => setActiveTab('pos')}
-                className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+                className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   activeTab === 'pos'
                     ? 'bg-white text-slate-900'
                     : 'text-slate-300 hover:text-white'
@@ -1203,7 +1394,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setActiveTab('shifts')}
-                className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+                className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   activeTab === 'shifts'
                     ? 'bg-white text-slate-900'
                     : 'text-slate-300 hover:text-white'
@@ -1215,19 +1406,42 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setActiveTab('inventory')}
-                className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+                className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   activeTab === 'inventory'
                     ? 'bg-white text-slate-900'
                     : 'text-slate-300 hover:text-white'
                 }`}
               >
                 <ArrowLeftRight className="h-3 w-3" />
-                Stock y Traslados
+                Stock
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('reports')}
+                className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                  activeTab === 'reports'
+                    ? 'bg-white text-slate-900'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+              >
+                <BarChart3 className="h-3 w-3" />
+                Reportes
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('costing')}
+                className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                  activeTab === 'costing'
+                    ? 'bg-white text-slate-900'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+              >
+                <Calculator className="h-3 w-3" />
+                Costos y Gastos
               </button>
             </nav>
           </div>
 
-          {/* Right: Cashier, Online/Offline Sync, Rate, Currency Toggle, History, PWA Install */}
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
@@ -1235,7 +1449,7 @@ export default function App() {
               className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs font-semibold text-slate-100 hover:bg-slate-700 whitespace-nowrap shrink-0 cursor-pointer"
             >
               <UserCheck className="h-3.5 w-3.5 text-emerald-400" />
-              <span className="max-w-[110px] truncate">
+              <span className="max-w-[95px] truncate">
                 {activeCashier ? activeCashier.name : 'Ingresar'}
               </span>
             </button>
@@ -1250,15 +1464,15 @@ export default function App() {
               }`}
             >
               {isOnline ? <Wifi className="h-3.5 w-3.5" /> : <WifiOff className="h-3.5 w-3.5" />}
-              <span>{isOnline ? 'En línea' : 'Sin conexión'}</span>
+              <span>{isOnline ? 'En línea' : 'Offline'}</span>
               {pendingSyncSummary.total > 0 && (
                 <span className="font-mono tabular-nums text-amber-300">
-                  · {pendingSyncSummary.total} pend.
+                  · {pendingSyncSummary.total}
                 </span>
               )}
             </button>
 
-            <label className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs">
+            <label className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-2 py-1 text-xs">
               <span className="font-medium text-slate-400 whitespace-nowrap">Bs/$</span>
               <input
                 type="number"
@@ -1307,7 +1521,6 @@ export default function App() {
               className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
             >
               <History className="h-3.5 w-3.5" />
-              <span className="hidden xl:inline">Ventas ({sales.length})</span>
             </button>
 
             {!isInstalled && (deferredPrompt || isIOS) && (
@@ -1324,7 +1537,6 @@ export default function App() {
         </div>
       </header>
 
-      {/* Main Content Area by Active Tab */}
       {activeTab === 'pos' && (
         <>
           {!activeShift && activeCashier && (
@@ -1555,7 +1767,40 @@ export default function App() {
         </div>
       )}
 
-      {/* Cashier Login Modal */}
+      {activeTab === 'reports' && (
+        <div className="flex-1 overflow-y-auto">
+          <ReportsManager
+            sales={sales}
+            products={products}
+            branches={branches}
+            currency={currency}
+            exchangeRate={exchangeRate}
+            onSettleReceivable={handleSettleReceivable}
+          />
+        </div>
+      )}
+
+      {activeTab === 'costing' && activeCashier && (
+        <div className="flex-1 overflow-y-auto">
+          <CostingManager
+            products={products}
+            branches={branches}
+            activeBranchId={activeBranchId}
+            activeCashier={activeCashier}
+            supplierQuotes={supplierQuotes}
+            expenses={expenses}
+            sales={sales}
+            currency={currency}
+            exchangeRate={exchangeRate}
+            onUpdateProductPricing={handleUpdateProductPricing}
+            onAddSupplierQuote={handleAddSupplierQuote}
+            onDeleteSupplierQuote={handleDeleteSupplierQuote}
+            onAddExpense={handleAddExpense}
+            onDeleteExpense={handleDeleteExpense}
+          />
+        </div>
+      )}
+
       {loginModalOpen && cashiers.length > 0 && (
         <CashierLoginModal
           cashiers={cashiers}
@@ -1566,7 +1811,6 @@ export default function App() {
         />
       )}
 
-      {/* Mobile Cart Sheet */}
       {mobileCartOpen && (
         <div className="fixed inset-0 z-40 flex justify-end bg-slate-950/50 lg:hidden">
           <div className="flex h-full w-full max-w-md flex-col bg-white">
@@ -1588,7 +1832,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Checkout & Receipt Modal */}
       {checkoutOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-3 sm:p-4">
           <div className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white">
@@ -1924,19 +2167,21 @@ export default function App() {
         </div>
       )}
 
-      {/* Sales History & Unified Offline Sync Queue Modal */}
       {historyOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-3 sm:p-4">
           <div className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white">
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3.5">
               <div>
                 <h2 className="text-base font-bold text-slate-900">
-                  Historial de ventas y cola de sincronización
+                  Historial de ventas y cola offline
                 </h2>
                 <p className="text-xs text-slate-500">
-                  Pendientes offline: {pendingSyncSummary.total} total ({pendingSyncSummary.pendingSales} ventas,{' '}
+                  Pendientes: {pendingSyncSummary.total} total ({pendingSyncSummary.pendingSales} ventas,{' '}
                   {pendingSyncSummary.pendingShifts} turnos, {pendingSyncSummary.pendingTransfers} traslados,{' '}
-                  {pendingSyncSummary.pendingCustomers} clientes)
+                  {pendingSyncSummary.pendingExpenses} gastos, {pendingSyncSummary.pendingQuotes} proveedores)
+                  {lastSyncedAt
+                    ? ` · Última sync: ${new Date(lastSyncedAt).toLocaleTimeString('es-VE')}`
+                    : ''}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -1970,7 +2215,7 @@ export default function App() {
                     Aún no hay ventas registradas
                   </p>
                   <p className="mt-1 text-xs text-slate-500">
-                    Todas las ventas, turnos, traslados y clientes se guardan en IndexedDB para operar sin conexión.
+                    La tasa activa ({exchangeRate.toFixed(2)} Bs/$) y todos los registros se guardan en IndexedDB para trabajar offline.
                   </p>
                 </div>
               ) : (
@@ -2032,7 +2277,6 @@ export default function App() {
         </div>
       )}
 
-      {/* iOS Safari PWA Install Guide Modal */}
       {showIOSInstallGuide && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
           <div className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-5">
