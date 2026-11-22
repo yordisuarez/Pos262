@@ -9,6 +9,7 @@ import type {
   Shift,
   StockTransfer,
   SupplierQuote,
+  SyncQueueItem,
 } from '../types/pos';
 
 export interface SettingEntry {
@@ -26,6 +27,7 @@ class Pos262Database extends Dexie {
   stockTransfers!: EntityTable<StockTransfer, 'id'>;
   supplierQuotes!: EntityTable<SupplierQuote, 'id'>;
   expenses!: EntityTable<Expense, 'id'>;
+  syncQueue!: EntityTable<SyncQueueItem, 'id'>;
   settings!: EntityTable<SettingEntry, 'key'>;
 
   constructor() {
@@ -61,6 +63,20 @@ class Pos262Database extends Dexie {
       stockTransfers: 'id, type, productId, fromBranchId, toBranchId, createdAt, syncStatus',
       supplierQuotes: 'id, productId, supplierName, unitCostUsd, updatedAt, syncStatus',
       expenses: 'id, branchId, type, expenseDate, createdAt, syncStatus',
+      settings: 'key',
+    });
+
+    this.version(4).stores({
+      branches: 'id, code, name, syncStatus',
+      cashiers: 'id, name, role, branchId',
+      products: 'id, sku, barcode, name, category, syncStatus',
+      customers: 'id, name, documentId, phone, syncStatus',
+      sales: 'id, receiptNumber, branchId, shiftId, customerId, createdAt, syncStatus',
+      shifts: 'id, branchId, cashierId, status, openedAt, syncStatus',
+      stockTransfers: 'id, type, productId, fromBranchId, toBranchId, createdAt, syncStatus',
+      supplierQuotes: 'id, productId, supplierName, unitCostUsd, updatedAt, syncStatus',
+      expenses: 'id, branchId, type, expenseDate, createdAt, syncStatus',
+      syncQueue: 'id, entityType, entityId, syncStatus, timestamp',
       settings: 'key',
     });
   }
@@ -458,84 +474,4 @@ export async function seedDatabaseIfNeeded(): Promise<void> {
   if (customerCount === 0) await db.customers.bulkPut(DEFAULT_CUSTOMERS);
   if (quoteCount === 0) await db.supplierQuotes.bulkPut(DEFAULT_SUPPLIER_QUOTES);
   if (expenseCount === 0) await db.expenses.bulkPut(DEFAULT_EXPENSES);
-}
-
-export async function syncAllPendingRecords(): Promise<number> {
-  if (typeof navigator !== 'undefined' && !navigator.onLine) {
-    return 0;
-  }
-
-  const now = new Date().toISOString();
-
-  const [
-    pendingSales,
-    pendingShifts,
-    pendingTransfers,
-    pendingCustomers,
-    pendingProducts,
-    pendingBranches,
-    pendingQuotes,
-    pendingExpenses,
-  ] = await Promise.all([
-    db.sales.where('syncStatus').equals('pending').toArray(),
-    db.shifts.where('syncStatus').equals('pending').toArray(),
-    db.stockTransfers.where('syncStatus').equals('pending').toArray(),
-    db.customers.where('syncStatus').equals('pending').toArray(),
-    db.products.where('syncStatus').equals('pending').toArray(),
-    db.branches.where('syncStatus').equals('pending').toArray(),
-    db.supplierQuotes.where('syncStatus').equals('pending').toArray(),
-    db.expenses.where('syncStatus').equals('pending').toArray(),
-  ]);
-
-  const totalPending =
-    pendingSales.length +
-    pendingShifts.length +
-    pendingTransfers.length +
-    pendingCustomers.length +
-    pendingProducts.length +
-    pendingBranches.length +
-    pendingQuotes.length +
-    pendingExpenses.length;
-
-  if (totalPending === 0) return 0;
-
-  await db.transaction(
-    'rw',
-    [
-      db.sales,
-      db.shifts,
-      db.stockTransfers,
-      db.customers,
-      db.products,
-      db.branches,
-      db.supplierQuotes,
-      db.expenses,
-    ],
-    async () => {
-      await Promise.all([
-        ...pendingSales.map((r) => db.sales.update(r.id, { syncStatus: 'synced', syncedAt: now })),
-        ...pendingShifts.map((r) => db.shifts.update(r.id, { syncStatus: 'synced', syncedAt: now })),
-        ...pendingTransfers.map((r) =>
-          db.stockTransfers.update(r.id, { syncStatus: 'synced', syncedAt: now })
-        ),
-        ...pendingCustomers.map((r) =>
-          db.customers.update(r.id, { syncStatus: 'synced', syncedAt: now })
-        ),
-        ...pendingProducts.map((r) =>
-          db.products.update(r.id, { syncStatus: 'synced', syncedAt: now })
-        ),
-        ...pendingBranches.map((r) =>
-          db.branches.update(r.id, { syncStatus: 'synced', syncedAt: now })
-        ),
-        ...pendingQuotes.map((r) =>
-          db.supplierQuotes.update(r.id, { syncStatus: 'synced', syncedAt: now })
-        ),
-        ...pendingExpenses.map((r) =>
-          db.expenses.update(r.id, { syncStatus: 'synced', syncedAt: now })
-        ),
-      ]);
-    }
-  );
-
-  return totalPending;
 }

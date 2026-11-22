@@ -2,7 +2,26 @@ export type CurrencyMode = 'USD' | 'VES';
 
 export type SaleType = 'cash' | 'credit';
 
-export type SyncStatus = 'synced' | 'pending' | 'failed';
+export type SyncStatus = 'pending' | 'synced';
+
+export type SyncEntityType =
+  | 'sale'
+  | 'shift'
+  | 'stockTransfer'
+  | 'expense'
+  | 'customer'
+  | 'product'
+  | 'supplierQuote'
+  | 'branch';
+
+export type SyncOperationType =
+  | 'create'
+  | 'update'
+  | 'delete'
+  | 'open'
+  | 'close'
+  | 'load'
+  | 'transfer';
 
 export type StockMovementType = 'load' | 'transfer';
 
@@ -18,6 +37,17 @@ export type PaymentMethod =
   | 'Efectivo Divisa $'
   | 'Binance USDT';
 
+export interface SyncQueueItem {
+  id: string;
+  entityType: SyncEntityType;
+  entityId: string;
+  operation: SyncOperationType;
+  summary: string;
+  timestamp: string;
+  syncStatus: SyncStatus;
+  syncedAt?: string;
+}
+
 export interface Branch {
   id: string;
   name: string;
@@ -25,6 +55,7 @@ export interface Branch {
   address: string;
   phone: string;
   isActive: boolean;
+  updatedAt?: string;
   syncStatus: SyncStatus;
   syncedAt?: string;
 }
@@ -50,6 +81,7 @@ export interface Product {
   unit: string;
   minStock: number;
   stockByBranch: Record<string, number>;
+  updatedAt?: string;
   syncStatus: SyncStatus;
   syncedAt?: string;
 }
@@ -63,6 +95,7 @@ export interface Customer {
   creditLimitUsd: number;
   balanceUsd: number;
   createdAt: string;
+  updatedAt?: string;
   syncStatus: SyncStatus;
   syncedAt?: string;
 }
@@ -87,6 +120,7 @@ export interface Shift {
   cashierRole: 'admin' | 'manager' | 'cashier';
   openedAt: string;
   closedAt?: string;
+  updatedAt?: string;
   openingFundUsd: number;
   openingFundVes: number;
   openingNote?: string;
@@ -120,6 +154,7 @@ export interface StockTransfer {
   cashierName: string;
   notes?: string;
   createdAt: string;
+  updatedAt?: string;
   syncStatus: SyncStatus;
   syncedAt?: string;
 }
@@ -155,6 +190,7 @@ export interface Expense {
   cashierName: string;
   notes?: string;
   createdAt: string;
+  updatedAt?: string;
   syncStatus: SyncStatus;
   syncedAt?: string;
 }
@@ -192,6 +228,7 @@ export interface Sale {
   notes?: string;
   dueDate?: string;
   createdAt: string;
+  updatedAt?: string;
   syncStatus: SyncStatus;
   syncedAt?: string;
 }

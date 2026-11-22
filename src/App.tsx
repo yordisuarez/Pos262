@@ -30,7 +30,13 @@ import {
   WifiOff,
   X,
 } from 'lucide-react';
-import { db, seedDatabaseIfNeeded, syncAllPendingRecords } from './db/posDb';
+import { db, seedDatabaseIfNeeded } from './db/posDb';
+import {
+  buildSyncQueueItem,
+  computePendingSyncSummary,
+  formatSyncEntityLabel,
+  processSyncQueue,
+} from './services/syncQueue';
 import { CashierLoginModal, ShiftManager } from './components/ShiftManager';
 import { InventoryManager } from './components/InventoryManager';
 import { ReportsManager } from './components/ReportsManager';
@@ -51,6 +57,7 @@ import type {
   Shift,
   StockTransfer,
   SupplierQuote,
+  SyncQueueItem,
 } from './types/pos';
 
 type WorkspaceTab = 'pos' | 'shifts' | 'inventory' | 'reports' | 'costing';
@@ -173,6 +180,7 @@ export default function App() {
   );
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+  const [syncNotice, setSyncNotice] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('pos');
 
   // Persisted IndexedDB collections
@@ -185,6 +193,7 @@ export default function App() {
   const [transfers, setTransfers] = useState<StockTransfer[]>([]);
   const [supplierQuotes, setSupplierQuotes] = useState<SupplierQuote[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [syncQueue, setSyncQueue] = useState<SyncQueueItem[]>([]);
 
   // Active session state
   const [activeCashier, setActiveCashier] = useState<Cashier | null>(null);
@@ -236,6 +245,7 @@ export default function App() {
   const [copiedReceiptId, setCopiedReceiptId] = useState<string | null>(null);
 
   const [historyOpen, setHistoryOpen] = useState<boolean>(false);
+  const [historyTab, setHistoryTab] = useState<'queue' | 'sales'>('queue');
 
   // PWA Install Prompt state
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
@@ -254,6 +264,7 @@ export default function App() {
       loadedTransfers,
       loadedQuotes,
       loadedExpenses,
+      loadedSyncQueue,
     ] = await Promise.all([
       db.branches.toArray(),
       db.cashiers.toArray(),
@@ -264,6 +275,7 @@ export default function App() {
       db.stockTransfers.orderBy('createdAt').reverse().toArray(),
       db.supplierQuotes.orderBy('updatedAt').reverse().toArray(),
       db.expenses.orderBy('createdAt').reverse().toArray(),
+      db.syncQueue.orderBy('timestamp').reverse().toArray(),
     ]);
 
     setBranches(loadedBranches);
@@ -275,23 +287,50 @@ export default function App() {
     setTransfers(loadedTransfers);
     setSupplierQuotes(loadedQuotes);
     setExpenses(loadedExpenses);
+    setSyncQueue(loadedSyncQueue);
 
     return { loadedBranches, loadedCashiers };
   }, []);
 
-  const triggerSyncQueue = useCallback(async () => {
-    if (!navigator.onLine) return;
-    setIsSyncing(true);
-    try {
-      const syncedCount = await syncAllPendingRecords();
-      if (syncedCount > 0) {
-        await reloadAllData();
-        setLastSyncedAt(new Date().toISOString());
+  const showTemporarySyncNotice = useCallback((message: string) => {
+    setSyncNotice(message);
+    window.setTimeout(() => {
+      setSyncNotice((prev) => (prev === message ? null : prev));
+    }, 4000);
+  }, []);
+
+  const triggerSyncQueue = useCallback(
+    async (mode: 'auto' | 'manual' = 'auto') => {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        if (mode === 'manual') {
+          showTemporarySyncNotice('Sin conexión. Los cambios pendientes se sincronizarán al reconectar.');
+        }
+        return null;
       }
-    } finally {
-      setIsSyncing(false);
-    }
-  }, [reloadAllData]);
+
+      setIsSyncing(true);
+      try {
+        const result = await processSyncQueue();
+        if (result.ok && result.syncedCount > 0) {
+          await reloadAllData();
+          if (result.syncedAt) {
+            setLastSyncedAt(result.syncedAt);
+          }
+          showTemporarySyncNotice(
+            `Sincronizados ${result.syncedCount} ${
+              result.syncedCount === 1 ? 'registro pendiente' : 'registros pendientes'
+            }.`
+          );
+        } else if (mode === 'manual' && result.ok) {
+          showTemporarySyncNotice('No hay registros pendientes por sincronizar.');
+        }
+        return result;
+      } finally {
+        setIsSyncing(false);
+      }
+    },
+    [reloadAllData, showTemporarySyncNotice]
+  );
 
   useEffect(() => {
     const isStandalone =
@@ -332,12 +371,14 @@ export default function App() {
     async function init() {
       await seedDatabaseIfNeeded();
       const { loadedBranches, loadedCashiers } = await reloadAllData();
-      const [rateSetting, branchSetting, currSetting, cashierSetting] = await Promise.all([
-        db.settings.get('exchangeRate'),
-        db.settings.get('activeBranchId'),
-        db.settings.get('currencyMode'),
-        db.settings.get('activeCashierId'),
-      ]);
+      const [rateSetting, branchSetting, currSetting, cashierSetting, syncedSetting] =
+        await Promise.all([
+          db.settings.get('exchangeRate'),
+          db.settings.get('activeBranchId'),
+          db.settings.get('currencyMode'),
+          db.settings.get('activeCashierId'),
+          db.settings.get('lastSyncedAt'),
+        ]);
 
       if (!active) return;
 
@@ -355,6 +396,9 @@ export default function App() {
       if (currSetting?.value === 'USD' || currSetting?.value === 'VES') {
         setCurrency(currSetting.value);
       }
+      if (syncedSetting?.value) {
+        setLastSyncedAt(syncedSetting.value);
+      }
       if (cashierSetting?.value) {
         const found = loadedCashiers.find((c) => c.id === cashierSetting.value);
         if (found) setActiveCashier(found);
@@ -365,7 +409,7 @@ export default function App() {
       setIsReady(true);
 
       if (navigator.onLine) {
-        await triggerSyncQueue();
+        await triggerSyncQueue('auto');
       }
     }
 
@@ -378,17 +422,25 @@ export default function App() {
   useEffect(() => {
     const handleOnline = () => {
       setIsOnline(true);
-      void triggerSyncQueue();
+      void triggerSyncQueue('auto');
     };
     const handleOffline = () => {
       setIsOnline(false);
     };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && navigator.onLine) {
+        setIsOnline(true);
+        void triggerSyncQueue('auto');
+      }
+    };
 
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [triggerSyncQueue]);
 
@@ -451,33 +503,20 @@ export default function App() {
     [shifts, activeBranchId, activeCashier]
   );
 
-  const pendingSyncSummary = useMemo(() => {
-    const pendingSales = sales.filter((s) => s.syncStatus === 'pending').length;
-    const pendingShifts = shifts.filter((s) => s.syncStatus === 'pending').length;
-    const pendingTransfers = transfers.filter((t) => t.syncStatus === 'pending').length;
-    const pendingCustomers = customers.filter((c) => c.syncStatus === 'pending').length;
-    const pendingProducts = products.filter((p) => p.syncStatus === 'pending').length;
-    const pendingQuotes = supplierQuotes.filter((q) => q.syncStatus === 'pending').length;
-    const pendingExpenses = expenses.filter((e) => e.syncStatus === 'pending').length;
-    const total =
-      pendingSales +
-      pendingShifts +
-      pendingTransfers +
-      pendingCustomers +
-      pendingProducts +
-      pendingQuotes +
-      pendingExpenses;
-    return {
-      total,
-      pendingSales,
-      pendingShifts,
-      pendingTransfers,
-      pendingCustomers,
-      pendingProducts,
-      pendingQuotes,
-      pendingExpenses,
-    };
-  }, [sales, shifts, transfers, customers, products, supplierQuotes, expenses]);
+  const pendingSyncSummary = useMemo(
+    () =>
+      computePendingSyncSummary({
+        sales,
+        shifts,
+        transfers,
+        expenses,
+        customers,
+        products,
+        supplierQuotes,
+        syncQueue,
+      }),
+    [sales, shifts, transfers, expenses, customers, products, supplierQuotes, syncQueue]
+  );
 
   // Shift Handlers
   const handleOpenShift = async (params: {
@@ -487,7 +526,6 @@ export default function App() {
   }) => {
     if (!activeCashier || !activeBranch) return;
     const now = new Date().toISOString();
-    const onlineNow = navigator.onLine;
 
     const newShift: Shift = {
       id: `shift-${Date.now()}`,
@@ -497,16 +535,31 @@ export default function App() {
       cashierName: activeCashier.name,
       cashierRole: activeCashier.role,
       openedAt: now,
+      updatedAt: now,
       openingFundUsd: params.openingFundUsd,
       openingFundVes: params.openingFundVes,
       openingNote: params.openingNote,
       status: 'open',
-      syncStatus: onlineNow ? 'synced' : 'pending',
-      syncedAt: onlineNow ? now : undefined,
+      syncStatus: 'pending',
     };
 
-    await db.shifts.put(newShift);
+    const queueItem = buildSyncQueueItem({
+      entityType: 'shift',
+      entityId: newShift.id,
+      operation: 'open',
+      summary: `Apertura turno ${activeBranch.name} (${activeCashier.name})`,
+      timestamp: now,
+    });
+
+    await db.transaction('rw', [db.shifts, db.syncQueue], async () => {
+      await db.shifts.put(newShift);
+      await db.syncQueue.put(queueItem);
+    });
+
     await reloadAllData();
+    if (navigator.onLine) {
+      await triggerSyncQueue('auto');
+    }
   };
 
   const handleCloseShift = async (params: {
@@ -521,26 +574,41 @@ export default function App() {
     closingNote?: string;
   }) => {
     const now = new Date().toISOString();
-    const onlineNow = navigator.onLine;
+    const targetShift = shifts.find((s) => s.id === params.shiftId);
 
-    await db.shifts.update(params.shiftId, {
-      closedAt: now,
-      status: 'closed',
-      countedCashUsd: params.countedCashUsd,
-      countedCashVes: params.countedCashVes,
-      expectedCashUsd: params.expectedCashUsd,
-      expectedCashVes: params.expectedCashVes,
-      diffUsd: round2(params.countedCashUsd - params.expectedCashUsd),
-      diffVes: round2(params.countedCashVes - params.expectedCashVes),
-      digitalTotalUsd: params.digitalTotalUsd,
-      creditTotalUsd: params.creditTotalUsd,
-      salesCount: params.salesCount,
-      closingNote: params.closingNote,
-      syncStatus: onlineNow ? 'synced' : 'pending',
-      syncedAt: onlineNow ? now : undefined,
+    const queueItem = buildSyncQueueItem({
+      entityType: 'shift',
+      entityId: params.shiftId,
+      operation: 'close',
+      summary: `Cierre turno ${targetShift?.branchName ?? activeBranch?.name ?? ''} (${params.salesCount} ventas)`,
+      timestamp: now,
+    });
+
+    await db.transaction('rw', [db.shifts, db.syncQueue], async () => {
+      await db.shifts.update(params.shiftId, {
+        closedAt: now,
+        updatedAt: now,
+        status: 'closed',
+        countedCashUsd: params.countedCashUsd,
+        countedCashVes: params.countedCashVes,
+        expectedCashUsd: params.expectedCashUsd,
+        expectedCashVes: params.expectedCashVes,
+        diffUsd: round2(params.countedCashUsd - params.expectedCashUsd),
+        diffVes: round2(params.countedCashVes - params.expectedCashVes),
+        digitalTotalUsd: params.digitalTotalUsd,
+        creditTotalUsd: params.creditTotalUsd,
+        salesCount: params.salesCount,
+        closingNote: params.closingNote,
+        syncStatus: 'pending',
+        syncedAt: undefined,
+      });
+      await db.syncQueue.put(queueItem);
     });
 
     await reloadAllData();
+    if (navigator.onLine) {
+      await triggerSyncQueue('auto');
+    }
   };
 
   // Multi-Branch Stock Load & Transfer Handlers
@@ -556,8 +624,6 @@ export default function App() {
     if (!targetBranch || !targetProduct) return;
 
     const now = new Date().toISOString();
-    const onlineNow = navigator.onLine;
-    const syncStatus = onlineNow ? 'synced' : 'pending';
 
     const movement: StockTransfer = {
       id: `mov-${Date.now()}`,
@@ -572,11 +638,19 @@ export default function App() {
       cashierName: activeCashier.name,
       notes: params.notes,
       createdAt: now,
-      syncStatus,
-      syncedAt: onlineNow ? now : undefined,
+      updatedAt: now,
+      syncStatus: 'pending',
     };
 
-    await db.transaction('rw', [db.products, db.stockTransfers], async () => {
+    const queueItem = buildSyncQueueItem({
+      entityType: 'stockTransfer',
+      entityId: movement.id,
+      operation: 'load',
+      summary: `Carga +${params.quantity} und ${targetProduct.sku} en ${targetBranch.name}`,
+      timestamp: now,
+    });
+
+    await db.transaction('rw', [db.products, db.stockTransfers, db.syncQueue], async () => {
       const freshProd = await db.products.get(targetProduct.id);
       if (!freshProd) return;
       const currentQty = freshProd.stockByBranch[targetBranch.id] ?? 0;
@@ -585,13 +659,18 @@ export default function App() {
           ...freshProd.stockByBranch,
           [targetBranch.id]: currentQty + params.quantity,
         },
-        syncStatus,
-        syncedAt: onlineNow ? now : undefined,
+        updatedAt: now,
+        syncStatus: 'pending',
+        syncedAt: undefined,
       });
       await db.stockTransfers.put(movement);
+      await db.syncQueue.put(queueItem);
     });
 
     await reloadAllData();
+    if (navigator.onLine) {
+      await triggerSyncQueue('auto');
+    }
   };
 
   const handleTransferStock = async (params: {
@@ -608,8 +687,6 @@ export default function App() {
     if (!fromBranch || !toBranch || !targetProduct) return;
 
     const now = new Date().toISOString();
-    const onlineNow = navigator.onLine;
-    const syncStatus = onlineNow ? 'synced' : 'pending';
 
     const movement: StockTransfer = {
       id: `trf-${Date.now()}`,
@@ -626,11 +703,19 @@ export default function App() {
       cashierName: activeCashier.name,
       notes: params.notes,
       createdAt: now,
-      syncStatus,
-      syncedAt: onlineNow ? now : undefined,
+      updatedAt: now,
+      syncStatus: 'pending',
     };
 
-    await db.transaction('rw', [db.products, db.stockTransfers], async () => {
+    const queueItem = buildSyncQueueItem({
+      entityType: 'stockTransfer',
+      entityId: movement.id,
+      operation: 'transfer',
+      summary: `Traslado ${params.quantity} und ${targetProduct.sku} (${fromBranch.name} → ${toBranch.name})`,
+      timestamp: now,
+    });
+
+    await db.transaction('rw', [db.products, db.stockTransfers, db.syncQueue], async () => {
       const freshProd = await db.products.get(targetProduct.id);
       if (!freshProd) return;
       const sourceQty = freshProd.stockByBranch[fromBranch.id] ?? 0;
@@ -643,13 +728,18 @@ export default function App() {
           [fromBranch.id]: sourceQty - params.quantity,
           [toBranch.id]: destQty + params.quantity,
         },
-        syncStatus,
-        syncedAt: onlineNow ? now : undefined,
+        updatedAt: now,
+        syncStatus: 'pending',
+        syncedAt: undefined,
       });
       await db.stockTransfers.put(movement);
+      await db.syncQueue.put(queueItem);
     });
 
     await reloadAllData();
+    if (navigator.onLine) {
+      await triggerSyncQueue('auto');
+    }
   };
 
   // Receivable settlement handler
@@ -658,16 +748,23 @@ export default function App() {
     if (!sale || sale.pendingUsd <= 0) return;
 
     const now = new Date().toISOString();
-    const onlineNow = navigator.onLine;
-    const syncStatus = onlineNow ? 'synced' : 'pending';
     const appliedUsd = round2(Math.min(sale.pendingUsd, amountUsd));
     const nextPending = round2(Math.max(0, sale.pendingUsd - appliedUsd));
     const nextPaid = round2(sale.paidUsd + appliedUsd);
 
-    await db.transaction('rw', [db.sales, db.customers], async () => {
+    const queueItem = buildSyncQueueItem({
+      entityType: 'sale',
+      entityId: sale.id,
+      operation: 'update',
+      summary: `Cobro crédito ${sale.receiptNumber} (${formatUsd(appliedUsd)})`,
+      timestamp: now,
+    });
+
+    await db.transaction('rw', [db.sales, db.customers, db.syncQueue], async () => {
       await db.sales.update(sale.id, {
         paidUsd: nextPaid,
         pendingUsd: nextPending,
+        updatedAt: now,
         payments: [
           ...sale.payments,
           {
@@ -677,21 +774,27 @@ export default function App() {
             reference: 'Cobro de crédito',
           },
         ],
-        syncStatus,
-        syncedAt: onlineNow ? now : undefined,
+        syncStatus: 'pending',
+        syncedAt: undefined,
       });
 
       const customer = await db.customers.get(sale.customerId);
       if (customer) {
         await db.customers.update(customer.id, {
           balanceUsd: round2(Math.max(0, customer.balanceUsd - appliedUsd)),
-          syncStatus,
-          syncedAt: onlineNow ? now : undefined,
+          updatedAt: now,
+          syncStatus: 'pending',
+          syncedAt: undefined,
         });
       }
+
+      await db.syncQueue.put(queueItem);
     });
 
     await reloadAllData();
+    if (navigator.onLine) {
+      await triggerSyncQueue('auto');
+    }
   };
 
   // Bulk Pricing, Suppliers & Expenses Handlers
@@ -701,14 +804,31 @@ export default function App() {
     priceUsd: number
   ) => {
     const now = new Date().toISOString();
-    const onlineNow = navigator.onLine;
-    await db.products.update(productId, {
-      costUsd: round2(costUsd),
-      priceUsd: round2(priceUsd),
-      syncStatus: onlineNow ? 'synced' : 'pending',
-      syncedAt: onlineNow ? now : undefined,
+    const product = products.find((p) => p.id === productId);
+
+    const queueItem = buildSyncQueueItem({
+      entityType: 'product',
+      entityId: productId,
+      operation: 'update',
+      summary: `Precio ${product?.sku ?? productId}: ${formatUsd(priceUsd)}`,
+      timestamp: now,
     });
+
+    await db.transaction('rw', [db.products, db.syncQueue], async () => {
+      await db.products.update(productId, {
+        costUsd: round2(costUsd),
+        priceUsd: round2(priceUsd),
+        updatedAt: now,
+        syncStatus: 'pending',
+        syncedAt: undefined,
+      });
+      await db.syncQueue.put(queueItem);
+    });
+
     await reloadAllData();
+    if (navigator.onLine) {
+      await triggerSyncQueue('auto');
+    }
   };
 
   const handleAddSupplierQuote = async (params: {
@@ -723,7 +843,6 @@ export default function App() {
     if (!product) return;
 
     const now = new Date().toISOString();
-    const onlineNow = navigator.onLine;
     const quote: SupplierQuote = {
       id: `quote-${Date.now()}`,
       supplierName: params.supplierName,
@@ -736,17 +855,48 @@ export default function App() {
       unitCostUsd: round2(params.bulkCostUsd / params.unitsPerBulk),
       notes: params.notes,
       updatedAt: now,
-      syncStatus: onlineNow ? 'synced' : 'pending',
-      syncedAt: onlineNow ? now : undefined,
+      syncStatus: 'pending',
     };
 
-    await db.supplierQuotes.put(quote);
+    const queueItem = buildSyncQueueItem({
+      entityType: 'supplierQuote',
+      entityId: quote.id,
+      operation: 'create',
+      summary: `Cotización ${quote.supplierName} (${product.sku})`,
+      timestamp: now,
+    });
+
+    await db.transaction('rw', [db.supplierQuotes, db.syncQueue], async () => {
+      await db.supplierQuotes.put(quote);
+      await db.syncQueue.put(queueItem);
+    });
+
     await reloadAllData();
+    if (navigator.onLine) {
+      await triggerSyncQueue('auto');
+    }
   };
 
   const handleDeleteSupplierQuote = async (quoteId: string) => {
-    await db.supplierQuotes.delete(quoteId);
+    const existing = supplierQuotes.find((q) => q.id === quoteId);
+    const now = new Date().toISOString();
+    const queueItem = buildSyncQueueItem({
+      entityType: 'supplierQuote',
+      entityId: quoteId,
+      operation: 'delete',
+      summary: `Eliminar cotización ${existing?.supplierName ?? quoteId}`,
+      timestamp: now,
+    });
+
+    await db.transaction('rw', [db.supplierQuotes, db.syncQueue], async () => {
+      await db.supplierQuotes.delete(quoteId);
+      await db.syncQueue.put(queueItem);
+    });
+
     await reloadAllData();
+    if (navigator.onLine) {
+      await triggerSyncQueue('auto');
+    }
   };
 
   const handleAddExpense = async (params: {
@@ -763,7 +913,6 @@ export default function App() {
     if (!branch) return;
 
     const now = new Date().toISOString();
-    const onlineNow = navigator.onLine;
     const expense: Expense = {
       id: `exp-${Date.now()}`,
       branchId: branch.id,
@@ -779,17 +928,49 @@ export default function App() {
       cashierName: activeCashier.name,
       notes: params.notes,
       createdAt: now,
-      syncStatus: onlineNow ? 'synced' : 'pending',
-      syncedAt: onlineNow ? now : undefined,
+      updatedAt: now,
+      syncStatus: 'pending',
     };
 
-    await db.expenses.put(expense);
+    const queueItem = buildSyncQueueItem({
+      entityType: 'expense',
+      entityId: expense.id,
+      operation: 'create',
+      summary: `Gasto ${expense.type === 'fixed' ? 'fijo' : 'variable'}: ${expense.description} (${formatUsd(expense.amountUsd)})`,
+      timestamp: now,
+    });
+
+    await db.transaction('rw', [db.expenses, db.syncQueue], async () => {
+      await db.expenses.put(expense);
+      await db.syncQueue.put(queueItem);
+    });
+
     await reloadAllData();
+    if (navigator.onLine) {
+      await triggerSyncQueue('auto');
+    }
   };
 
   const handleDeleteExpense = async (expenseId: string) => {
-    await db.expenses.delete(expenseId);
+    const existing = expenses.find((e) => e.id === expenseId);
+    const now = new Date().toISOString();
+    const queueItem = buildSyncQueueItem({
+      entityType: 'expense',
+      entityId: expenseId,
+      operation: 'delete',
+      summary: `Eliminar gasto: ${existing?.description ?? expenseId}`,
+      timestamp: now,
+    });
+
+    await db.transaction('rw', [db.expenses, db.syncQueue], async () => {
+      await db.expenses.delete(expenseId);
+      await db.syncQueue.put(queueItem);
+    });
+
     await reloadAllData();
+    if (navigator.onLine) {
+      await triggerSyncQueue('auto');
+    }
   };
 
   // Catalog & Cart helpers
@@ -912,7 +1093,6 @@ export default function App() {
     if (!trimmedName) return;
 
     const now = new Date().toISOString();
-    const onlineNow = navigator.onLine;
     const customer: Customer = {
       id: `cust-${Date.now()}`,
       name: trimmedName,
@@ -921,12 +1101,27 @@ export default function App() {
       creditLimitUsd: 200,
       balanceUsd: 0,
       createdAt: now,
-      syncStatus: onlineNow ? 'synced' : 'pending',
-      syncedAt: onlineNow ? now : undefined,
+      updatedAt: now,
+      syncStatus: 'pending',
     };
 
-    await db.customers.put(customer);
+    const queueItem = buildSyncQueueItem({
+      entityType: 'customer',
+      entityId: customer.id,
+      operation: 'create',
+      summary: `Nuevo cliente: ${customer.name} (${customer.documentId})`,
+      timestamp: now,
+    });
+
+    await db.transaction('rw', [db.customers, db.syncQueue], async () => {
+      await db.customers.put(customer);
+      await db.syncQueue.put(queueItem);
+    });
+
     await reloadAllData();
+    if (navigator.onLine) {
+      await triggerSyncQueue('auto');
+    }
     setSelectedCustomerId(customer.id);
     setNewCustomerName('');
     setNewCustomerDoc('');
@@ -1061,8 +1256,6 @@ export default function App() {
     const now = new Date();
     const nowIso = now.toISOString();
     const receiptNumber = `P262-${String(sales.length + 1).padStart(4, '0')}`;
-    const onlineNow = navigator.onLine;
-    const syncStatus = onlineNow ? 'synced' : 'pending';
 
     const newSale: Sale = {
       id: `sale-${now.getTime()}`,
@@ -1090,11 +1283,19 @@ export default function App() {
       notes: orderNotes.trim() || undefined,
       dueDate: saleType === 'credit' ? creditDueDate : undefined,
       createdAt: nowIso,
-      syncStatus,
-      syncedAt: onlineNow ? nowIso : undefined,
+      updatedAt: nowIso,
+      syncStatus: 'pending',
     };
 
-    await db.transaction('rw', [db.sales, db.products, db.customers], async () => {
+    const queueItem = buildSyncQueueItem({
+      entityType: 'sale',
+      entityId: newSale.id,
+      operation: 'create',
+      summary: `Venta ${receiptNumber} (${saleType === 'cash' ? 'Contado' : 'Crédito'}) ${formatUsd(newSale.totalUsd)}`,
+      timestamp: nowIso,
+    });
+
+    await db.transaction('rw', [db.sales, db.products, db.customers, db.syncQueue], async () => {
       await db.sales.put(newSale);
 
       for (const item of cart) {
@@ -1106,8 +1307,9 @@ export default function App() {
               ...prod.stockByBranch,
               [activeBranch.id]: Math.max(0, currentStock - item.quantity),
             },
-            syncStatus,
-            syncedAt: onlineNow ? nowIso : undefined,
+            updatedAt: nowIso,
+            syncStatus: 'pending',
+            syncedAt: undefined,
           });
         }
       }
@@ -1115,14 +1317,29 @@ export default function App() {
       if (saleType === 'credit' && finalPendingUsd > 0 && selectedCustomer) {
         await db.customers.update(selectedCustomer.id, {
           balanceUsd: round2((selectedCustomer.balanceUsd || 0) + finalPendingUsd),
-          syncStatus,
-          syncedAt: onlineNow ? nowIso : undefined,
+          updatedAt: nowIso,
+          syncStatus: 'pending',
+          syncedAt: undefined,
         });
       }
+
+      await db.syncQueue.put(queueItem);
     });
 
     await reloadAllData();
-    setCompletedSale(newSale);
+    let finalSaleRecord = newSale;
+    if (navigator.onLine) {
+      const syncResult = await triggerSyncQueue('auto');
+      if (syncResult?.ok && syncResult.syncedAt) {
+        finalSaleRecord = {
+          ...newSale,
+          syncStatus: 'synced',
+          syncedAt: syncResult.syncedAt,
+        };
+      }
+    }
+
+    setCompletedSale(finalSaleRecord);
     setCart([]);
     setOrderNotes('');
     setPayments([]);
@@ -1456,7 +1673,11 @@ export default function App() {
 
             <button
               type="button"
-              onClick={() => setHistoryOpen(true)}
+              onClick={() => {
+                setHistoryTab('queue');
+                setHistoryOpen(true);
+              }}
+              title="Ver cola de sincronización offline"
               className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                 isOnline
                   ? 'border-emerald-800 bg-emerald-950/60 text-emerald-300 hover:bg-emerald-900/60'
@@ -1465,11 +1686,28 @@ export default function App() {
             >
               {isOnline ? <Wifi className="h-3.5 w-3.5" /> : <WifiOff className="h-3.5 w-3.5" />}
               <span>{isOnline ? 'En línea' : 'Offline'}</span>
-              {pendingSyncSummary.total > 0 && (
-                <span className="font-mono tabular-nums text-amber-300">
-                  · {pendingSyncSummary.total}
-                </span>
-              )}
+              <span
+                className={`font-mono tabular-nums ${
+                  pendingSyncSummary.total > 0 ? 'text-amber-300 font-bold' : 'text-slate-300'
+                }`}
+              >
+                · {pendingSyncSummary.total} {pendingSyncSummary.total === 1 ? 'pendiente' : 'pendientes'}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              disabled={!isOnline || isSyncing}
+              onClick={() => void triggerSyncQueue('manual')}
+              title={
+                !isOnline
+                  ? 'Sin conexión a internet'
+                  : 'Procesar y sincronizar registros pendientes ahora'
+              }
+              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-700 bg-emerald-700 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-emerald-600 disabled:border-slate-700 disabled:bg-slate-800 disabled:text-slate-400 transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:cursor-not-allowed"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+              <span>{isSyncing ? 'Sincronizando...' : 'Sincronizar ahora'}</span>
             </button>
 
             <label className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-2 py-1 text-xs">
@@ -1516,7 +1754,10 @@ export default function App() {
 
             <button
               type="button"
-              onClick={() => setHistoryOpen(true)}
+              onClick={() => {
+                setHistoryTab('sales');
+                setHistoryOpen(true);
+              }}
               aria-label="Historial de ventas y sincronización"
               className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
             >
@@ -1535,6 +1776,11 @@ export default function App() {
             )}
           </div>
         </div>
+        {syncNotice && (
+          <div className="border-t border-slate-800 bg-slate-950 px-4 py-1.5 text-xs text-emerald-300 lg:px-6">
+            {syncNotice}
+          </div>
+        )}
       </header>
 
       {activeTab === 'pos' && (
@@ -2170,32 +2416,35 @@ export default function App() {
       {historyOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-3 sm:p-4">
           <div className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white">
-            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3.5">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-3.5">
               <div>
                 <h2 className="text-base font-bold text-slate-900">
-                  Historial de ventas y cola offline
+                  Cola de sincronización offline e historial
                 </h2>
                 <p className="text-xs text-slate-500">
-                  Pendientes: {pendingSyncSummary.total} total ({pendingSyncSummary.pendingSales} ventas,{' '}
-                  {pendingSyncSummary.pendingShifts} turnos, {pendingSyncSummary.pendingTransfers} traslados,{' '}
-                  {pendingSyncSummary.pendingExpenses} gastos, {pendingSyncSummary.pendingQuotes} proveedores)
+                  Estado: <strong>{isOnline ? 'En línea' : 'Sin conexión (Offline)'}</strong> ·
+                  Pendientes: <strong>{pendingSyncSummary.total}</strong> ({pendingSyncSummary.pendingSales} ventas,{' '}
+                  {pendingSyncSummary.pendingShifts} turnos, {pendingSyncSummary.pendingTransfers} stock/traslados,{' '}
+                  {pendingSyncSummary.pendingExpenses} gastos
+                  {pendingSyncSummary.pendingOther > 0 ? `, ${pendingSyncSummary.pendingOther} otros` : ''})
                   {lastSyncedAt
-                    ? ` · Última sync: ${new Date(lastSyncedAt).toLocaleTimeString('es-VE')}`
+                    ? ` · Última sync: ${new Date(lastSyncedAt).toLocaleString('es-VE', {
+                        dateStyle: 'short',
+                        timeStyle: 'short',
+                      })}`
                     : ''}
                 </p>
               </div>
               <div className="flex items-center gap-2">
-                {pendingSyncSummary.total > 0 && (
-                  <button
-                    type="button"
-                    disabled={!isOnline || isSyncing}
-                    onClick={() => void triggerSyncQueue()}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:bg-slate-300 transition-colors cursor-pointer"
-                  >
-                    <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-                    Sincronizar ahora
-                  </button>
-                )}
+                <button
+                  type="button"
+                  disabled={!isOnline || isSyncing}
+                  onClick={() => void triggerSyncQueue('manual')}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:bg-slate-300 disabled:text-slate-600 transition-colors cursor-pointer disabled:cursor-not-allowed"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                  {isSyncing ? 'Sincronizando...' : 'Sincronizar ahora'}
+                </button>
                 <button
                   type="button"
                   onClick={() => setHistoryOpen(false)}
@@ -2207,8 +2456,84 @@ export default function App() {
               </div>
             </div>
 
+            <div className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-5 py-2">
+              <button
+                type="button"
+                onClick={() => setHistoryTab('queue')}
+                className={`rounded-md px-3 py-1.5 text-xs font-semibold cursor-pointer ${
+                  historyTab === 'queue'
+                    ? 'bg-slate-900 text-white'
+                    : 'text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                Cola offline ({pendingSyncSummary.total} pendientes / {syncQueue.length} total)
+              </button>
+              <button
+                type="button"
+                onClick={() => setHistoryTab('sales')}
+                className={`rounded-md px-3 py-1.5 text-xs font-semibold cursor-pointer ${
+                  historyTab === 'sales'
+                    ? 'bg-slate-900 text-white'
+                    : 'text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                Historial de ventas ({sales.length})
+              </button>
+            </div>
+
             <div className="flex-1 overflow-y-auto p-5">
-              {sales.length === 0 ? (
+              {historyTab === 'queue' ? (
+                syncQueue.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-center">
+                    <CheckCircle2 className="h-8 w-8 text-emerald-500" />
+                    <p className="mt-3 text-sm font-semibold text-slate-700">
+                      Cola de sincronización al día
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Cada venta, turno, carga/traslado de stock o gasto se guarda primero en IndexedDB con marca de tiempo y se sincroniza automáticamente al volver la conexión.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-slate-200 rounded-lg border border-slate-200">
+                    {syncQueue.map((item) => (
+                      <div
+                        key={item.id}
+                        className="flex flex-col gap-2 p-3.5 sm:flex-row sm:items-center sm:justify-between"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-slate-900">
+                            [{formatSyncEntityLabel(item.entityType)}] {item.summary}
+                          </p>
+                          <p className="mt-0.5 font-mono text-[11px] text-slate-500">
+                            Creado:{' '}
+                            {new Date(item.timestamp).toLocaleString('es-VE', {
+                              dateStyle: 'short',
+                              timeStyle: 'medium',
+                            })}
+                            {item.syncedAt
+                              ? ` · Sincronizado: ${new Date(item.syncedAt).toLocaleString(
+                                  'es-VE',
+                                  {
+                                    dateStyle: 'short',
+                                    timeStyle: 'medium',
+                                  }
+                                )}`
+                              : ''}
+                          </p>
+                        </div>
+
+                        <span
+                          className={`text-xs font-semibold whitespace-nowrap shrink-0 ${
+                            item.syncStatus === 'synced' ? 'text-emerald-700' : 'text-amber-700'
+                          }`}
+                        >
+                          {item.syncStatus === 'synced' ? 'Sincronizado' : 'Pendiente offline'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )
+              ) : sales.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12 text-center">
                   <Clock className="h-8 w-8 text-slate-300" />
                   <p className="mt-3 text-sm font-semibold text-slate-700">
