@@ -1,0 +1,6 @@
+{
+  "name": "Pos 262",
+  "description": "Sistema de punto de venta web offline-first multi-moneda ($ / Bs) con soporte PWA, sucursales y cobro local y digital.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
