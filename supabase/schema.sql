@@ -3,7 +3,7 @@
 
 create table if not exists public.business_settings (
   user_id uuid primary key references auth.users (id) on delete cascade,
-  business_name text not null default 'Comercial 262 Suárez',
+  business_name text not null default 'Comercial',
   rif text not null default '',
   phone text not null default '',
   address text not null default '',
