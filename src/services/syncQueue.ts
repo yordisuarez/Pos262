@@ -62,12 +62,17 @@ interface CloudSyncRecordRow {
 }
 
 const SYNC_BATCH_SIZE = 100;
+let activeSyncPromise: Promise<SyncProcessResult> | null = null;
 
 function isRecordObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function getRecordTimestamp(record: { updatedAt?: string; createdAt?: string; openedAt?: string }): string {
+function getRecordTimestamp(record: {
+  updatedAt?: string;
+  createdAt?: string;
+  openedAt?: string;
+}): string {
   return record.updatedAt || record.createdAt || record.openedAt || '1970-01-01T00:00:00.000Z';
 }
 
@@ -158,7 +163,7 @@ async function upsertSyncRecordsInBatches(rows: CloudSyncRecordRow[]): Promise<v
   }
 }
 
-async function buildInitialSeedRows(userId: string, now: string): Promise<CloudSyncRecordRow[]> {
+async function buildAllLocalSyncRows(userId: string, now: string): Promise<CloudSyncRecordRow[]> {
   const [branches, products, customers, sales, shifts, transfers, quotes, expenses] =
     await Promise.all([
       db.branches.toArray(),
@@ -173,7 +178,9 @@ async function buildInitialSeedRows(userId: string, now: string): Promise<CloudS
 
   const rows: CloudSyncRecordRow[] = [];
 
-  const pushCollection = <T extends { id: string; updatedAt?: string; createdAt?: string; openedAt?: string }>(
+  const pushCollection = <
+    T extends { id: string; updatedAt?: string; createdAt?: string; openedAt?: string },
+  >(
     entityType: SyncEntityType,
     items: T[]
   ) => {
@@ -182,7 +189,10 @@ async function buildInitialSeedRows(userId: string, now: string): Promise<CloudS
         user_id: userId,
         entity_type: entityType,
         record_id: item.id,
-        payload: { ...item, syncStatus: 'synced', syncedAt: now } as unknown as Record<string, unknown>,
+        payload: { ...item, syncStatus: 'synced', syncedAt: now } as unknown as Record<
+          string,
+          unknown
+        >,
         deleted: false,
         updated_at: item.updatedAt || item.createdAt || item.openedAt || now,
       });
@@ -230,36 +240,52 @@ async function mergePulledRecordsIntoIndexedDB(
         if (row.deleted) {
           switch (row.entity_type) {
             case 'branch':
-              await db.branches.delete(row.record_id);
-              mergedCount += 1;
+              if (await db.branches.get(row.record_id)) {
+                await db.branches.delete(row.record_id);
+                mergedCount += 1;
+              }
               break;
             case 'product':
-              await db.products.delete(row.record_id);
-              mergedCount += 1;
+              if (await db.products.get(row.record_id)) {
+                await db.products.delete(row.record_id);
+                mergedCount += 1;
+              }
               break;
             case 'customer':
-              await db.customers.delete(row.record_id);
-              mergedCount += 1;
+              if (await db.customers.get(row.record_id)) {
+                await db.customers.delete(row.record_id);
+                mergedCount += 1;
+              }
               break;
             case 'sale':
-              await db.sales.delete(row.record_id);
-              mergedCount += 1;
+              if (await db.sales.get(row.record_id)) {
+                await db.sales.delete(row.record_id);
+                mergedCount += 1;
+              }
               break;
             case 'shift':
-              await db.shifts.delete(row.record_id);
-              mergedCount += 1;
+              if (await db.shifts.get(row.record_id)) {
+                await db.shifts.delete(row.record_id);
+                mergedCount += 1;
+              }
               break;
             case 'stockTransfer':
-              await db.stockTransfers.delete(row.record_id);
-              mergedCount += 1;
+              if (await db.stockTransfers.get(row.record_id)) {
+                await db.stockTransfers.delete(row.record_id);
+                mergedCount += 1;
+              }
               break;
             case 'supplierQuote':
-              await db.supplierQuotes.delete(row.record_id);
-              mergedCount += 1;
+              if (await db.supplierQuotes.get(row.record_id)) {
+                await db.supplierQuotes.delete(row.record_id);
+                mergedCount += 1;
+              }
               break;
             case 'expense':
-              await db.expenses.delete(row.record_id);
-              mergedCount += 1;
+              if (await db.expenses.get(row.record_id)) {
+                await db.expenses.delete(row.record_id);
+                mergedCount += 1;
+              }
               break;
             default:
               break;
@@ -278,13 +304,16 @@ async function mergePulledRecordsIntoIndexedDB(
         };
 
         const shouldApply = (
-          local: { syncStatus?: string; updatedAt?: string; createdAt?: string; openedAt?: string } | undefined
+          local:
+            | { syncStatus?: string; updatedAt?: string; createdAt?: string; openedAt?: string }
+            | undefined
         ): boolean => {
           if (!local) return true;
+          const localTs = getRecordTimestamp(local);
           if (local.syncStatus === 'pending') {
-            return cloudUpdatedAt > getRecordTimestamp(local);
+            return cloudUpdatedAt > localTs;
           }
-          return cloudUpdatedAt >= getRecordTimestamp(local);
+          return cloudUpdatedAt > localTs;
         };
 
         switch (row.entity_type) {
@@ -362,9 +391,10 @@ async function mergePulledRecordsIntoIndexedDB(
   return mergedCount;
 }
 
-export async function processSyncQueue(options?: {
+async function executeSyncQueue(options?: {
   userId?: string | null;
   pullFromCloud?: boolean;
+  reconcileMissingLocal?: boolean;
 }): Promise<SyncProcessResult> {
   const emptyBreakdown = { sales: 0, shifts: 0, stockTransfers: 0, expenses: 0, other: 0 };
 
@@ -422,7 +452,9 @@ export async function processSyncQueue(options?: {
 
     const rowsToPush: CloudSyncRecordRow[] = [];
 
-    const appendPending = <T extends { id: string; updatedAt?: string; createdAt?: string; openedAt?: string }>(
+    const appendPending = <
+      T extends { id: string; updatedAt?: string; createdAt?: string; openedAt?: string },
+    >(
       entityType: SyncEntityType,
       items: T[]
     ) => {
@@ -431,7 +463,10 @@ export async function processSyncQueue(options?: {
           user_id: userId,
           entity_type: entityType,
           record_id: item.id,
-          payload: { ...item, syncStatus: 'synced', syncedAt: now } as unknown as Record<string, unknown>,
+          payload: { ...item, syncStatus: 'synced', syncedAt: now } as unknown as Record<
+            string,
+            unknown
+          >,
           deleted: false,
           updated_at: item.updatedAt || item.createdAt || item.openedAt || now,
         });
@@ -461,12 +496,12 @@ export async function processSyncQueue(options?: {
         });
       });
 
-    // 1. Push pending sync_records to Supabase
+    // 1. Push pending sync_records to Supabase via upsert
     if (rowsToPush.length > 0) {
       await upsertSyncRecordsInBatches(rowsToPush);
     }
 
-    // 2. Sync business_settings (push pending local changes or pull newer cloud settings)
+    // 2. Sync business_settings (upsert local changes or pull newer cloud settings)
     const { data: cloudSettingsData, error: cloudSettingsError } = await supabase
       .from('business_settings')
       .select('user_id, business_name, rif, phone, address, exchange_rate, updated_at')
@@ -506,7 +541,7 @@ export async function processSyncQueue(options?: {
         syncStatus: 'synced',
         syncedAt: now,
       });
-      settingsPushed = localSettings.syncStatus === 'pending';
+      settingsPushed = localSettings.syncStatus === 'pending' || !cloudSettings;
     } else if (cloudSettings.updated_at > localSettings.updatedAt) {
       const parsedCloudRate = Number(cloudSettings.exchange_rate);
       const validRate =
@@ -579,7 +614,7 @@ export async function processSyncQueue(options?: {
 
     // 4. Pull remote records from Supabase and merge into IndexedDB
     let pulledCount = settingsPulled ? 1 : 0;
-    let initialSeedPushed = 0;
+    let reconciledPushed = 0;
 
     if (options?.pullFromCloud !== false) {
       const { data: cloudRecordsData, error: pullError } = await supabase
@@ -595,14 +630,27 @@ export async function processSyncQueue(options?: {
       const cloudRows = (cloudRecordsData ?? []) as CloudSyncRecordRow[];
 
       if (cloudRows.length === 0) {
-        // First sync for a brand-new account: seed cloud with local catalog/branches/customers
-        const seedRows = await buildInitialSeedRows(userId, now);
+        // First sync for a brand-new cloud account: upload full local dataset
+        const seedRows = await buildAllLocalSyncRows(userId, now);
         if (seedRows.length > 0) {
           await upsertSyncRecordsInBatches(seedRows);
-          initialSeedPushed = seedRows.length;
+          reconciledPushed = seedRows.length;
         }
       } else {
         pulledCount += await mergePulledRecordsIntoIndexedDB(cloudRows, now);
+
+        // On manual sync or reconciliation, also upload any pre-existing local records absent from cloud
+        if (options?.reconcileMissingLocal) {
+          const cloudKeySet = new Set(cloudRows.map((r) => `${r.entity_type}:${r.record_id}`));
+          const allLocalRows = await buildAllLocalSyncRows(userId, now);
+          const missingOnCloud = allLocalRows.filter(
+            (row) => !cloudKeySet.has(`${row.entity_type}:${row.record_id}`)
+          );
+          if (missingOnCloud.length > 0) {
+            await upsertSyncRecordsInBatches(missingOnCloud);
+            reconciledPushed = missingOnCloud.length;
+          }
+        }
       }
     }
 
@@ -623,7 +671,7 @@ export async function processSyncQueue(options?: {
           pendingTransfers.length +
           pendingExpenses.length +
           otherCount
-      ) + initialSeedPushed;
+      ) + reconciledPushed;
 
     const totalSynced = pushedCount + pulledCount;
 
@@ -655,6 +703,64 @@ export async function processSyncQueue(options?: {
       errorMessage,
       breakdown: emptyBreakdown,
     };
+  }
+}
+
+export async function processSyncQueue(options?: {
+  userId?: string | null;
+  pullFromCloud?: boolean;
+  reconcileMissingLocal?: boolean;
+}): Promise<SyncProcessResult> {
+  if (activeSyncPromise) {
+    return activeSyncPromise;
+  }
+
+  activeSyncPromise = executeSyncQueue(options).finally(() => {
+    activeSyncPromise = null;
+  });
+
+  return activeSyncPromise;
+}
+
+/**
+ * Optional Supabase Realtime subscription so changes from another device
+ * automatically trigger a local IndexedDB refresh when online.
+ */
+export function subscribeToCloudChanges(userId: string, onRemoteChange: () => void): () => void {
+  try {
+    const channel = supabase
+      .channel(`pos_262_sync_${userId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'sync_records',
+          filter: `user_id=eq.${userId}`,
+        },
+        () => {
+          onRemoteChange();
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'business_settings',
+          filter: `user_id=eq.${userId}`,
+        },
+        () => {
+          onRemoteChange();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  } catch {
+    return () => {};
   }
 }
 

@@ -46,6 +46,7 @@ import {
   computePendingSyncSummary,
   formatSyncEntityLabel,
   processSyncQueue,
+  subscribeToCloudChanges,
 } from './services/syncQueue';
 import { CashierLoginModal, ShiftManager } from './components/ShiftManager';
 import { InventoryManager } from './components/InventoryManager';
@@ -53,6 +54,14 @@ import { ReportsManager } from './components/ReportsManager';
 import { CostingManager } from './components/CostingManager';
 import { CloudAuthScreen } from './components/CloudAuthScreen';
 import { SettingsManager } from './components/SettingsManager';
+import { SubscriptionLockScreen } from './components/SubscriptionLockScreen';
+import {
+  buildSubscriptionRenewalWhatsAppUrl,
+  createInitialSubscriptionState,
+  evaluateSubscriptionRecord,
+  fetchAndEvaluateSubscription,
+  subscribeToSubscriptionChanges,
+} from './services/subscription';
 import type {
   Branch,
   BusinessSettings,
@@ -70,6 +79,7 @@ import type {
   SaleType,
   Shift,
   StockTransfer,
+  SubscriptionState,
   SupplierQuote,
   SyncQueueItem,
 } from './types/pos';
@@ -203,11 +213,15 @@ export default function App() {
   });
   const [cloudAuthModalOpen, setCloudAuthModalOpen] = useState<boolean>(false);
   const [lastSyncError, setLastSyncError] = useState<string | null>(null);
+  const [subscription, setSubscription] = useState<SubscriptionState>(() =>
+    createInitialSubscriptionState('idle')
+  );
   const [businessSettings, setBusinessSettings] = useState<BusinessSettings>(
     DEFAULT_BUSINESS_SETTINGS
   );
 
   const cloudUserIdRef = useRef<string | null>(null);
+  const subscriptionActiveRef = useRef<boolean>(false);
   const rateSyncTimerRef = useRef<number | null>(null);
 
   const [isOnline, setIsOnline] = useState<boolean>(
@@ -347,14 +361,34 @@ export default function App() {
     }, 4000);
   }, []);
 
+  const verifyUserSubscription = useCallback(
+    async (userId: string, options?: { showLoading?: boolean }): Promise<SubscriptionState> => {
+      if (options?.showLoading) {
+        subscriptionActiveRef.current = false;
+        setSubscription(createInitialSubscriptionState('loading'));
+      }
+      const nextState = await fetchAndEvaluateSubscription(userId);
+      if (cloudUserIdRef.current === userId) {
+        subscriptionActiveRef.current = nextState.accessStatus === 'active';
+        setSubscription(nextState);
+      }
+      return nextState;
+    },
+    []
+  );
+
   const triggerSyncQueue = useCallback(
-    async (mode: 'auto' | 'manual' = 'auto', overrideUserId?: string | null) => {
+    async (
+      mode: 'auto' | 'manual' = 'auto',
+      overrideUserId?: string | null,
+      reconcileMissingLocal = false
+    ) => {
       const targetUserId = overrideUserId !== undefined ? overrideUserId : cloudUserIdRef.current;
 
       if (typeof navigator !== 'undefined' && !navigator.onLine) {
         if (mode === 'manual') {
           showTemporarySyncNotice(
-            'Modo Offline. Los cambios pendientes se sincronizarán al reconectar.'
+            'Offline. Los cambios pendientes se sincronizarán automáticamente al reconectar.'
           );
         }
         return null;
@@ -367,11 +401,19 @@ export default function App() {
         return null;
       }
 
+      if (!subscriptionActiveRef.current) {
+        if (mode === 'manual') {
+          showTemporarySyncNotice('Suscripción vencida. Renueva tu plan para sincronizar con la nube.');
+        }
+        return null;
+      }
+
       setIsSyncing(true);
       try {
         const result = await processSyncQueue({
           userId: targetUserId,
           pullFromCloud: true,
+          reconcileMissingLocal: mode === 'manual' || reconcileMissingLocal,
         });
 
         if (result.ok) {
@@ -477,19 +519,34 @@ export default function App() {
 
       setIsReady(true);
 
-      if (user && navigator.onLine) {
-        await triggerSyncQueue('auto', user.id);
+      if (user) {
+        const subState = await verifyUserSubscription(user.id, { showLoading: true });
+        if (!active) return;
+        if (subState.accessStatus === 'active' && navigator.onLine) {
+          await triggerSyncQueue('auto', user.id, true);
+        }
+      } else {
+        subscriptionActiveRef.current = false;
+        setSubscription(createInitialSubscriptionState('idle'));
       }
     }
 
     void init();
 
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
       if (!active) return;
       const nextUser = session?.user ?? null;
+      const prevUserId = cloudUserIdRef.current;
       cloudUserIdRef.current = nextUser?.id ?? null;
       setCloudUser(nextUser);
       setAuthChecked(true);
+
+      if (!nextUser) {
+        subscriptionActiveRef.current = false;
+        setSubscription(createInitialSubscriptionState('idle'));
+      } else if (nextUser.id !== prevUserId || event === 'TOKEN_REFRESHED') {
+        void verifyUserSubscription(nextUser.id, { showLoading: nextUser.id !== prevUserId });
+      }
     });
 
     return () => {
@@ -499,12 +556,19 @@ export default function App() {
         window.clearTimeout(rateSyncTimerRef.current);
       }
     };
-  }, [reloadAllData, triggerSyncQueue]);
+  }, [reloadAllData, triggerSyncQueue, verifyUserSubscription]);
 
   useEffect(() => {
     const handleOnline = () => {
       setIsOnline(true);
-      void triggerSyncQueue('auto');
+      const currentUserId = cloudUserIdRef.current;
+      if (currentUserId) {
+        void verifyUserSubscription(currentUserId).then((sub) => {
+          if (sub.accessStatus === 'active') {
+            void triggerSyncQueue('auto');
+          }
+        });
+      }
     };
     const handleOffline = () => {
       setIsOnline(false);
@@ -512,7 +576,14 @@ export default function App() {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && navigator.onLine) {
         setIsOnline(true);
-        void triggerSyncQueue('auto');
+        const currentUserId = cloudUserIdRef.current;
+        if (currentUserId) {
+          void verifyUserSubscription(currentUserId).then((sub) => {
+            if (sub.accessStatus === 'active') {
+              void triggerSyncQueue('auto');
+            }
+          });
+        }
       }
     };
 
@@ -524,7 +595,60 @@ export default function App() {
       window.removeEventListener('offline', handleOffline);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [triggerSyncQueue]);
+  }, [triggerSyncQueue, verifyUserSubscription]);
+
+  useEffect(() => {
+    if (!cloudUser || !isOnline || subscription.accessStatus !== 'active') return;
+
+    let debounceTimer: number | null = null;
+    const unsubscribe = subscribeToCloudChanges(cloudUser.id, () => {
+      if (debounceTimer !== null) {
+        window.clearTimeout(debounceTimer);
+      }
+      debounceTimer = window.setTimeout(() => {
+        void triggerSyncQueue('auto');
+      }, 800);
+    });
+
+    return () => {
+      if (debounceTimer !== null) {
+        window.clearTimeout(debounceTimer);
+      }
+      unsubscribe();
+    };
+  }, [cloudUser, isOnline, subscription.accessStatus, triggerSyncQueue]);
+
+  useEffect(() => {
+    if (!cloudUser) return;
+
+    const unsubscribeSub = isOnline
+      ? subscribeToSubscriptionChanges(cloudUser.id, () => {
+          void verifyUserSubscription(cloudUser.id).then((next) => {
+            if (next.accessStatus === 'active' && navigator.onLine) {
+              void triggerSyncQueue('auto', cloudUser.id, true);
+            }
+          });
+        })
+      : () => {};
+
+    const expiryTicker = window.setInterval(() => {
+      setSubscription((prev) => {
+        if (!prev.record) return prev;
+        const next = evaluateSubscriptionRecord(prev.record, {
+          fromCache: prev.fromCache,
+          checkedAt: prev.checkedAt,
+          errorMessage: prev.errorMessage,
+        });
+        subscriptionActiveRef.current = next.accessStatus === 'active';
+        return next;
+      });
+    }, 60_000);
+
+    return () => {
+      unsubscribeSub();
+      window.clearInterval(expiryTicker);
+    };
+  }, [cloudUser, isOnline, triggerSyncQueue, verifyUserSubscription]);
 
   const persistSetting = (key: string, value: string) => {
     void db.settings.put({ key, value });
@@ -624,11 +748,13 @@ export default function App() {
       });
     }
 
-    if (!activeCashier) {
-      setLoginModalOpen(true);
+    const subState = await verifyUserSubscription(user.id, { showLoading: true });
+    if (subState.accessStatus === 'active') {
+      if (!activeCashier) {
+        setLoginModalOpen(true);
+      }
+      await triggerSyncQueue('auto', user.id, true);
     }
-
-    await triggerSyncQueue('auto', user.id);
   };
 
   const handleContinueOffline = () => {
@@ -644,22 +770,34 @@ export default function App() {
     }
   };
 
-  const handleSignOutCloud = async () => {
+  const handleSignOutCloud = async (returnToAuthScreen = false) => {
     try {
       await supabase.auth.signOut();
     } catch {
       // Even if offline, clear local cloud session reference
     }
     cloudUserIdRef.current = null;
+    subscriptionActiveRef.current = false;
     setCloudUser(null);
+    setSubscription(createInitialSubscriptionState('idle'));
     setLastSyncError(null);
-    setOfflineAuthBypass(true);
-    try {
-      localStorage.setItem(OFFLINE_BYPASS_KEY, 'true');
-    } catch {
-      // Ignore storage errors
+
+    if (returnToAuthScreen) {
+      setOfflineAuthBypass(false);
+      try {
+        localStorage.removeItem(OFFLINE_BYPASS_KEY);
+      } catch {
+        // Ignore storage errors
+      }
+    } else {
+      setOfflineAuthBypass(true);
+      try {
+        localStorage.setItem(OFFLINE_BYPASS_KEY, 'true');
+      } catch {
+        // Ignore storage errors
+      }
+      showTemporarySyncNotice('Sesión nube cerrada. Tus datos siguen disponibles offline en este equipo.');
     }
-    showTemporarySyncNotice('Sesión nube cerrada. Tus datos siguen disponibles offline en este equipo.');
   };
 
   const handleBranchChange = (branchId: string) => {
@@ -1815,8 +1953,87 @@ export default function App() {
     );
   }
 
+  if (cloudUser && (subscription.accessStatus === 'loading' || subscription.accessStatus === 'idle')) {
+    return (
+      <div className="flex min-h-screen w-full flex-col items-center justify-center bg-[#090D12] px-4 text-white">
+        <p className="text-xl font-extrabold tracking-tight">
+          Pos <span className="text-[#84CC16]">262</span>
+        </p>
+        <div className="mt-4 inline-flex items-center gap-2 text-xs font-semibold text-slate-300">
+          <RefreshCw className="h-3.5 w-3.5 animate-spin text-[#84CC16]" />
+          <span>Verificando suscripción...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (cloudUser && subscription.accessStatus === 'expired') {
+    return (
+      <SubscriptionLockScreen
+        userEmail={cloudUser.email ?? ''}
+        businessName={businessSettings.businessName}
+        subscription={subscription}
+        isOnline={isOnline}
+        onRecheck={async () => {
+          const next = await verifyUserSubscription(cloudUser.id);
+          if (next.accessStatus === 'active') {
+            if (!activeCashier) {
+              setLoginModalOpen(true);
+            }
+            if (navigator.onLine) {
+              void triggerSyncQueue('auto', cloudUser.id, true);
+            }
+            return true;
+          }
+          return false;
+        }}
+        onSignOut={() => handleSignOutCloud(true)}
+      />
+    );
+  }
+
+  const showTopRenewalBanner =
+    Boolean(cloudUser) &&
+    subscription.accessStatus === 'active' &&
+    subscription.showRenewalBanner &&
+    subscription.daysRemaining !== null;
+
   return (
     <div className="flex h-full min-h-screen flex-col bg-[#F8FAFC] text-slate-900">
+      {showTopRenewalBanner && cloudUser && (
+        <div className="z-40 border-b border-slate-800 bg-[#0F151D] px-3 py-1.5 text-white lg:px-5">
+          <div className="mx-auto flex items-center justify-between gap-2 text-xs">
+            <div className="flex min-w-0 items-center gap-2">
+              <Clock className="h-3.5 w-3.5 shrink-0 text-[#84CC16]" />
+              <p className="truncate font-semibold text-slate-100">
+                {subscription.daysRemaining === 1
+                  ? `Te queda 1 día de ${subscription.isTrial ? 'prueba' : 'suscripción'}`
+                  : `Te quedan ${subscription.daysRemaining} días de ${
+                      subscription.isTrial ? 'prueba' : 'suscripción'
+                    }`}
+                {subscription.record?.expiresAt && (
+                  <span className="hidden font-mono font-normal tabular-nums text-slate-400 sm:inline">
+                    {' '}
+                    · Vence el{' '}
+                    {new Date(subscription.record.expiresAt).toLocaleDateString('es-VE', {
+                      day: '2-digit',
+                      month: 'short',
+                    })}
+                  </span>
+                )}
+              </p>
+            </div>
+            <a
+              href={buildSubscriptionRenewalWhatsAppUrl(cloudUser.email)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex shrink-0 items-center gap-1 rounded-md bg-[#84CC16] px-2.5 py-0.5 text-[11px] font-extrabold text-slate-950 hover:bg-[#9AE62E] transition-colors whitespace-nowrap"
+            >
+              Renovar
+            </a>
+          </div>
+        </div>
+      )}
       <header className="sticky top-0 z-30 border-b border-slate-200 bg-white text-slate-900">
         <div className="mx-auto flex items-center justify-between gap-2 overflow-x-auto no-scrollbar whitespace-nowrap px-3 py-1.5 lg:px-5">
           <div className="flex items-center gap-2 shrink-0">
@@ -2001,7 +2218,7 @@ export default function App() {
               )}
               <span>
                 {cloudSyncState === 'offline'
-                  ? 'Modo Offline'
+                  ? 'Offline'
                   : cloudSyncState === 'syncing'
                   ? 'Sincronizando...'
                   : cloudSyncState === 'synced'
@@ -2347,6 +2564,7 @@ export default function App() {
             lastSyncedAt={lastSyncedAt}
             lastSyncError={lastSyncError}
             pendingSyncSummary={pendingSyncSummary}
+            subscription={subscription}
             businessSettings={businessSettings}
             counts={{
               products: products.length,
@@ -2359,10 +2577,17 @@ export default function App() {
             }}
             onSaveBusinessSettings={handleSaveBusinessSettings}
             onManualSync={async () => {
-              await triggerSyncQueue('manual');
+              const result = await triggerSyncQueue('manual');
+              if (!result || !result.ok) {
+                return null;
+              }
+              if (result.pushedCount > 0 || result.pulledCount > 0) {
+                return `Sincronizado: ${result.pushedCount} subidos · ${result.pulledCount} descargados.`;
+              }
+              return 'Todo está sincronizado con Supabase.';
             }}
             onOpenCloudAuth={() => setCloudAuthModalOpen(true)}
-            onSignOutCloud={handleSignOutCloud}
+            onSignOutCloud={() => handleSignOutCloud(false)}
             onOpenSyncQueue={() => {
               setHistoryTab('queue');
               setHistoryOpen(true);

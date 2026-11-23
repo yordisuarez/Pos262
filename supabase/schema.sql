@@ -40,3 +40,22 @@ create policy "sync_records_owner_all"
   for all
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
+
+-- Subscriptions table (managed by billing/admin; authenticated users can only read their own row)
+create table if not exists public.subscriptions (
+  user_id uuid primary key references auth.users (id) on delete cascade,
+  plan text not null default 'trial',
+  status text not null default 'active',
+  expires_at timestamptz not null default (now() + interval '7 days'),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.subscriptions enable row level security;
+
+drop policy if exists "subscriptions_owner_select" on public.subscriptions;
+create policy "subscriptions_owner_select"
+  on public.subscriptions
+  for select
+  using (auth.uid() = user_id);
+

@@ -34,6 +34,32 @@ export interface BusinessSettings {
   syncedAt?: string;
 }
 
+export interface SubscriptionRecord {
+  userId: string;
+  plan: string;
+  status: string;
+  expiresAt: string;
+}
+
+export type SubscriptionAccessStatus =
+  | 'idle'
+  | 'loading'
+  | 'active'
+  | 'expired';
+
+export interface SubscriptionState {
+  accessStatus: SubscriptionAccessStatus;
+  record: SubscriptionRecord | null;
+  daysRemaining: number | null;
+  hoursRemaining: number | null;
+  showRenewalBanner: boolean;
+  planLabel: string;
+  isTrial: boolean;
+  fromCache: boolean;
+  checkedAt: string | null;
+  errorMessage?: string;
+}
+
 export type SyncOperationType =
   | 'create'
   | 'update'

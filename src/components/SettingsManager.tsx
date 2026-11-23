@@ -11,8 +11,9 @@ import {
   WifiOff,
 } from 'lucide-react';
 import type { User } from '@supabase/supabase-js';
-import type { BusinessSettings, CloudSyncState } from '../types/pos';
+import type { BusinessSettings, CloudSyncState, SubscriptionState } from '../types/pos';
 import type { PendingSyncSummary } from '../services/syncQueue';
+import { buildSubscriptionRenewalWhatsAppUrl } from '../services/subscription';
 
 interface SettingsManagerProps {
   cloudUser: User | null;
@@ -22,6 +23,7 @@ interface SettingsManagerProps {
   lastSyncedAt: string | null;
   lastSyncError: string | null;
   pendingSyncSummary: PendingSyncSummary;
+  subscription: SubscriptionState;
   businessSettings: BusinessSettings;
   counts: {
     products: number;
@@ -39,7 +41,7 @@ interface SettingsManagerProps {
     address: string;
     exchangeRate: number;
   }) => Promise<void>;
-  onManualSync: () => Promise<void>;
+  onManualSync: () => Promise<string | null>;
   onOpenCloudAuth: () => void;
   onSignOutCloud: () => Promise<void>;
   onOpenSyncQueue: () => void;
@@ -53,6 +55,7 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
   lastSyncedAt,
   lastSyncError,
   pendingSyncSummary,
+  subscription,
   businessSettings,
   counts,
   onSaveBusinessSettings,
@@ -71,6 +74,7 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
   const [saving, setSaving] = useState<boolean>(false);
   const [signingOut, setSigningOut] = useState<boolean>(false);
   const [saveMessage, setSaveMessage] = useState<string>('');
+  const [syncFeedback, setSyncFeedback] = useState<string>('');
   const [formError, setFormError] = useState<string>('');
 
   useEffect(() => {
@@ -126,9 +130,17 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
     }
   };
 
+  const handleTriggerManualSync = async () => {
+    setSyncFeedback('');
+    const message = await onManualSync();
+    if (message) {
+      setSyncFeedback(message);
+    }
+  };
+
   const syncStatusLabel =
     cloudSyncState === 'offline'
-      ? 'Modo Offline'
+      ? 'Offline'
       : cloudSyncState === 'syncing'
       ? 'Sincronizando...'
       : cloudSyncState === 'synced'
@@ -190,13 +202,44 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
                   {' · '}
                   Pendientes: {pendingSyncSummary.total}
                 </p>
+                {subscription.record && subscription.accessStatus === 'active' && (
+                  <p className="mt-1 text-[11px] font-medium text-slate-600 font-mono tabular-nums">
+                    <span className="font-sans font-semibold text-[#558B00]">
+                      {subscription.planLabel}
+                    </span>
+                    {' · '}
+                    Vigente hasta{' '}
+                    {new Date(subscription.record.expiresAt).toLocaleDateString('es-VE', {
+                      day: '2-digit',
+                      month: 'short',
+                      year: 'numeric',
+                    })}
+                    {subscription.daysRemaining !== null && (
+                      <>
+                        {' · '}
+                        {subscription.daysRemaining === 1
+                          ? '1 día restante'
+                          : `${subscription.daysRemaining} días restantes`}
+                      </>
+                    )}
+                    {' · '}
+                    <a
+                      href={buildSubscriptionRenewalWhatsAppUrl(cloudUser.email)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-sans font-bold text-[#558B00] underline underline-offset-2 hover:text-[#3F6212]"
+                    >
+                      Renovar
+                    </a>
+                  </p>
+                )}
               </div>
 
               <div className="flex flex-wrap items-center gap-2 shrink-0">
                 <button
                   type="button"
                   disabled={!isOnline || isSyncing}
-                  onClick={() => void onManualSync()}
+                  onClick={() => void handleTriggerManualSync()}
                   className="inline-flex items-center gap-1.5 rounded-lg bg-[#84CC16] px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-[#76B900] disabled:bg-slate-200 disabled:text-slate-400 transition-colors cursor-pointer disabled:cursor-not-allowed whitespace-nowrap"
                 >
                   <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
@@ -214,6 +257,13 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
                 </button>
               </div>
             </div>
+
+            {syncFeedback && !lastSyncError && (
+              <div className="flex items-center gap-1.5 rounded-lg border border-[#84CC16]/40 bg-[#F7FEE7] px-3 py-2 text-xs font-medium text-[#3F6212]">
+                <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-[#76B900]" />
+                <span>{syncFeedback}</span>
+              </div>
+            )}
 
             {!isOnline && (
               <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
