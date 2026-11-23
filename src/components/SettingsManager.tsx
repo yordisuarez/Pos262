@@ -1255,7 +1255,7 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
               required
               value={businessName}
               onChange={(e) => setBusinessName(e.target.value)}
-              placeholder="Comercial 262 Suárez"
+              placeholder="Comercial"
               className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
             />
           </div>
