@@ -93,8 +93,10 @@ export function evaluateSubscriptionRecord(
   const isValidDate = Number.isFinite(expiresMs);
   const msRemaining = isValidDate ? expiresMs - now.getTime() : -1;
 
-  // Active strictly when status === 'active' AND new Date(expires_at) > new Date()
-  const isActive = record.status === 'active' && isValidDate && expiresDate > now;
+  // Active when status is 'active' or 'trial' AND new Date(expires_at) > new Date()
+  const normalizedStatus = (record.status ?? '').trim().toLowerCase();
+  const isStatusValid = normalizedStatus === 'active' || normalizedStatus === 'trial';
+  const isActive = isStatusValid && isValidDate && expiresDate > now;
 
   const daysRemaining = isActive ? Math.max(1, Math.ceil(msRemaining / MS_PER_DAY)) : 0;
   const hoursRemaining = isActive ? Math.max(1, Math.ceil(msRemaining / MS_PER_HOUR)) : 0;
@@ -107,7 +109,7 @@ export function evaluateSubscriptionRecord(
     hoursRemaining,
     showRenewalBanner,
     planLabel: formatPlanLabel(record.plan),
-    isTrial: isTrialPlan(record.plan),
+    isTrial: normalizedStatus === 'trial' || isTrialPlan(record.plan),
     fromCache,
     checkedAt,
     errorMessage: options?.errorMessage,
@@ -165,7 +167,7 @@ function buildTrialFallbackState(
   const trialRecord: SubscriptionRecord = {
     userId,
     plan: 'trial',
-    status: 'active',
+    status: 'trial',
     expiresAt,
   };
   return evaluateSubscriptionRecord(trialRecord, {
@@ -177,16 +179,32 @@ function buildTrialFallbackState(
 async function createInitialTrialSubscription(userId: string): Promise<SubscriptionState> {
   const expiresAt = new Date(Date.now() + TRIAL_DURATION_DAYS * MS_PER_DAY).toISOString();
 
-  const { data: insertedRow, error: insertError } = await supabase
+  let { data: insertedRow, error: insertError } = await supabase
     .from('subscriptions')
     .insert({
       user_id: userId,
       plan: 'trial',
-      status: 'active',
+      status: 'trial',
       expires_at: expiresAt,
     })
     .select('user_id, plan, status, expires_at')
     .maybeSingle();
+
+  // If the table enforces a CHECK constraint allowing only status='active', retry cleanly
+  if (insertError && insertError.code === '23514') {
+    const retry = await supabase
+      .from('subscriptions')
+      .insert({
+        user_id: userId,
+        plan: 'trial',
+        status: 'active',
+        expires_at: expiresAt,
+      })
+      .select('user_id, plan, status, expires_at')
+      .maybeSingle();
+    insertedRow = retry.data;
+    insertError = retry.error;
+  }
 
   if (insertError) {
     // Handle concurrent insert race: another tab/request created the row first
@@ -221,12 +239,42 @@ async function createInitialTrialSubscription(userId: string): Promise<Subscript
   const createdRecord: SubscriptionRecord = {
     userId: row?.user_id ?? userId,
     plan: row?.plan ?? 'trial',
-    status: row?.status ?? 'active',
+    status: row?.status ?? 'trial',
     expiresAt: row?.expires_at ?? expiresAt,
   };
 
   await writeCachedSubscription(userId, createdRecord);
   return evaluateSubscriptionRecord(createdRecord, { fromCache: false });
+}
+
+/**
+ * Ensures a newly registered user has a 7-day trial row initialized in `public.subscriptions`
+ * without overwriting any existing subscription record.
+ */
+export async function ensureTrialSubscription(userId: string): Promise<SubscriptionState> {
+  try {
+    const { data: existingRow, error } = await supabase
+      .from('subscriptions')
+      .select('user_id, plan, status, expires_at')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (!error && existingRow) {
+      const resolved = existingRow as SupabaseSubscriptionRow;
+      const existingRecord: SubscriptionRecord = {
+        userId: resolved.user_id,
+        plan: resolved.plan ?? 'trial',
+        status: resolved.status ?? 'inactive',
+        expiresAt: resolved.expires_at ?? '',
+      };
+      await writeCachedSubscription(userId, existingRecord);
+      return evaluateSubscriptionRecord(existingRecord, { fromCache: false });
+    }
+  } catch {
+    // Proceed to insert attempt below
+  }
+
+  return createInitialTrialSubscription(userId);
 }
 
 async function runFetchAndEvaluateSubscription(

@@ -1,24 +1,27 @@
 import React, { useState } from 'react';
 import {
+  Calendar,
   CheckCircle2,
   Cloud,
+  Crown,
   Eye,
   EyeOff,
   Lock,
   Mail,
+  Sparkles,
   Store,
   WifiOff,
   X,
 } from 'lucide-react';
 import type { User } from '@supabase/supabase-js';
 import { mapAuthErrorMessage, supabase } from '../lib/supabase';
+import { ensureTrialSubscription } from '../services/subscription';
 
 interface CloudAuthScreenProps {
   mode?: 'fullscreen' | 'modal';
   isOnline: boolean;
   defaultBusinessName?: string;
   onAuthSuccess: (user: User, businessName?: string) => void;
-  onContinueOffline: () => void;
   onClose?: () => void;
 }
 
@@ -27,7 +30,6 @@ export const CloudAuthScreen: React.FC<CloudAuthScreenProps> = ({
   isOnline,
   defaultBusinessName = 'Comercial 262 Suárez',
   onAuthSuccess,
-  onContinueOffline,
   onClose,
 }) => {
   const [authTab, setAuthTab] = useState<'login' | 'register'>('login');
@@ -54,7 +56,9 @@ export const CloudAuthScreen: React.FC<CloudAuthScreenProps> = ({
       return;
     }
     if (!isOnline) {
-      setErrorMessage('Sin conexión a internet. Puedes continuar en modo offline y conectar luego.');
+      setErrorMessage(
+        'Sin conexión a internet. Conéctate a la red para iniciar sesión o crear tu cuenta.'
+      );
       return;
     }
 
@@ -87,11 +91,20 @@ export const CloudAuthScreen: React.FC<CloudAuthScreenProps> = ({
           setErrorMessage(mapAuthErrorMessage(error));
           return;
         }
+
+        if (data.user) {
+          try {
+            await ensureTrialSubscription(data.user.id);
+          } catch {
+            // If email confirmation is pending, trial will initialize automatically on first sign-in
+          }
+        }
+
         if (data.session && data.user) {
           onAuthSuccess(data.user, trimmedBusiness);
         } else {
           setInfoMessage(
-            'Cuenta creada. Revisa tu correo para confirmar el registro y luego inicia sesión.'
+            'Cuenta creada con 7 días de prueba gratis. Revisa tu correo para confirmar el registro y luego inicia sesión.'
           );
           setAuthTab('login');
         }
@@ -134,7 +147,9 @@ export const CloudAuthScreen: React.FC<CloudAuthScreenProps> = ({
       {!isOnline && (
         <div className="mt-4 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
           <WifiOff className="h-4 w-4 shrink-0 text-amber-600" />
-          <span>Modo sin conexión detectado. Puedes operar offline y sincronizar al reconectar.</span>
+          <span>
+            Sin conexión a internet. Se requiere conexión para iniciar sesión o registrar tu comercio.
+          </span>
         </div>
       )}
 
@@ -170,6 +185,52 @@ export const CloudAuthScreen: React.FC<CloudAuthScreenProps> = ({
           Crear cuenta
         </button>
       </div>
+
+      {authTab === 'register' && (
+        <div className="mt-4 space-y-3">
+          <div className="flex items-start gap-2 rounded-lg border border-[#84CC16]/45 bg-[#F7FEE7] px-3 py-2.5 text-xs text-[#3F6212]">
+            <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#76B900]" />
+            <p className="font-semibold leading-snug">
+              ¡Comienza con 7 días GRATIS de prueba! Acceso total sin compromiso.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2.5">
+            <div className="flex flex-col justify-between rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+              <div className="flex items-center justify-between gap-1">
+                <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-white border border-slate-200 text-slate-600">
+                  <Calendar className="h-3.5 w-3.5" />
+                </span>
+              </div>
+              <div className="mt-2.5">
+                <p className="text-xs font-bold text-slate-900">Plan Mensual</p>
+                <p className="mt-1 font-mono text-base font-extrabold tracking-tight text-slate-900 tabular-nums">
+                  $10 <span className="font-sans text-[11px] font-medium text-slate-500">/ mes</span>
+                </p>
+                <p className="mt-0.5 text-[11px] text-slate-500">Pago mensual flexible</p>
+              </div>
+            </div>
+
+            <div className="relative flex flex-col justify-between rounded-lg border-2 border-[#84CC16] bg-[#F7FEE7]/50 p-3">
+              <div className="flex items-center justify-between gap-1">
+                <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-[#84CC16] text-slate-950">
+                  <Crown className="h-3.5 w-3.5" />
+                </span>
+                <span className="rounded bg-[#84CC16] px-1.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wide text-slate-950">
+                  Recomendado
+                </span>
+              </div>
+              <div className="mt-2.5">
+                <p className="text-xs font-bold text-slate-900">Plan Anual</p>
+                <p className="mt-1 font-mono text-base font-extrabold tracking-tight text-[#3F6212] tabular-nums">
+                  $60 <span className="font-sans text-[11px] font-medium text-slate-600">/ año</span>
+                </p>
+                <p className="mt-0.5 text-[11px] font-semibold text-[#558B00]">Ahorra $60 al año</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} className="mt-4 space-y-3">
         {authTab === 'register' && (
@@ -272,17 +333,8 @@ export const CloudAuthScreen: React.FC<CloudAuthScreenProps> = ({
       </form>
 
       <div className="mt-4 border-t border-slate-100 pt-3 text-center">
-        <button
-          type="button"
-          onClick={onContinueOffline}
-          className="text-xs font-semibold text-slate-600 hover:text-slate-900 underline underline-offset-2 cursor-pointer"
-        >
-          {mode === 'fullscreen'
-            ? 'Continuar en modo offline (vincular luego en Configuración)'
-            : 'Seguir trabajando solo en este dispositivo'}
-        </button>
-        <p className="mt-1.5 text-[11px] text-slate-400">
-          Una vez iniciada la sesión, queda guardada en este dispositivo y el cajero solo usa su PIN diario.
+        <p className="text-[11px] text-slate-400">
+          Una vez iniciada la sesión con tu cuenta activa, queda guardada en este dispositivo para operar incluso sin internet y sincronizar al reconectar.
         </p>
       </div>
     </div>

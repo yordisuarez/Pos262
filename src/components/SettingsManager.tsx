@@ -74,7 +74,6 @@ interface SettingsManagerProps {
     exchangeRate: number;
   }) => Promise<void>;
   onManualSync: () => Promise<string | null>;
-  onOpenCloudAuth: () => void;
   onSignOutCloud: () => Promise<void>;
   onOpenSyncQueue: () => void;
   onCreateCashier: (params: {
@@ -118,7 +117,6 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
   counts,
   onSaveBusinessSettings,
   onManualSync,
-  onOpenCloudAuth,
   onSignOutCloud,
   onOpenSyncQueue,
   onCreateCashier,
@@ -563,10 +561,11 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
                   type="button"
                   disabled={signingOut}
                   onClick={() => void handleSignOut()}
+                  title="Cierra la sesión y vuelve al inicio con correo y contraseña sin borrar los datos del comercio"
                   className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-red-200 hover:bg-red-50 hover:text-red-700 transition-colors cursor-pointer whitespace-nowrap"
                 >
                   <LogOut className="h-3.5 w-3.5" />
-                  {signingOut ? 'Cerrando...' : 'Cerrar sesión'}
+                  {signingOut ? 'Cerrando sesión...' : 'Cerrar sesión'}
                 </button>
               </div>
             </div>
@@ -593,26 +592,7 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
               </div>
             )}
           </div>
-        ) : (
-          <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50/70 p-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-xs font-bold text-slate-900">
-                Dispositivo operando en modo local (IndexedDB)
-              </p>
-              <p className="mt-0.5 text-xs text-slate-500">
-                Inicia sesión o registra tu comercio para respaldar y sincronizar datos entre teléfono y navegador.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={onOpenCloudAuth}
-              className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#84CC16] px-3.5 py-2 text-xs font-bold text-slate-950 hover:bg-[#76B900] transition-colors cursor-pointer whitespace-nowrap shrink-0"
-            >
-              <Cloud className="h-3.5 w-3.5" />
-              Vincular cuenta en la nube
-            </button>
-          </div>
-        )}
+        ) : null}
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 space-y-4">

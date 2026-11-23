@@ -16,7 +16,6 @@ import {
   Download,
   History,
   Lock,
-  LogOut,
   MessageCircle,
   Minus,
   Plus,
@@ -97,7 +96,6 @@ import type {
 type WorkspaceTab = 'pos' | 'shifts' | 'inventory' | 'reports' | 'costing' | 'settings';
 
 const RATE_STORAGE_KEY = 'pos_262_exchange_rate';
-const OFFLINE_BYPASS_KEY = 'pos_262_offline_auth_bypass';
 
 const PAYMENT_METHODS: Array<{
   method: PaymentMethod;
@@ -220,14 +218,6 @@ export default function App() {
   const [isReady, setIsReady] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
   const [cloudUser, setCloudUser] = useState<User | null>(null);
-  const [offlineAuthBypass, setOfflineAuthBypass] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem(OFFLINE_BYPASS_KEY) === 'true';
-    } catch {
-      return false;
-    }
-  });
-  const [cloudAuthModalOpen, setCloudAuthModalOpen] = useState<boolean>(false);
   const [lastSyncError, setLastSyncError] = useState<string | null>(null);
   const [subscription, setSubscription] = useState<SubscriptionState>(() =>
     createInitialSubscriptionState('idle')
@@ -588,9 +578,15 @@ export default function App() {
           setIsReady(true);
         }
       } else {
+        try {
+          localStorage.removeItem('pos_262_offline_auth_bypass');
+        } catch {
+          // Ignore storage errors
+        }
         subscriptionActiveRef.current = false;
         setSubscription(createInitialSubscriptionState('idle'));
-        await hydrateAccountScope(null, { syncFromCloud: false });
+        setAccountHydrated(false);
+        setIsReady(true);
       }
     }
 
@@ -804,13 +800,6 @@ export default function App() {
   const handleCloudAuthSuccess = async (user: User, registeredBusinessName?: string) => {
     cloudUserIdRef.current = user.id;
     setCloudUser(user);
-    setCloudAuthModalOpen(false);
-    setOfflineAuthBypass(false);
-    try {
-      localStorage.removeItem(OFFLINE_BYPASS_KEY);
-    } catch {
-      // Ignore storage errors
-    }
 
     const subState = await verifyUserSubscription(user.id, { showLoading: true });
     if (subState.accessStatus === 'active') {
@@ -821,18 +810,7 @@ export default function App() {
     }
   };
 
-  const handleContinueOffline = () => {
-    setOfflineAuthBypass(true);
-    setCloudAuthModalOpen(false);
-    try {
-      localStorage.setItem(OFFLINE_BYPASS_KEY, 'true');
-    } catch {
-      // Ignore storage errors
-    }
-    void hydrateAccountScope(null, { syncFromCloud: false });
-  };
-
-  const handleSignOutCloud = async (returnToAuthScreen = true) => {
+  const handleSignOutCloud = async () => {
     try {
       await supabase.auth.signOut();
     } catch {
@@ -851,30 +829,17 @@ export default function App() {
     setCheckoutOpen(false);
     setHistoryOpen(false);
     setActiveTab('pos');
+    setAccountHydrated(false);
 
     try {
       await db.settings.delete('activeCashierId');
     } catch {
       // Ignore IndexedDB errors on session cleanup
     }
-
-    if (returnToAuthScreen) {
-      setAccountHydrated(false);
-      setOfflineAuthBypass(false);
-      try {
-        localStorage.removeItem(OFFLINE_BYPASS_KEY);
-      } catch {
-        // Ignore storage errors
-      }
-    } else {
-      setOfflineAuthBypass(true);
-      try {
-        localStorage.setItem(OFFLINE_BYPASS_KEY, 'true');
-      } catch {
-        // Ignore storage errors
-      }
-      await hydrateAccountScope(null, { syncFromCloud: false });
-      showTemporarySyncNotice('Sesión nube cerrada. Modo local aislado listo en este equipo.');
+    try {
+      localStorage.removeItem('pos_262_offline_auth_bypass');
+    } catch {
+      // Ignore storage errors
     }
   };
 
@@ -2823,19 +2788,32 @@ export default function App() {
     </div>
   );
 
-  if (authChecked && !cloudUser && !offlineAuthBypass) {
+  if (!authChecked) {
+    return (
+      <div className="flex min-h-screen w-full flex-col items-center justify-center bg-[#F8FAFC] px-4 text-slate-900">
+        <p className="text-xl font-extrabold tracking-tight">
+          Pos <span className="text-[#558B00]">262</span>
+        </p>
+        <div className="mt-3 inline-flex items-center gap-2 text-xs font-medium text-slate-500">
+          <RefreshCw className="h-3.5 w-3.5 animate-spin text-[#76B900]" />
+          <span>Verificando sesión...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!cloudUser) {
     return (
       <CloudAuthScreen
         mode="fullscreen"
         isOnline={isOnline}
         defaultBusinessName={businessSettings.businessName}
         onAuthSuccess={(user, name) => void handleCloudAuthSuccess(user, name)}
-        onContinueOffline={handleContinueOffline}
       />
     );
   }
 
-  if (cloudUser && (subscription.accessStatus === 'loading' || subscription.accessStatus === 'idle')) {
+  if (subscription.accessStatus === 'loading' || subscription.accessStatus === 'idle') {
     return (
       <div className="flex min-h-screen w-full flex-col items-center justify-center bg-[#090D12] px-4 text-white">
         <p className="text-xl font-extrabold tracking-tight">
@@ -2849,7 +2827,7 @@ export default function App() {
     );
   }
 
-  if (cloudUser && subscription.accessStatus === 'expired') {
+  if (subscription.accessStatus === 'expired') {
     return (
       <SubscriptionLockScreen
         userEmail={cloudUser.email ?? ''}
@@ -2864,7 +2842,7 @@ export default function App() {
           }
           return false;
         }}
-        onSignOut={() => handleSignOutCloud(true)}
+        onSignOut={() => handleSignOutCloud()}
       />
     );
   }
@@ -3172,16 +3150,6 @@ export default function App() {
               className="inline-flex items-center justify-center rounded-md border border-slate-200 bg-white p-1.5 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors shrink-0 cursor-pointer"
             >
               <History className="h-3.5 w-3.5" />
-            </button>
-
-            <button
-              type="button"
-              onClick={() => void handleSignOutCloud(true)}
-              title="Cerrar sesión y volver al inicio con correo y contraseña"
-              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:border-red-200 hover:bg-red-50 hover:text-red-700 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-            >
-              <LogOut className="h-3.5 w-3.5" />
-              <span>Cerrar sesión</span>
             </button>
 
             {!isInstalled && (deferredPrompt || isIOS) && (
@@ -3530,8 +3498,7 @@ export default function App() {
               }
               return 'Todo está sincronizado con Supabase.';
             }}
-            onOpenCloudAuth={() => setCloudAuthModalOpen(true)}
-            onSignOutCloud={() => handleSignOutCloud(true)}
+            onSignOutCloud={() => handleSignOutCloud()}
             onOpenSyncQueue={() => {
               setHistoryTab('queue');
               setHistoryOpen(true);
@@ -3550,41 +3517,27 @@ export default function App() {
         </div>
       )}
 
-      {cloudAuthModalOpen && (
-        <CloudAuthScreen
-          mode="modal"
-          isOnline={isOnline}
-          defaultBusinessName={businessSettings.businessName}
-          onAuthSuccess={(user, name) => void handleCloudAuthSuccess(user, name)}
-          onContinueOffline={handleContinueOffline}
-          onClose={() => setCloudAuthModalOpen(false)}
+      {accountHydrated && (cashiers.length === 0 || onboardingStep !== null) && (
+        <InternalUserOnboarding
+          step={cashiers.length === 0 ? 'admin' : onboardingStep ?? 'cashiers'}
+          branches={branches}
+          activeBranchId={activeBranchId}
+          cashiers={cashiers}
+          businessName={businessSettings.businessName}
+          onCreateAdmin={(params) =>
+            handleCreateInternalUser({ ...params, role: 'admin' })
+          }
+          onCreateCashier={(params) =>
+            handleCreateInternalUser({ ...params, role: 'cashier' })
+          }
+          onContinueToSystem={() => {
+            setOnboardingStep(null);
+            setLoginModalOpen(false);
+          }}
         />
       )}
 
-      {!cloudAuthModalOpen &&
-        accountHydrated &&
-        (cashiers.length === 0 || onboardingStep !== null) && (
-          <InternalUserOnboarding
-            step={cashiers.length === 0 ? 'admin' : onboardingStep ?? 'cashiers'}
-            branches={branches}
-            activeBranchId={activeBranchId}
-            cashiers={cashiers}
-            businessName={businessSettings.businessName}
-            onCreateAdmin={(params) =>
-              handleCreateInternalUser({ ...params, role: 'admin' })
-            }
-            onCreateCashier={(params) =>
-              handleCreateInternalUser({ ...params, role: 'cashier' })
-            }
-            onContinueToSystem={() => {
-              setOnboardingStep(null);
-              setLoginModalOpen(false);
-            }}
-          />
-        )}
-
       {loginModalOpen &&
-        !cloudAuthModalOpen &&
         accountHydrated &&
         onboardingStep === null &&
         cashiers.length > 0 && (
