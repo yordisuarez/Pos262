@@ -489,7 +489,7 @@ export const DEFAULT_EXPENSES: Expense[] = [
 ];
 
 export const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
-  businessName: 'Comercial 262 Suárez',
+  businessName: '',
   rif: 'J-00000000-0',
   phone: '+58 412-5550101',
   address: 'Av. Bolívar, Edif. Comercial Local 4',
