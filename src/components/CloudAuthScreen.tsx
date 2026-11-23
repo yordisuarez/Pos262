@@ -25,17 +25,17 @@ interface CloudAuthScreenProps {
   onClose?: () => void;
 }
 
-const GENERIC_BUSINESS_NAME = 'Comercio';
-
 export const CloudAuthScreen: React.FC<CloudAuthScreenProps> = ({
   mode = 'fullscreen',
   isOnline,
+  defaultBusinessName = '',
   onAuthSuccess,
   onClose,
 }) => {
   const [authTab, setAuthTab] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState<string>('');
   const [password, setPassword] = useState<string>('');
+  const [businessName, setBusinessName] = useState<string>(defaultBusinessName);
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
@@ -74,15 +74,21 @@ export const CloudAuthScreen: React.FC<CloudAuthScreenProps> = ({
           return;
         }
         if (data.user) {
-          onAuthSuccess(data.user, GENERIC_BUSINESS_NAME);
+          onAuthSuccess(data.user);
         }
       } else {
+        const trimmedBusiness = businessName.trim();
+        if (!trimmedBusiness) {
+          setErrorMessage('Ingresa el nombre de tu comercio.');
+          return;
+        }
+
         const { data, error } = await supabase.auth.signUp({
           email: cleanEmail,
           password,
           options: {
             data: {
-              business_name: GENERIC_BUSINESS_NAME,
+              business_name: trimmedBusiness,
             },
           },
         });
@@ -100,7 +106,7 @@ export const CloudAuthScreen: React.FC<CloudAuthScreenProps> = ({
         }
 
         if (data.session && data.user) {
-          onAuthSuccess(data.user, GENERIC_BUSINESS_NAME);
+          onAuthSuccess(data.user, trimmedBusiness);
         } else {
           setInfoMessage(
             'Cuenta creada con 7 días de prueba gratis. Revisa tu correo para confirmar el registro y luego inicia sesión.'
@@ -116,7 +122,7 @@ export const CloudAuthScreen: React.FC<CloudAuthScreenProps> = ({
   };
 
   const card = (
-    <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-5 sm:p-6">
+    <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-5 sm:p-6 shadow-sm">
       <div className="flex items-start justify-between gap-3 border-b border-slate-200 pb-4">
         <div>
           <div className="flex items-center gap-2">
@@ -131,29 +137,16 @@ export const CloudAuthScreen: React.FC<CloudAuthScreenProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-1.5">
-          <a
-            href="https://whatsapp.com/channel/0029Vb8vD7WKmCPIZ4dZ5R3e"
-            target="_blank"
-            rel="noopener noreferrer"
-            title="Canal oficial de WhatsApp Pos 262"
-            className="inline-flex items-center gap-1 rounded-md border border-[#84CC16]/60 bg-[#F7FEE7] px-2.5 py-1 text-[11px] font-semibold text-[#3F6212] transition-colors hover:border-[#84CC16]"
+        {mode === 'modal' && onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Cerrar acceso a la nube"
+            className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 cursor-pointer"
           >
-            <MessageCircle className="h-3.5 w-3.5 text-[#558B00]" />
-            <span>WhatsApp</span>
-          </a>
-
-          {mode === 'modal' && onClose && (
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Cerrar acceso a la nube"
-              className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 cursor-pointer"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          )}
-        </div>
+            <X className="h-4 w-4" />
+          </button>
+        )}
       </div>
 
       {!isOnline && (
@@ -247,16 +240,24 @@ export const CloudAuthScreen: React.FC<CloudAuthScreenProps> = ({
       <form onSubmit={handleSubmit} className="mt-4 space-y-3">
         {authTab === 'register' && (
           <div>
-            <p className="mb-1 text-xs font-semibold text-slate-700">Tipo de cuenta</p>
-            <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-800">
-              <Store className="h-4 w-4 shrink-0 text-[#558B00]" />
-              <span>{GENERIC_BUSINESS_NAME}</span>
+            <label className="mb-1 block text-xs font-semibold text-slate-700">
+              Nombre del comercio
+            </label>
+            <div className="relative">
+              <Store className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+              <input
+                type="text"
+                value={businessName}
+                onChange={(e) => setBusinessName(e.target.value)}
+                placeholder="Ej. Bodega La Esquina"
+                className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-[#84CC16] focus:outline-none"
+              />
             </div>
           </div>
         )}
 
         <div>
-          <label className="mb-1 block text-xs font-medium text-slate-700">
+          <label className="mb-1 block text-xs font-semibold text-slate-700">
             Correo electrónico
           </label>
           <div className="relative">
@@ -273,7 +274,7 @@ export const CloudAuthScreen: React.FC<CloudAuthScreenProps> = ({
         </div>
 
         <div>
-          <label className="mb-1 block text-xs font-medium text-slate-700">
+          <label className="mb-1 block text-xs font-semibold text-slate-700">
             Contraseña
           </label>
           <div className="relative">
@@ -323,22 +324,33 @@ export const CloudAuthScreen: React.FC<CloudAuthScreenProps> = ({
               : 'Iniciar sesión'}
           </span>
         </button>
+
+        <div className="pt-1 text-center">
+          <a
+            href="https://whatsapp.com/channel/0029Vb8vD7WKmCPIZ4dZ5R3e"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-[#84CC16]/60 bg-[#F7FEE7] px-3.5 py-2 text-xs font-semibold text-[#3F6212] transition-colors hover:border-[#84CC16] hover:bg-[#ecfccb]"
+          >
+            <MessageCircle className="h-4 w-4 text-[#558B00]" />
+            <span>Canal de WhatsApp</span>
+          </a>
+        </div>
       </form>
     </div>
   );
 
   if (mode === 'modal') {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-4 backdrop-blur-xs">
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs">
         {card}
       </div>
     );
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[#090D16] p-4">
+    <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
       {card}
     </div>
   );
 };
-          
