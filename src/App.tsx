@@ -3407,6 +3407,7 @@ export default function App() {
             activeBranchId={activeBranchId}
             products={products}
             transfers={transfers}
+            sales={visibleSales}
             activeCashier={activeCashier}
             exchangeRate={exchangeRate}
             canEditInventory={isAdmin || permissions.editInventory}

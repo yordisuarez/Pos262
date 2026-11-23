@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeftRight,
   ArrowRight,
@@ -14,7 +14,8 @@ import {
   Warehouse,
   X,
 } from 'lucide-react';
-import type { Branch, Cashier, Product, StockTransfer } from '../types/pos';
+import type { Branch, Cashier, Product, Sale, StockTransfer } from '../types/pos';
+import { InventoryValuationPanel } from './InventoryValuationPanel';
 
 const round2 = (value: number): number => Math.round((value + Number.EPSILON) * 100) / 100;
 
@@ -35,6 +36,7 @@ interface InventoryManagerProps {
   activeBranchId: string;
   products: Product[];
   transfers: StockTransfer[];
+  sales?: Sale[];
   activeCashier: Cashier;
   exchangeRate: number;
   canEditInventory?: boolean;
@@ -88,6 +90,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
   activeBranchId,
   products,
   transfers,
+  sales = [],
   activeCashier,
   exchangeRate,
   canEditInventory = true,
@@ -99,6 +102,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
   onDeleteProduct,
   onOpenBranchSettings,
 }) => {
+  const loadSectionRef = useRef<HTMLElement | null>(null);
   const operationalBranches = useMemo(() => {
     const active = branches.filter((b) => b.isActive);
     const pool = active.length > 0 ? active : branches;
@@ -449,6 +453,31 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
       ? round2(previewPriceUsd * exchangeRate)
       : 0;
 
+  const valuationRefreshKey = useMemo(() => {
+    const prodSig = products
+      .map(
+        (p) =>
+          `${p.id}:${p.costUsd}:${p.priceUsd}:${p.minStock}:${p.category}:${Object.entries(
+            p.stockByBranch
+          )
+            .map(([k, v]) => `${k}=${v}`)
+            .join(',')}`
+      )
+      .join('|');
+    return `${products.length}-${transfers.length}-${sales.length}-${branches.length}-${prodSig}`;
+  }, [products, transfers.length, sales.length, branches.length]);
+
+  const handleQuickRestock = (productId: string, branchId: string, suggestedQty: number) => {
+    if (!canEditInventory) return;
+    if (!isBranchLocked && branchId) {
+      setLoadBranchId(branchId);
+    }
+    setLoadProductId(productId);
+    setLoadQtyInput(String(Math.max(1, suggestedQty)));
+    setLoadFeedback(null);
+    loadSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
+
   return (
     <div className="mx-auto max-w-6xl space-y-5 p-4 lg:p-5">
       {!canEditInventory && (
@@ -460,9 +489,22 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
         </div>
       )}
 
+      <InventoryValuationPanel
+        branches={branches}
+        activeBranchId={activeBranchId}
+        exchangeRate={exchangeRate}
+        isBranchLocked={isBranchLocked}
+        canEditInventory={canEditInventory}
+        refreshKey={valuationRefreshKey}
+        onQuickRestock={canEditInventory ? handleQuickRestock : undefined}
+      />
+
       {canEditInventory && (
         <div className={`grid grid-cols-1 gap-5 ${isBranchLocked ? '' : 'lg:grid-cols-2'}`}>
-          <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5">
+          <section
+            ref={loadSectionRef}
+            className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5"
+          >
             <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
               <PackagePlus className="h-4 w-4 text-[#76B900]" />
               <div>

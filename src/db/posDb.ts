@@ -711,3 +711,462 @@ export async function seedDatabaseIfNeeded(ownerUserId?: string | null): Promise
     await saveLocalBusinessSettings(DEFAULT_BUSINESS_SETTINGS);
   }
 }
+
+export type StockHealthStatus = 'critical' | 'warning' | 'ok';
+
+export interface CategoryValuationItem {
+  category: string;
+  productCount: number;
+  totalUnits: number;
+  costValueUsd: number;
+  costValueVes: number;
+  retailValueUsd: number;
+  retailValueVes: number;
+  costPercentage: number;
+  retailPercentage: number;
+}
+
+export interface InventoryHistoryPoint {
+  dateKey: string;
+  label: string;
+  costValueUsd: number;
+  costValueVes: number;
+  retailValueUsd: number;
+  retailValueVes: number;
+}
+
+export interface StockAlertItem {
+  productId: string;
+  sku: string;
+  name: string;
+  category: string;
+  unit: string;
+  currentStock: number;
+  minStock: number;
+  costUsd: number;
+  priceUsd: number;
+  costValueUsd: number;
+  retailValueUsd: number;
+  potentialProfitUsd: number;
+  marginPercent: number;
+  soldLast30Days: number;
+  status: StockHealthStatus;
+  suggestedRestockQty: number;
+  estimatedRestockCostUsd: number;
+}
+
+export interface InventoryValuationSummary {
+  branchId: string | 'all';
+  branchName: string;
+  exchangeRate: number;
+  totalCostUsd: number;
+  totalCostVes: number;
+  totalRetailUsd: number;
+  totalRetailVes: number;
+  potentialProfitUsd: number;
+  potentialProfitVes: number;
+  potentialMarginPercent: number;
+  activeProductsCount: number;
+  productsWithStockCount: number;
+  totalUnitsInStock: number;
+  categories: CategoryValuationItem[];
+  history: InventoryHistoryPoint[];
+  costVariationPercent: number;
+  retailVariationPercent: number;
+  hasHistoricalMovements: boolean;
+  stockCounts: {
+    critical: number;
+    warning: number;
+    ok: number;
+  };
+  items: StockAlertItem[];
+  hotLowStockItems: StockAlertItem[];
+}
+
+const round2Val = (value: number): number => Math.round((value + Number.EPSILON) * 100) / 100;
+
+function toLocalDateKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function formatShortDayLabel(date: Date): string {
+  return date.toLocaleDateString('es-VE', { day: '2-digit', month: 'short' }).replace('.', '');
+}
+
+function getStockForScope(
+  product: Product,
+  branchScope: string | 'all',
+  operationalBranchIds: string[]
+): number {
+  if (branchScope === 'all') {
+    if (operationalBranchIds.length > 0) {
+      return operationalBranchIds.reduce(
+        (sum, bId) => sum + Math.max(0, Number(product.stockByBranch[bId] ?? 0)),
+        0
+      );
+    }
+    return Object.values(product.stockByBranch).reduce(
+      (sum, qty) => sum + Math.max(0, Number(qty ?? 0)),
+      0
+    );
+  }
+  return Math.max(0, Number(product.stockByBranch[branchScope] ?? 0));
+}
+
+export function computeInventoryValuationSummary(params: {
+  products: Product[];
+  branches: Branch[];
+  sales: Sale[];
+  stockTransfers: StockTransfer[];
+  branchId?: string | 'all';
+  exchangeRate: number;
+  historyDays?: number;
+}): InventoryValuationSummary {
+  const { products, branches, sales, stockTransfers } = params;
+  const safeRate =
+    Number.isFinite(params.exchangeRate) && params.exchangeRate > 0
+      ? params.exchangeRate
+      : DEFAULT_BUSINESS_SETTINGS.exchangeRate;
+  const historyDays = Math.max(7, Math.min(90, params.historyDays ?? 30));
+
+  const activeBranches = branches.filter((b) => b.isActive);
+  const operationalBranches = activeBranches.length > 0 ? activeBranches : branches;
+  const operationalBranchIds = operationalBranches.map((b) => b.id);
+
+  const requestedScope = params.branchId ?? 'all';
+  const matchedBranch =
+    requestedScope !== 'all' ? branches.find((b) => b.id === requestedScope) : undefined;
+  const branchScope: string | 'all' = matchedBranch ? matchedBranch.id : 'all';
+  const branchName = matchedBranch ? matchedBranch.name : 'Todas las sucursales';
+  const branchMultiplier = branchScope === 'all' ? Math.max(1, operationalBranches.length) : 1;
+
+  const now = new Date();
+  const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const windowStart = new Date(todayMidnight);
+  windowStart.setDate(windowStart.getDate() - (historyDays - 1));
+  const windowStartMs = windowStart.getTime();
+
+  // Compute 30-day sales velocity and daily net stock deltas per product
+  const soldLast30ByProduct = new Map<string, number>();
+  const dailyDeltaMap = new Map<string, Map<string, number>>();
+  let hasHistoricalMovements = false;
+
+  const addDailyDelta = (dateKey: string, productId: string, delta: number) => {
+    if (delta === 0) return;
+    let dayMap = dailyDeltaMap.get(dateKey);
+    if (!dayMap) {
+      dayMap = new Map<string, number>();
+      dailyDeltaMap.set(dateKey, dayMap);
+    }
+    dayMap.set(productId, (dayMap.get(productId) ?? 0) + delta);
+    hasHistoricalMovements = true;
+  };
+
+  for (const sale of sales) {
+    if (branchScope !== 'all' && sale.branchId !== branchScope) continue;
+    const saleDate = new Date(sale.createdAt);
+    const saleMs = saleDate.getTime();
+    if (!Number.isFinite(saleMs) || saleMs < windowStartMs) continue;
+    const dateKey = toLocalDateKey(saleDate);
+
+    for (const item of sale.items) {
+      const qty = Math.max(0, Number(item.quantity) || 0);
+      if (qty <= 0) continue;
+      soldLast30ByProduct.set(
+        item.productId,
+        (soldLast30ByProduct.get(item.productId) ?? 0) + qty
+      );
+      // A sale decreases inventory on that date
+      addDailyDelta(dateKey, item.productId, -qty);
+    }
+  }
+
+  for (const movement of stockTransfers) {
+    const moveDate = new Date(movement.createdAt);
+    const moveMs = moveDate.getTime();
+    if (!Number.isFinite(moveMs) || moveMs < windowStartMs) continue;
+    const qty = Math.max(0, Number(movement.quantity) || 0);
+    if (qty <= 0) continue;
+    const dateKey = toLocalDateKey(moveDate);
+
+    if (movement.type === 'load') {
+      if (branchScope === 'all' || movement.toBranchId === branchScope) {
+        addDailyDelta(dateKey, movement.productId, qty);
+      }
+    } else if (movement.type === 'transfer' && branchScope !== 'all') {
+      if (movement.toBranchId === branchScope) {
+        addDailyDelta(dateKey, movement.productId, qty);
+      }
+      if (movement.fromBranchId === branchScope) {
+        addDailyDelta(dateKey, movement.productId, -qty);
+      }
+    }
+  }
+
+  let totalCostUsd = 0;
+  let totalRetailUsd = 0;
+  let productsWithStockCount = 0;
+  let totalUnitsInStock = 0;
+
+  const stockCounts = { critical: 0, warning: 0, ok: 0 };
+  const categoryAcc = new Map<
+    string,
+    { productCount: number; totalUnits: number; costValueUsd: number; retailValueUsd: number }
+  >();
+  const currentStockByProduct = new Map<string, number>();
+  const items: StockAlertItem[] = [];
+
+  for (const product of products) {
+    const currentStock = getStockForScope(product, branchScope, operationalBranchIds);
+    currentStockByProduct.set(product.id, currentStock);
+
+    const safeCost = Math.max(0, Number(product.costUsd) || 0);
+    const safePrice = Math.max(0, Number(product.priceUsd) || 0);
+    const effectiveMinStock = Math.max(0, (Number(product.minStock) || 0) * branchMultiplier);
+
+    const costValueUsd = round2Val(currentStock * safeCost);
+    const retailValueUsd = round2Val(currentStock * safePrice);
+    const potentialProfitUsd = round2Val(retailValueUsd - costValueUsd);
+    const marginPercent =
+      retailValueUsd > 0
+        ? round2Val((potentialProfitUsd / retailValueUsd) * 100)
+        : safePrice > 0
+        ? round2Val(((safePrice - safeCost) / safePrice) * 100)
+        : 0;
+
+    if (currentStock > 0) {
+      productsWithStockCount += 1;
+      totalUnitsInStock += currentStock;
+      totalCostUsd = round2Val(totalCostUsd + costValueUsd);
+      totalRetailUsd = round2Val(totalRetailUsd + retailValueUsd);
+    }
+
+    const categoryName = (product.category || 'General').trim() || 'General';
+    const catEntry = categoryAcc.get(categoryName) ?? {
+      productCount: 0,
+      totalUnits: 0,
+      costValueUsd: 0,
+      retailValueUsd: 0,
+    };
+    catEntry.productCount += 1;
+    catEntry.totalUnits += currentStock;
+    catEntry.costValueUsd = round2Val(catEntry.costValueUsd + costValueUsd);
+    catEntry.retailValueUsd = round2Val(catEntry.retailValueUsd + retailValueUsd);
+    categoryAcc.set(categoryName, catEntry);
+
+    let status: StockHealthStatus;
+    if (
+      currentStock <= 0 ||
+      (effectiveMinStock > 0 && currentStock <= Math.floor(effectiveMinStock * 0.5))
+    ) {
+      status = 'critical';
+      stockCounts.critical += 1;
+    } else if (effectiveMinStock > 0 && currentStock <= effectiveMinStock) {
+      status = 'warning';
+      stockCounts.warning += 1;
+    } else {
+      status = 'ok';
+      stockCounts.ok += 1;
+    }
+
+    const soldLast30Days = soldLast30ByProduct.get(product.id) ?? 0;
+    const targetStock = Math.max(
+      effectiveMinStock > 0 ? Math.ceil(effectiveMinStock * 1.5) : 10,
+      Math.ceil(soldLast30Days * 0.5)
+    );
+    const suggestedRestockQty =
+      status === 'ok' ? 0 : Math.max(1, targetStock - currentStock);
+    const estimatedRestockCostUsd = round2Val(suggestedRestockQty * safeCost);
+
+    items.push({
+      productId: product.id,
+      sku: product.sku,
+      name: product.name,
+      category: categoryName,
+      unit: product.unit || 'und',
+      currentStock,
+      minStock: effectiveMinStock,
+      costUsd: safeCost,
+      priceUsd: safePrice,
+      costValueUsd,
+      retailValueUsd,
+      potentialProfitUsd,
+      marginPercent,
+      soldLast30Days,
+      status,
+      suggestedRestockQty,
+      estimatedRestockCostUsd,
+    });
+  }
+
+  const categories: CategoryValuationItem[] = Array.from(categoryAcc.entries())
+    .map(([category, acc]) => ({
+      category,
+      productCount: acc.productCount,
+      totalUnits: acc.totalUnits,
+      costValueUsd: acc.costValueUsd,
+      costValueVes: round2Val(acc.costValueUsd * safeRate),
+      retailValueUsd: acc.retailValueUsd,
+      retailValueVes: round2Val(acc.retailValueUsd * safeRate),
+      costPercentage:
+        totalCostUsd > 0 ? round2Val((acc.costValueUsd / totalCostUsd) * 100) : 0,
+      retailPercentage:
+        totalRetailUsd > 0 ? round2Val((acc.retailValueUsd / totalRetailUsd) * 100) : 0,
+    }))
+    .sort((a, b) => b.retailValueUsd - a.retailValueUsd || b.costValueUsd - a.costValueUsd);
+
+  // Reconstruct daily historical valuation backwards from live stock
+  const dates: Date[] = [];
+  for (let i = 0; i < historyDays; i += 1) {
+    const d = new Date(windowStart);
+    d.setDate(windowStart.getDate() + i);
+    dates.push(d);
+  }
+
+  const productPricingMap = new Map<string, { costUsd: number; priceUsd: number }>();
+  for (const p of products) {
+    productPricingMap.set(p.id, {
+      costUsd: Math.max(0, Number(p.costUsd) || 0),
+      priceUsd: Math.max(0, Number(p.priceUsd) || 0),
+    });
+  }
+
+  const rollingStock = new Map<string, number>(currentStockByProduct);
+  const historyReversed: InventoryHistoryPoint[] = [];
+
+  for (let i = dates.length - 1; i >= 0; i -= 1) {
+    const date = dates[i];
+    const dateKey = toLocalDateKey(date);
+
+    let dayCostUsd = 0;
+    let dayRetailUsd = 0;
+    rollingStock.forEach((qty, prodId) => {
+      if (qty <= 0) return;
+      const pricing = productPricingMap.get(prodId);
+      if (!pricing) return;
+      dayCostUsd += qty * pricing.costUsd;
+      dayRetailUsd += qty * pricing.priceUsd;
+    });
+
+    const roundedDayCost = round2Val(dayCostUsd);
+    const roundedDayRetail = round2Val(dayRetailUsd);
+
+    historyReversed.push({
+      dateKey,
+      label: formatShortDayLabel(date),
+      costValueUsd: roundedDayCost,
+      costValueVes: round2Val(roundedDayCost * safeRate),
+      retailValueUsd: roundedDayRetail,
+      retailValueVes: round2Val(roundedDayRetail * safeRate),
+    });
+
+    // Reverse this day's movements to obtain previous day's closing stock
+    const dayDeltas = dailyDeltaMap.get(dateKey);
+    if (dayDeltas) {
+      dayDeltas.forEach((delta, prodId) => {
+        if (!rollingStock.has(prodId)) return;
+        const currentQty = rollingStock.get(prodId) ?? 0;
+        rollingStock.set(prodId, Math.max(0, currentQty - delta));
+      });
+    }
+  }
+
+  const history = historyReversed.reverse();
+  const firstPoint = history[0];
+  const lastPoint = history[history.length - 1];
+
+  const costVariationPercent =
+    firstPoint && lastPoint && firstPoint.costValueUsd > 0
+      ? round2Val(((lastPoint.costValueUsd - firstPoint.costValueUsd) / firstPoint.costValueUsd) * 100)
+      : 0;
+  const retailVariationPercent =
+    firstPoint && lastPoint && firstPoint.retailValueUsd > 0
+      ? round2Val(
+          ((lastPoint.retailValueUsd - firstPoint.retailValueUsd) / firstPoint.retailValueUsd) * 100
+        )
+      : 0;
+
+  const statusRank: Record<StockHealthStatus, number> = {
+    critical: 0,
+    warning: 1,
+    ok: 2,
+  };
+
+  const hotLowStockItems = [...items].sort((a, b) => {
+    const rankDiff = statusRank[a.status] - statusRank[b.status];
+    if (rankDiff !== 0) return rankDiff;
+    if (b.soldLast30Days !== a.soldLast30Days) return b.soldLast30Days - a.soldLast30Days;
+    const ratioA = a.minStock > 0 ? a.currentStock / a.minStock : a.currentStock;
+    const ratioB = b.minStock > 0 ? b.currentStock / b.minStock : b.currentStock;
+    if (ratioA !== ratioB) return ratioA - ratioB;
+    return a.currentStock - b.currentStock;
+  });
+
+  const sortedByRetail = [...items].sort(
+    (a, b) => b.retailValueUsd - a.retailValueUsd || b.costValueUsd - a.costValueUsd
+  );
+
+  const potentialProfitUsd = round2Val(totalRetailUsd - totalCostUsd);
+  const potentialMarginPercent =
+    totalRetailUsd > 0 ? round2Val((potentialProfitUsd / totalRetailUsd) * 100) : 0;
+
+  return {
+    branchId: branchScope,
+    branchName,
+    exchangeRate: safeRate,
+    totalCostUsd,
+    totalCostVes: round2Val(totalCostUsd * safeRate),
+    totalRetailUsd,
+    totalRetailVes: round2Val(totalRetailUsd * safeRate),
+    potentialProfitUsd,
+    potentialProfitVes: round2Val(potentialProfitUsd * safeRate),
+    potentialMarginPercent,
+    activeProductsCount: products.length,
+    productsWithStockCount,
+    totalUnitsInStock,
+    categories,
+    history,
+    costVariationPercent,
+    retailVariationPercent,
+    hasHistoricalMovements,
+    stockCounts,
+    items: sortedByRetail,
+    hotLowStockItems,
+  };
+}
+
+/**
+ * Real-time Dexie/IndexedDB query computing inventory valuation by cost and retail price,
+ * category breakdown, 30-day historical valuation curve, and critical stock alerts.
+ */
+export async function getInventoryValuationSummary(options?: {
+  branchId?: string | 'all';
+  exchangeRate?: number;
+  historyDays?: number;
+}): Promise<InventoryValuationSummary> {
+  const [products, branches, sales, stockTransfers, localSettings] = await Promise.all([
+    db.products.toArray(),
+    db.branches.toArray(),
+    db.sales.toArray(),
+    db.stockTransfers.toArray(),
+    options?.exchangeRate ? Promise.resolve(null) : getLocalBusinessSettings(),
+  ]);
+
+  const effectiveRate =
+    options?.exchangeRate && Number.isFinite(options.exchangeRate) && options.exchangeRate > 0
+      ? options.exchangeRate
+      : localSettings?.exchangeRate ?? DEFAULT_BUSINESS_SETTINGS.exchangeRate;
+
+  return computeInventoryValuationSummary({
+    products,
+    branches,
+    sales,
+    stockTransfers,
+    branchId: options?.branchId ?? 'all',
+    exchangeRate: effectiveRate,
+    historyDays: options?.historyDays ?? 30,
+  });
+}
