@@ -1,4 +1,4 @@
--- Pos 262 (Comercial 262 Suárez) — Supabase Cloud Sync Schema
+-- Pos 262 (Comercial) — Supabase Cloud Sync Schema
 -- Run this SQL in your Supabase SQL Editor to create the tables and Row Level Security policies.
 
 create table if not exists public.business_settings (
