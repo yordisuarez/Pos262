@@ -41,7 +41,7 @@ create policy "sync_records_owner_all"
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
 
--- Subscriptions table (managed by billing/admin; authenticated users can only read their own row)
+-- Subscriptions table (authenticated users can read their own row and auto-create their initial 7-day trial)
 create table if not exists public.subscriptions (
   user_id uuid primary key references auth.users (id) on delete cascade,
   plan text not null default 'trial',
@@ -58,4 +58,16 @@ create policy "subscriptions_owner_select"
   on public.subscriptions
   for select
   using (auth.uid() = user_id);
+
+drop policy if exists "subscriptions_owner_insert_trial" on public.subscriptions;
+create policy "subscriptions_owner_insert_trial"
+  on public.subscriptions
+  for insert
+  with check (
+    auth.uid() = user_id
+    and plan = 'trial'
+    and status = 'active'
+    and expires_at <= now() + interval '7 days 5 minutes'
+  );
+
 

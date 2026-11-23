@@ -154,14 +154,84 @@ async function writeCachedSubscription(userId: string, record: SubscriptionRecor
   }
 }
 
-/**
- * Fetches the authenticated user's row from `public.subscriptions` filtered by `user_id`.
- * Falls back to the locally cached subscription record only when offline or on transient network failure,
- * still strictly enforcing `status === 'active' && new Date(expires_at) > new Date()`.
- */
-export async function fetchAndEvaluateSubscription(
+const TRIAL_DURATION_DAYS = 7;
+const inFlightSubscriptionChecks = new Map<string, Promise<SubscriptionState>>();
+
+function buildTrialFallbackState(
   userId: string,
-  timeoutMs = 5000
+  expiresAt: string,
+  options?: { fromCache?: boolean; errorMessage?: string }
+): SubscriptionState {
+  const trialRecord: SubscriptionRecord = {
+    userId,
+    plan: 'trial',
+    status: 'active',
+    expiresAt,
+  };
+  return evaluateSubscriptionRecord(trialRecord, {
+    fromCache: Boolean(options?.fromCache),
+    errorMessage: options?.errorMessage,
+  });
+}
+
+async function createInitialTrialSubscription(userId: string): Promise<SubscriptionState> {
+  const expiresAt = new Date(Date.now() + TRIAL_DURATION_DAYS * MS_PER_DAY).toISOString();
+
+  const { data: insertedRow, error: insertError } = await supabase
+    .from('subscriptions')
+    .insert({
+      user_id: userId,
+      plan: 'trial',
+      status: 'active',
+      expires_at: expiresAt,
+    })
+    .select('user_id, plan, status, expires_at')
+    .maybeSingle();
+
+  if (insertError) {
+    // Handle concurrent insert race: another tab/request created the row first
+    if (insertError.code === '23505') {
+      const { data: existingRow } = await supabase
+        .from('subscriptions')
+        .select('user_id, plan, status, expires_at')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      const resolved = existingRow as SupabaseSubscriptionRow | null;
+      if (resolved) {
+        const existingRecord: SubscriptionRecord = {
+          userId: resolved.user_id,
+          plan: resolved.plan ?? 'trial',
+          status: resolved.status ?? 'inactive',
+          expiresAt: resolved.expires_at ?? '',
+        };
+        await writeCachedSubscription(userId, existingRecord);
+        return evaluateSubscriptionRecord(existingRecord, { fromCache: false });
+      }
+    }
+
+    // Do not lock a new user without an expired record if insert failed transiently
+    return buildTrialFallbackState(userId, expiresAt, {
+      fromCache: true,
+      errorMessage: insertError.message || 'No se pudo registrar la prueba automáticamente.',
+    });
+  }
+
+  const row = insertedRow as SupabaseSubscriptionRow | null;
+  const createdRecord: SubscriptionRecord = {
+    userId: row?.user_id ?? userId,
+    plan: row?.plan ?? 'trial',
+    status: row?.status ?? 'active',
+    expiresAt: row?.expires_at ?? expiresAt,
+  };
+
+  await writeCachedSubscription(userId, createdRecord);
+  return evaluateSubscriptionRecord(createdRecord, { fromCache: false });
+}
+
+async function runFetchAndEvaluateSubscription(
+  userId: string,
+  timeoutMs: number
 ): Promise<SubscriptionState> {
   const cached = await readCachedSubscription(userId);
 
@@ -202,33 +272,49 @@ export async function fetchAndEvaluateSubscription(
           errorMessage: 'Tiempo de espera agotado al verificar suscripción. Usando último estado.',
         });
       }
-      return evaluateSubscriptionRecord(null, {
-        fromCache: false,
-        errorMessage: 'No se pudo verificar la suscripción en este momento.',
-      });
+      return {
+        accessStatus: 'active',
+        record: null,
+        daysRemaining: null,
+        hoursRemaining: null,
+        showRenewalBanner: false,
+        planLabel: 'Verificación pendiente',
+        isTrial: false,
+        fromCache: true,
+        checkedAt: null,
+        errorMessage: 'Tiempo de espera agotado al consultar la suscripción.',
+      };
     }
 
     if (response.error) {
       const msg = response.error.message || 'Error al consultar suscripción.';
-      const isNetworkIssue =
-        msg.toLowerCase().includes('fetch') || msg.toLowerCase().includes('network');
-      if (isNetworkIssue && cached) {
+      if (cached) {
         return evaluateSubscriptionRecord(cached, { fromCache: true, errorMessage: msg });
       }
-      return evaluateSubscriptionRecord(null, { fromCache: false, errorMessage: msg });
+      return {
+        accessStatus: 'active',
+        record: null,
+        daysRemaining: null,
+        hoursRemaining: null,
+        showRenewalBanner: false,
+        planLabel: 'Verificación pendiente',
+        isTrial: false,
+        fromCache: true,
+        checkedAt: null,
+        errorMessage: msg,
+      };
     }
 
     const row = response.data as SupabaseSubscriptionRow | null;
-    if (!row || !row.expires_at) {
-      await writeCachedSubscription(userId, null);
-      return evaluateSubscriptionRecord(null, { fromCache: false });
+    if (!row) {
+      return await createInitialTrialSubscription(userId);
     }
 
     const record: SubscriptionRecord = {
       userId: row.user_id,
       plan: row.plan ?? 'trial',
       status: row.status ?? 'inactive',
-      expiresAt: row.expires_at,
+      expiresAt: row.expires_at ?? '',
     };
 
     await writeCachedSubscription(userId, record);
@@ -239,8 +325,41 @@ export async function fetchAndEvaluateSubscription(
     if (cached) {
       return evaluateSubscriptionRecord(cached, { fromCache: true, errorMessage: msg });
     }
-    return evaluateSubscriptionRecord(null, { fromCache: false, errorMessage: msg });
+    return {
+      accessStatus: 'active',
+      record: null,
+      daysRemaining: null,
+      hoursRemaining: null,
+      showRenewalBanner: false,
+      planLabel: 'Verificación pendiente',
+      isTrial: false,
+      fromCache: true,
+      checkedAt: null,
+      errorMessage: msg,
+    };
   }
+}
+
+/**
+ * Fetches the authenticated user's row from `public.subscriptions` filtered by `user_id`.
+ * If no row exists yet, automatically inserts a 7-day active trial row and grants access.
+ * Locks access ONLY when an existing record has `status !== 'active'` or `new Date(expires_at) <= new Date()`.
+ */
+export async function fetchAndEvaluateSubscription(
+  userId: string,
+  timeoutMs = 5000
+): Promise<SubscriptionState> {
+  const existingPromise = inFlightSubscriptionChecks.get(userId);
+  if (existingPromise) {
+    return existingPromise;
+  }
+
+  const promise = runFetchAndEvaluateSubscription(userId, timeoutMs).finally(() => {
+    inFlightSubscriptionChecks.delete(userId);
+  });
+
+  inFlightSubscriptionChecks.set(userId, promise);
+  return promise;
 }
 
 export function subscribeToSubscriptionChanges(
