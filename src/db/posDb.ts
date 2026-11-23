@@ -115,7 +115,39 @@ const ACCOUNT_SCOPED_SETTING_KEYS = [
   'businessSettingsSyncStatus',
   'businessSettingsSyncedAt',
   'operationalResetCompleted',
+  'fullDataWipeAt',
+  'pendingFullCloudWipe',
 ];
+
+export const CLEAN_PRIMARY_BRANCH: Branch = {
+  id: 'branch-principal',
+  name: 'Sucursal Principal',
+  code: 'SUC-01',
+  address: '',
+  phone: '',
+  isActive: true,
+  syncStatus: 'synced',
+};
+
+export function getFullWipeStorageKey(ownerUserId: string | null): string {
+  return `pos_262_full_wipe_${ownerUserId ?? 'local'}`;
+}
+
+export function readFullWipeLocalMarker(ownerUserId: string | null): string | null {
+  try {
+    return localStorage.getItem(getFullWipeStorageKey(ownerUserId));
+  } catch {
+    return null;
+  }
+}
+
+export function writeFullWipeLocalMarker(ownerUserId: string | null, isoTimestamp: string): void {
+  try {
+    localStorage.setItem(getFullWipeStorageKey(ownerUserId), isoTimestamp);
+  } catch {
+    // Ignore storage quota errors
+  }
+}
 
 export const DEFAULT_BRANCHES: Branch[] = [
   {
@@ -148,16 +180,6 @@ export const DEFAULT_BRANCHES: Branch[] = [
 ];
 
 export const DEFAULT_CUSTOMERS: Customer[] = [
-  {
-    id: 'cust-final',
-    name: 'Consumidor Final',
-    documentId: 'V-00000000',
-    phone: '',
-    creditLimitUsd: 0,
-    balanceUsd: 0,
-    createdAt: '2026-01-01T08:00:00.000Z',
-    syncStatus: 'synced',
-  },
   {
     id: 'cust-01',
     name: 'María Fernanda Rojas',
@@ -559,6 +581,25 @@ export async function purgeResidualCashiers(ownerUserId: string | null): Promise
 }
 
 /**
+ * Removes legacy "Consumidor Final (V-00000000)" placeholder records so the
+ * cart always uses the clean generic "Cliente" option without fictitious IDs.
+ */
+export async function purgeLegacyGenericCustomers(): Promise<void> {
+  const allCustomers = await db.customers.toArray();
+  const legacyIds = allCustomers
+    .filter(
+      (c) =>
+        c.id === 'cust-final' ||
+        c.name.trim().toLowerCase() === 'consumidor final'
+    )
+    .map((c) => c.id);
+
+  if (legacyIds.length > 0) {
+    await db.customers.bulkDelete(legacyIds);
+  }
+}
+
+/**
  * Isolates IndexedDB storage by authenticated Supabase `user_id`.
  * Whenever a different account signs in (or legacy un-owned local data exists),
  * clears all residual data so the new account begins completely isolated with 0 internal users.
@@ -608,32 +649,62 @@ export async function isolateLocalDatabaseForUser(userId: string | null): Promis
       // Ignore storage errors
     }
 
-    await seedDatabaseIfNeeded();
+    await seedDatabaseIfNeeded(userId);
     return true;
   }
 
   await purgeResidualCashiers(userId);
-  await seedDatabaseIfNeeded();
+  await purgeLegacyGenericCustomers();
+  await seedDatabaseIfNeeded(userId);
   return false;
 }
 
-export async function seedDatabaseIfNeeded(): Promise<void> {
-  const [branchCount, productCount, customerCount, quoteCount, expenseCount, resetMarker] =
-    await Promise.all([
-      db.branches.count(),
-      db.products.count(),
-      db.customers.count(),
-      db.supplierQuotes.count(),
-      db.expenses.count(),
-      db.settings.get('operationalResetCompleted'),
-    ]);
+export async function seedDatabaseIfNeeded(ownerUserId?: string | null): Promise<void> {
+  await purgeLegacyGenericCustomers();
 
-  if (branchCount === 0) await db.branches.bulkPut(DEFAULT_BRANCHES);
-  // Internal users (db.cashiers) are NEVER preloaded — every account starts with 0 internal users.
-  if (productCount === 0) await db.products.bulkPut(DEFAULT_PRODUCTS);
-  if (customerCount === 0) await db.customers.bulkPut(DEFAULT_CUSTOMERS);
-  if (quoteCount === 0) await db.supplierQuotes.bulkPut(DEFAULT_SUPPLIER_QUOTES);
-  if (expenseCount === 0 && !resetMarker) await db.expenses.bulkPut(DEFAULT_EXPENSES);
+  const resolvedOwner =
+    ownerUserId !== undefined
+      ? ownerUserId
+      : ((await db.settings.get(ACTIVE_OWNER_KEY))?.value ?? null);
+  const effectiveOwnerId = resolvedOwner === 'local' ? null : resolvedOwner;
+
+  const [
+    branchCount,
+    productCount,
+    customerCount,
+    quoteCount,
+    expenseCount,
+    resetMarker,
+    fullWipeEntry,
+  ] = await Promise.all([
+    db.branches.count(),
+    db.products.count(),
+    db.customers.count(),
+    db.supplierQuotes.count(),
+    db.expenses.count(),
+    db.settings.get('operationalResetCompleted'),
+    db.settings.get('fullDataWipeAt'),
+  ]);
+
+  const fullWipeAt = fullWipeEntry?.value || readFullWipeLocalMarker(effectiveOwnerId);
+
+  if (fullWipeAt) {
+    // Account has been explicitly wiped clean: NEVER re-seed demo data.
+    // Ensure at most 1 clean operational branch exists without demo details.
+    if (!fullWipeEntry) {
+      await db.settings.put({ key: 'fullDataWipeAt', value: fullWipeAt });
+    }
+    if (branchCount === 0) {
+      await db.branches.put({ ...CLEAN_PRIMARY_BRANCH, updatedAt: fullWipeAt });
+    }
+  } else {
+    if (branchCount === 0) await db.branches.bulkPut(DEFAULT_BRANCHES);
+    // Internal users (db.cashiers) are NEVER preloaded — every account starts with 0 internal users.
+    if (productCount === 0) await db.products.bulkPut(DEFAULT_PRODUCTS);
+    if (customerCount === 0) await db.customers.bulkPut(DEFAULT_CUSTOMERS);
+    if (quoteCount === 0) await db.supplierQuotes.bulkPut(DEFAULT_SUPPLIER_QUOTES);
+    if (expenseCount === 0 && !resetMarker) await db.expenses.bulkPut(DEFAULT_EXPENSES);
+  }
 
   const existingName = await db.settings.get('businessName');
   if (!existingName) {

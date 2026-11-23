@@ -1,4 +1,10 @@
-import { db, getLocalBusinessSettings, saveLocalBusinessSettings } from '../db/posDb';
+import {
+  CLEAN_PRIMARY_BRANCH,
+  db,
+  getLocalBusinessSettings,
+  saveLocalBusinessSettings,
+  writeFullWipeLocalMarker,
+} from '../db/posDb';
 import { supabase } from '../lib/supabase';
 import type {
   Branch,
@@ -63,6 +69,16 @@ interface CloudSyncRecordRow {
 }
 
 const SYNC_BATCH_SIZE = 100;
+const FULL_WIPE_ENTITY_TYPES: SyncEntityType[] = [
+  'product',
+  'customer',
+  'sale',
+  'shift',
+  'stockTransfer',
+  'supplierQuote',
+  'expense',
+  'branch',
+];
 let activeSyncPromise: Promise<SyncProcessResult> | null = null;
 
 function isRecordObject(value: unknown): value is Record<string, unknown> {
@@ -253,7 +269,8 @@ async function buildAllLocalSyncRows(userId: string, now: string): Promise<Cloud
 async function mergePulledRecordsIntoIndexedDB(
   cloudRows: CloudSyncRecordRow[],
   syncedAt: string,
-  userId: string
+  userId: string,
+  fullWipeAt?: string | null
 ): Promise<number> {
   if (cloudRows.length === 0) return 0;
 
@@ -341,6 +358,24 @@ async function mergePulledRecordsIntoIndexedDB(
         }
 
         if (!isRecordObject(row.payload)) continue;
+
+        // Never resurrect legacy "Consumidor Final" placeholder customer from cloud
+        if (
+          row.entity_type === 'customer' &&
+          (row.record_id === 'cust-final' ||
+            String(row.payload.name ?? '').trim().toLowerCase() === 'consumidor final')
+        ) {
+          continue;
+        }
+
+        // Never resurrect data wiped before the user's explicit full-wipe timestamp
+        if (
+          fullWipeAt &&
+          row.entity_type !== 'cashier' &&
+          cloudUpdatedAt < fullWipeAt
+        ) {
+          continue;
+        }
 
         const incoming = {
           ...row.payload,
@@ -487,6 +522,28 @@ async function executeSyncQueue(options?: {
   const now = new Date().toISOString();
 
   try {
+    // If a full data wipe occurred while offline, purge remote Supabase records FIRST before pulling
+    const [pendingFullWipeEntry, fullWipeAtEntry] = await Promise.all([
+      db.settings.get('pendingFullCloudWipe'),
+      db.settings.get('fullDataWipeAt'),
+    ]);
+
+    if (pendingFullWipeEntry?.value === 'true') {
+      const { error: remoteWipeError } = await supabase
+        .from('sync_records')
+        .delete()
+        .eq('user_id', userId)
+        .in('entity_type', FULL_WIPE_ENTITY_TYPES);
+
+      if (remoteWipeError) {
+        throw new Error(remoteWipeError.message);
+      }
+
+      await db.settings.delete('pendingFullCloudWipe');
+    }
+
+    const fullWipeAt = fullWipeAtEntry?.value ?? null;
+
     const [
       pendingSales,
       pendingShifts,
@@ -711,7 +768,7 @@ async function executeSyncQueue(options?: {
           reconciledPushed = await upsertSyncRecordsInBatches(seedRows);
         }
       } else {
-        pulledCount += await mergePulledRecordsIntoIndexedDB(cloudRows, now, userId);
+        pulledCount += await mergePulledRecordsIntoIndexedDB(cloudRows, now, userId, fullWipeAt);
 
         // On manual sync or reconciliation, also upload any pre-existing local records absent from cloud
         if (options?.reconcileMissingLocal) {
@@ -833,17 +890,25 @@ export function subscribeToCloudChanges(userId: string, onRemoteChange: () => vo
 }
 
 /**
- * Clears operational test data (sales, shifts, expenses, stock transfers, sync queue, and customer receivable balances)
- * locally in IndexedDB/localStorage and in Supabase `sync_records` strictly for the authenticated `user_id`,
- * while preserving the user account, `public.subscriptions`, internal users, branches, products, and business settings.
+ * Full blank-slate wipe for the authenticated account (`user_id`):
+ * Permanently deletes all operational, catalog, and contact records
+ * (products/stock, customers, sales, receivables, shifts/closings, stock transfers,
+ * supplier quotes, fixed/variable expenses, old branches, and pending sync queue)
+ * locally in IndexedDB/localStorage AND in Supabase `sync_records`,
+ * while strictly preserving the user account (`auth.users`), `public.subscriptions`,
+ * and internal users, leaving only 1 clean principal branch without demo data.
  */
-export async function resetOperationalData(userId: string | null): Promise<{
+export async function resetAllUserData(userId: string | null): Promise<{
   ok: boolean;
   cloudCleared: boolean;
   errorMessage?: string;
 }> {
   const now = new Date().toISOString();
-  const operationalEntityTypes: SyncEntityType[] = ['sale', 'shift', 'expense', 'stockTransfer'];
+  const cleanBranch: Branch = {
+    ...CLEAN_PRIMARY_BRANCH,
+    updatedAt: now,
+    syncStatus: userId ? 'pending' : 'synced',
+  };
 
   let cloudCleared = false;
   let errorMessage: string | undefined;
@@ -854,69 +919,123 @@ export async function resetOperationalData(userId: string | null): Promise<{
         .from('sync_records')
         .delete()
         .eq('user_id', userId)
-        .in('entity_type', operationalEntityTypes);
+        .in('entity_type', FULL_WIPE_ENTITY_TYPES);
 
       if (deleteError) {
         errorMessage = deleteError.message;
       } else {
+        // Persist ONLY the 1 clean principal branch in Supabase so future syncs know the cloud is intentionally blank
+        const cleanBranchRow: CloudSyncRecordRow = {
+          user_id: userId,
+          entity_type: 'branch',
+          record_id: cleanBranch.id,
+          payload: { ...cleanBranch, syncStatus: 'synced', syncedAt: now } as unknown as Record<
+            string,
+            unknown
+          >,
+          deleted: false,
+          updated_at: now,
+        };
+        await upsertSyncRecordsInBatches([cleanBranchRow]);
+        cleanBranch.syncStatus = 'synced';
+        cleanBranch.syncedAt = now;
         cloudCleared = true;
       }
     } catch (err) {
       errorMessage =
         err instanceof Error
           ? err.message
-          : 'No se pudo limpiar la nube ahora. Los datos locales sí fueron reiniciados.';
+          : 'No se pudo limpiar la nube ahora. Los datos locales fueron borrados y la nube se limpiará al reconectar.';
     }
   }
 
-  const allCustomers = await db.customers.toArray();
-  const resetCustomers = allCustomers
-    .filter((c) => c.balanceUsd !== 0)
-    .map((c) => ({
-      ...c,
-      balanceUsd: 0,
-      updatedAt: now,
-      syncStatus: 'pending' as const,
-    }));
+  const existingCashiers = await db.cashiers.toArray();
+  const updatedCashiers = existingCashiers.map((cashier) => ({
+    ...cashier,
+    branchId: cleanBranch.id,
+    updatedAt: now,
+    syncStatus: userId ? ('pending' as const) : ('synced' as const),
+  }));
 
   await db.transaction(
     'rw',
-    [db.sales, db.shifts, db.expenses, db.stockTransfers, db.syncQueue, db.customers, db.settings],
+    [
+      db.products,
+      db.customers,
+      db.sales,
+      db.shifts,
+      db.stockTransfers,
+      db.supplierQuotes,
+      db.expenses,
+      db.syncQueue,
+      db.branches,
+      db.cashiers,
+      db.settings,
+    ],
     async () => {
       await Promise.all([
+        db.products.clear(),
+        db.customers.clear(),
         db.sales.clear(),
         db.shifts.clear(),
-        db.expenses.clear(),
         db.stockTransfers.clear(),
+        db.supplierQuotes.clear(),
+        db.expenses.clear(),
         db.syncQueue.clear(),
-        ...resetCustomers.map((c) => db.customers.put(c)),
-        db.settings.put({ key: 'operationalResetCompleted', value: now }),
-        db.settings.delete('lastSyncedAt'),
+        db.branches.clear(),
       ]);
+
+      await db.branches.put(cleanBranch);
+
+      if (updatedCashiers.length > 0) {
+        await db.cashiers.bulkPut(updatedCashiers);
+      }
+
+      const settingEntries = [
+        { key: 'fullDataWipeAt', value: now },
+        { key: 'operationalResetCompleted', value: now },
+        { key: 'activeBranchId', value: cleanBranch.id },
+      ];
+      if (userId && !cloudCleared) {
+        settingEntries.push({ key: 'pendingFullCloudWipe', value: 'true' });
+      }
+      await db.settings.bulkPut(settingEntries);
+
+      if (!userId || cloudCleared) {
+        await db.settings.delete('pendingFullCloudWipe');
+      }
+      await db.settings.delete('lastSyncedAt');
     }
   );
 
-  // Sync reset customer receivable balances (0.00) back to Supabase if online
-  if (userId && cloudCleared && resetCustomers.length > 0) {
+  // Sync updated cashier branch pointers cleanly if online
+  if (userId && cloudCleared && updatedCashiers.length > 0) {
     try {
-      const customerRows: CloudSyncRecordRow[] = resetCustomers.map((c) => ({
+      const cashierRows: CloudSyncRecordRow[] = updatedCashiers.map((c) => ({
         user_id: userId,
-        entity_type: 'customer',
+        entity_type: 'cashier',
         record_id: c.id,
-        payload: { ...c, syncStatus: 'synced', syncedAt: now } as unknown as Record<string, unknown>,
+        payload: { ...c, userId, syncStatus: 'synced', syncedAt: now } as unknown as Record<
+          string,
+          unknown
+        >,
         deleted: false,
         updated_at: now,
       }));
-      await upsertSyncRecordsInBatches(customerRows);
-      await db.transaction('rw', db.customers, async () => {
+      await upsertSyncRecordsInBatches(cashierRows);
+      await db.transaction('rw', db.cashiers, async () => {
         await Promise.all(
-          resetCustomers.map((c) => db.customers.update(c.id, { syncStatus: 'synced', syncedAt: now }))
+          updatedCashiers.map((c) =>
+            db.cashiers.update(c.id, { userId, syncStatus: 'synced', syncedAt: now })
+          )
         );
       });
     } catch {
-      // Customer zero-balances remain pending for next sync
+      // Cashiers stay pending until next sync
     }
   }
+
+  writeFullWipeLocalMarker(userId, now);
 
   return {
     ok: !errorMessage,
@@ -924,6 +1043,8 @@ export async function resetOperationalData(userId: string | null): Promise<{
     errorMessage,
   };
 }
+
+export const resetOperationalData = resetAllUserData;
 
 export function formatSyncEntityLabel(entityType: SyncEntityType): string {
   switch (entityType) {

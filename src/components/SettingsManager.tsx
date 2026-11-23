@@ -132,7 +132,7 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
   const [newCashierName, setNewCashierName] = useState<string>('');
   const [newCashierPin, setNewCashierPin] = useState<string>('');
   const [newCashierBranchId, setNewCashierBranchId] = useState<string>(
-    activeBranchId || branches[0]?.id || 'branch-centro'
+    activeBranchId || branches[0]?.id || 'branch-principal'
   );
   const [cashierFormError, setCashierFormError] = useState<string>('');
   const [cashierFormSuccess, setCashierFormSuccess] = useState<string>('');
@@ -254,7 +254,7 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
       await onCreateCashier({
         name: trimmedName,
         pin: newCashierPin,
-        branchId: newCashierBranchId || activeBranchId || branches[0]?.id || 'branch-centro',
+        branchId: newCashierBranchId || activeBranchId || branches[0]?.id || 'branch-principal',
       });
       setNewCashierName('');
       setNewCashierPin('');
@@ -371,7 +371,7 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
   };
 
   const handleExecuteOperationalReset = async () => {
-    if (resetConfirmText.trim().toUpperCase() !== 'REINICIAR') return;
+    if (resetConfirmText.trim().toUpperCase() !== 'BORRAR') return;
     setResettingData(true);
     setResetFeedback(null);
     try {
@@ -382,15 +382,15 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
         setResetFeedback({
           type: 'ok',
           text: result.cloudCleared
-            ? 'Datos operativos reiniciados en este dispositivo y en Supabase (cuenta y suscripción intactas).'
-            : 'Datos operativos reiniciados localmente. Tu cuenta y suscripción siguen intactas.',
+            ? 'Borrado total completado en este dispositivo y en Supabase. Todos los contadores quedaron en 0 y los datos eliminados no volverán a aparecer (cuenta y suscripción intactas).'
+            : 'Borrado total aplicado localmente (contadores en 0). La limpieza en Supabase se completará automáticamente al reconectar.',
         });
       } else {
         setResetFeedback({
           type: 'err',
           text:
             result.errorMessage ||
-            'Se limpiaron los datos locales, pero ocurrió un error al limpiar la nube. Reintenta al reconectar.',
+            'Se vaciaron los datos locales, pero ocurrió un error al limpiar la nube. Se reintentará al sincronizar.',
         });
       }
     } finally {
@@ -1201,12 +1201,12 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-600" />
               <div>
                 <h3 className="text-xs font-bold text-slate-900">
-                  Reiniciar datos operativos de prueba
+                  Borrar todos los datos y dejar en blanco
                 </h3>
                 <p className="mt-0.5 text-[11px] text-slate-600">
-                  Borra turnos/cierres, ventas, gastos fijos/variables, traslados de stock, saldos por cobrar y cola pendiente (local y en Supabase).{' '}
+                  Elimina permanentemente todos los productos/stock, clientes, ventas, cuentas por cobrar, turnos/cierres, movimientos, cotizaciones de proveedores, gastos y cola pendiente (en este dispositivo y en Supabase), dejando una sola sucursal principal limpia sin datos demo.{' '}
                   <strong className="text-slate-800">
-                    Conserva tu cuenta, suscripción, usuarios internos, sucursales y catálogo.
+                    Conserva únicamente tu cuenta, suscripción activa y usuarios internos.
                   </strong>
                 </p>
               </div>
@@ -1223,7 +1223,7 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
                 className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-bold text-red-700 hover:bg-red-50 transition-colors cursor-pointer whitespace-nowrap"
               >
                 <RotateCcw className="h-3.5 w-3.5" />
-                Reiniciar datos de prueba
+                Borrar todo y dejar en blanco
               </button>
             )}
           </div>
@@ -1231,16 +1231,17 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
           {resetPanelOpen && (
             <div className="rounded-lg border border-red-200 bg-white p-3 space-y-2.5">
               <p className="text-xs font-semibold text-red-700">
-                Confirmación doble requerida: esta acción eliminará permanentemente {counts.sales}{' '}
-                ventas, {counts.shifts} turnos, {counts.expenses} gastos y {counts.transfers}{' '}
-                movimientos de stock.
+                Confirmación doble requerida: se eliminarán permanentemente {counts.products}{' '}
+                productos, {counts.customers} clientes, {counts.sales} ventas, {counts.shifts}{' '}
+                turnos, {counts.transfers} movimientos, {counts.quotes} cotizaciones de proveedores y{' '}
+                {counts.expenses} gastos. Todos los contadores quedarán en 0.
               </p>
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                 <input
                   type="text"
                   value={resetConfirmText}
                   onChange={(e) => setResetConfirmText(e.target.value)}
-                  placeholder="Escribe REINICIAR para confirmar"
+                  placeholder="Escribe BORRAR para confirmar"
                   className="flex-1 rounded-md border border-slate-300 bg-slate-50 px-3 py-1.5 font-mono text-xs font-bold uppercase text-slate-900 focus:border-red-500 focus:bg-white focus:outline-none"
                 />
                 <div className="flex items-center gap-2 shrink-0">
@@ -1257,13 +1258,13 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
                   <button
                     type="button"
                     disabled={
-                      resettingData || resetConfirmText.trim().toUpperCase() !== 'REINICIAR'
+                      resettingData || resetConfirmText.trim().toUpperCase() !== 'BORRAR'
                     }
                     onClick={() => void handleExecuteOperationalReset()}
                     className="inline-flex items-center gap-1.5 rounded-md bg-red-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-red-700 disabled:bg-slate-200 disabled:text-slate-400 transition-colors cursor-pointer disabled:cursor-not-allowed whitespace-nowrap"
                   >
                     <RotateCcw className="h-3.5 w-3.5" />
-                    {resettingData ? 'Reiniciando...' : 'Confirmar reinicio definitivo'}
+                    {resettingData ? 'Borrando todo...' : 'Confirmar borrado total'}
                   </button>
                 </div>
               </div>

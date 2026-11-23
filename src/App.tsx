@@ -34,6 +34,7 @@ import {
 } from 'lucide-react';
 import type { User } from '@supabase/supabase-js';
 import {
+  CLEAN_PRIMARY_BRANCH,
   DEFAULT_BUSINESS_SETTINGS,
   db,
   getLocalBusinessSettings,
@@ -46,7 +47,7 @@ import {
   computePendingSyncSummary,
   formatSyncEntityLabel,
   processSyncQueue,
-  resetOperationalData,
+  resetAllUserData,
   subscribeToCloudChanges,
 } from './services/syncQueue';
 import { CashierLoginModal, ShiftManager } from './components/ShiftManager';
@@ -123,6 +124,12 @@ const formatVes = (amount: number): string =>
     maximumFractionDigits: 2,
   })}`;
 
+const formatCustomerName = (name?: string): string => {
+  const trimmed = (name || '').trim();
+  if (!trimmed || trimmed.toLowerCase() === 'consumidor final') return 'Cliente';
+  return trimmed;
+};
+
 function buildWhatsAppReceiptText(sale: Sale, business?: BusinessSettings): string {
   const dateLabel = new Date(sale.createdAt).toLocaleString('es-VE', {
     dateStyle: 'short',
@@ -135,7 +142,7 @@ function buildWhatsAppReceiptText(sale: Sale, business?: BusinessSettings): stri
     `Recibo: ${sale.receiptNumber}`,
     `Fecha: ${dateLabel}`,
     `Cajero: ${sale.cashierName}`,
-    `Cliente: ${sale.customerName}`,
+    `Cliente: ${formatCustomerName(sale.customerName)}`,
     `Modalidad: ${sale.saleType === 'cash' ? 'Contado' : 'Crédito'}`,
     `Tasa aplicada: Bs ${sale.exchangeRate.toFixed(2)} / $`,
     '------------------------------',
@@ -251,7 +258,7 @@ export default function App() {
   const [loginModalOpen, setLoginModalOpen] = useState<boolean>(false);
   const [accountHydrated, setAccountHydrated] = useState<boolean>(false);
   const [onboardingStep, setOnboardingStep] = useState<'admin' | 'cashiers' | null>(null);
-  const [activeBranchId, setActiveBranchId] = useState<string>('branch-centro');
+  const [activeBranchId, setActiveBranchId] = useState<string>(CLEAN_PRIMARY_BRANCH.id);
 
   // Global currency & persisted offline USD->Bs rate
   const [currency, setCurrency] = useState<CurrencyMode>('USD');
@@ -271,12 +278,13 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('Todos');
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [selectedCustomerId, setSelectedCustomerId] = useState<string>('cust-final');
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
   const [applyTax, setApplyTax] = useState<boolean>(false);
   const [orderNotes, setOrderNotes] = useState<string>('');
   const [mobileCartOpen, setMobileCartOpen] = useState<boolean>(false);
 
   const [showNewCustomerForm, setShowNewCustomerForm] = useState<boolean>(false);
+  const [showCheckoutNewCustomer, setShowCheckoutNewCustomer] = useState<boolean>(false);
   const [newCustomerName, setNewCustomerName] = useState<string>('');
   const [newCustomerDoc, setNewCustomerDoc] = useState<string>('');
   const [newCustomerPhone, setNewCustomerPhone] = useState<string>('');
@@ -860,7 +868,7 @@ export default function App() {
       name: params.name.trim(),
       pin: params.pin.trim(),
       role: params.role,
-      branchId: params.branchId || activeBranchId || branches[0]?.id || 'branch-centro',
+      branchId: params.branchId || activeBranchId || branches[0]?.id || CLEAN_PRIMARY_BRANCH.id,
       isActive: true,
       createdAt: nowIso,
       updatedAt: nowIso,
@@ -958,9 +966,15 @@ export default function App() {
   );
 
   const selectedCustomer = useMemo(
-    () => customers.find((c) => c.id === selectedCustomerId) || customers[0],
+    () => (selectedCustomerId ? customers.find((c) => c.id === selectedCustomerId) || null : null),
     [customers, selectedCustomerId]
   );
+
+  useEffect(() => {
+    if (selectedCustomerId && !customers.some((c) => c.id === selectedCustomerId)) {
+      setSelectedCustomerId('');
+    }
+  }, [customers, selectedCustomerId]);
 
   const activeShift = useMemo(
     () =>
@@ -1964,20 +1978,35 @@ export default function App() {
     }
   };
 
-  // Manual Operational Test Data Reset (preserves account, subscription, internal users, branches & catalog)
+  // Full Blank-Slate Data Wipe (clears all catalog, contacts & operational data locally & in Supabase; preserves account, subscription & internal users)
   const handleResetOperationalData = async () => {
-    const result = await resetOperationalData(cloudUserIdRef.current);
+    const result = await resetAllUserData(cloudUserIdRef.current);
+    setProducts([]);
+    setCustomers([]);
+    setSales([]);
+    setShifts([]);
+    setTransfers([]);
+    setSupplierQuotes([]);
+    setExpenses([]);
+    setSyncQueue([]);
     setCart([]);
     setPayments([]);
     setOrderNotes('');
     setCompletedSale(null);
+    setSelectedCustomerId('');
+    setSelectedCategory('Todos');
+    setSearchQuery('');
     setLastSyncError(null);
+    setLastSyncedAt(null);
+    setActiveBranchId(CLEAN_PRIMARY_BRANCH.id);
+    persistSetting('activeBranchId', CLEAN_PRIMARY_BRANCH.id);
+    setActiveCashier((prev) => (prev ? { ...prev, branchId: CLEAN_PRIMARY_BRANCH.id } : prev));
     await reloadAllData();
     if (result.ok) {
       showTemporarySyncNotice(
         result.cloudCleared
-          ? 'Datos operativos de prueba reiniciados en local y en Supabase.'
-          : 'Datos operativos de prueba reiniciados localmente.'
+          ? 'Borrado total completado en este dispositivo y en Supabase (contadores en 0).'
+          : 'Borrado total aplicado localmente (contadores en 0). La nube se limpiará al reconectar.'
       );
     }
     return result;
@@ -2099,14 +2128,14 @@ export default function App() {
   const handleCreateCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmedName = newCustomerName.trim();
-    const trimmedDoc = newCustomerDoc.trim() || 'V-00000000';
+    const trimmedDoc = newCustomerDoc.trim().toUpperCase();
     if (!trimmedName) return;
 
     const now = new Date().toISOString();
     const customer: Customer = {
       id: `cust-${Date.now()}`,
       name: trimmedName,
-      documentId: trimmedDoc.toUpperCase(),
+      documentId: trimmedDoc,
       phone: newCustomerPhone.trim(),
       creditLimitUsd: 200,
       balanceUsd: 0,
@@ -2119,7 +2148,7 @@ export default function App() {
       entityType: 'customer',
       entityId: customer.id,
       operation: 'create',
-      summary: `Nuevo cliente: ${customer.name} (${customer.documentId})`,
+      summary: `Nuevo cliente: ${customer.name}${trimmedDoc ? ` (${trimmedDoc})` : ''}`,
       timestamp: now,
     });
 
@@ -2137,6 +2166,8 @@ export default function App() {
     setNewCustomerDoc('');
     setNewCustomerPhone('');
     setShowNewCustomerForm(false);
+    setShowCheckoutNewCustomer(false);
+    setCheckoutError('');
   };
 
   // Checkout helpers
@@ -2178,6 +2209,7 @@ export default function App() {
     setPayments([]);
     setPaymentReference('');
     setCheckoutError('');
+    setShowCheckoutNewCustomer(false);
     const defaultMethod: PaymentMethod = currency === 'VES' ? 'Pago Móvil' : 'Efectivo Divisa $';
     setSelectedMethod(defaultMethod);
     prefillPaymentInput(defaultMethod, cartTotals.totalUsd);
@@ -2188,7 +2220,9 @@ export default function App() {
   const handleSelectMethod = (method: PaymentMethod) => {
     setSelectedMethod(method);
     setCheckoutError('');
-    prefillPaymentInput(method, remainingUsd);
+    if (saleType === 'cash') {
+      prefillPaymentInput(method, remainingUsd);
+    }
   };
 
   const buildPaymentEntryFromInput = (): SalePayment | null => {
@@ -2220,7 +2254,11 @@ export default function App() {
     setPayments(nextPayments);
     setPaymentReference('');
     setCheckoutError('');
-    prefillPaymentInput(selectedMethod, nextRemaining);
+    if (saleType === 'cash') {
+      prefillPaymentInput(selectedMethod, nextRemaining);
+    } else {
+      setPaymentAmountInput('');
+    }
   };
 
   const handleRemovePaymentLine = (index: number) => {
@@ -2228,20 +2266,27 @@ export default function App() {
     const nextPaid = round2(nextPayments.reduce((s, p) => s + p.amountUsd, 0));
     const nextRemaining = round2(Math.max(0, cartTotals.totalUsd - nextPaid));
     setPayments(nextPayments);
-    prefillPaymentInput(selectedMethod, nextRemaining);
+    if (saleType === 'cash') {
+      prefillPaymentInput(selectedMethod, nextRemaining);
+    } else {
+      setPaymentAmountInput('');
+    }
   };
 
   const handleConfirmSale = async () => {
     if (!activeBranch || !activeCashier || cart.length === 0) return;
     setCheckoutError('');
 
-    if (saleType === 'credit' && selectedCustomerId === 'cust-final') {
+    if (saleType === 'credit' && !selectedCustomer) {
       setCheckoutError('Las ventas a crédito requieren seleccionar o crear un cliente registrado.');
       return;
     }
 
+    // For Cash sales, allow direct confirmation using the prefilled amount input.
+    // For Credit sales, ONLY count explicit initial deposits added via "+ Agregar"
+    // so 0 added payments always sends 100% of the sale to Accounts Receivable.
     let finalPayments = [...payments];
-    if (finalPayments.length === 0) {
+    if (saleType === 'cash' && finalPayments.length === 0) {
       const quickEntry = buildPaymentEntryFromInput();
       if (quickEntry) {
         finalPayments = [quickEntry];
@@ -2275,8 +2320,8 @@ export default function App() {
       cashierId: activeCashier.id,
       cashierName: activeCashier.name,
       shiftId: activeShift?.id,
-      customerId: selectedCustomer?.id ?? 'cust-final',
-      customerName: selectedCustomer?.name ?? 'Consumidor Final',
+      customerId: selectedCustomer?.id ?? 'generic-client',
+      customerName: selectedCustomer?.name ?? 'Cliente',
       customerPhone: selectedCustomer?.phone,
       saleType,
       items: cart,
@@ -2394,9 +2439,11 @@ export default function App() {
               onChange={(e) => setSelectedCustomerId(e.target.value)}
               className="w-full rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
             >
+              <option value="">Cliente</option>
               {customers.map((customer) => (
                 <option key={customer.id} value={customer.id}>
-                  {customer.name} ({customer.documentId})
+                  {customer.name}
+                  {customer.documentId ? ` (${customer.documentId})` : ''}
                 </option>
               ))}
             </select>
@@ -3366,7 +3413,12 @@ export default function App() {
                   {completedSale ? 'Venta registrada' : 'Finalizar cobro'}
                 </h2>
                 <p className="text-xs text-slate-500">
-                  {activeBranch?.name} · {completedSale ? completedSale.customerName : selectedCustomer?.name}
+                  {activeBranch?.name} ·{' '}
+                  {completedSale
+                    ? formatCustomerName(completedSale.customerName)
+                    : selectedCustomer
+                    ? selectedCustomer.name
+                    : 'Cliente'}
                 </p>
               </div>
               <button
@@ -3392,7 +3444,11 @@ export default function App() {
                         Recibo {completedSale.receiptNumber}
                       </p>
                       <p className="mt-0.5 text-xs text-slate-600">
-                        {completedSale.saleType === 'cash' ? 'Venta de Contado' : 'Venta a Crédito'}
+                        {completedSale.saleType === 'cash'
+                          ? 'Venta de Contado · Cobrada'
+                          : completedSale.pendingUsd > 0
+                          ? `Crédito · Pendiente ${formatUsd(completedSale.pendingUsd)}`
+                          : 'Crédito · Cobrada'}
                         <span aria-hidden="true"> · </span>
                         <span
                           className={
@@ -3487,6 +3543,7 @@ export default function App() {
                     onClick={() => {
                       setSaleType('cash');
                       setCheckoutError('');
+                      prefillPaymentInput(selectedMethod, remainingUsd);
                     }}
                     className={`rounded-md py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
                       saleType === 'cash'
@@ -3500,6 +3557,8 @@ export default function App() {
                     type="button"
                     onClick={() => {
                       setSaleType('credit');
+                      setPaymentAmountInput('');
+                      setPaymentReference('');
                       setCheckoutError('');
                     }}
                     className={`rounded-md py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
@@ -3513,37 +3572,89 @@ export default function App() {
                 </div>
 
                 {saleType === 'credit' && (
-                  <div className="grid grid-cols-1 gap-2.5 rounded-lg border border-amber-200 bg-amber-50/70 p-3 sm:grid-cols-2">
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-700">
-                        Cliente asignado al crédito
-                      </label>
-                      <select
-                        value={selectedCustomerId}
-                        onChange={(e) => {
-                          setSelectedCustomerId(e.target.value);
-                          setCheckoutError('');
-                        }}
-                        className="mt-1 w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-[#76B900] focus:outline-none"
+                  <div className="space-y-2.5 rounded-lg border border-amber-200 bg-amber-50/70 p-3">
+                    <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                      <div>
+                        <div className="flex items-center justify-between gap-2">
+                          <label className="block text-xs font-semibold text-slate-700">
+                            Cliente asignado al crédito
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => setShowCheckoutNewCustomer((prev) => !prev)}
+                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#558B00] hover:underline cursor-pointer"
+                          >
+                            <UserPlus className="h-3 w-3" />
+                            {showCheckoutNewCustomer ? 'Cancelar' : 'Nuevo cliente'}
+                          </button>
+                        </div>
+                        <select
+                          value={selectedCustomerId}
+                          onChange={(e) => {
+                            setSelectedCustomerId(e.target.value);
+                            setCheckoutError('');
+                          }}
+                          className="mt-1 w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-[#76B900] focus:outline-none"
+                        >
+                          <option value="">Seleccionar cliente...</option>
+                          {customers.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}
+                              {c.documentId ? ` (${c.documentId})` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700">
+                          Fecha de vencimiento
+                        </label>
+                        <input
+                          type="date"
+                          value={creditDueDate}
+                          onChange={(e) => setCreditDueDate(e.target.value)}
+                          className="mt-1 w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs text-slate-900 focus:border-[#76B900] focus:outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    {showCheckoutNewCustomer && (
+                      <form
+                        onSubmit={handleCreateCustomer}
+                        className="grid grid-cols-1 gap-2 rounded-md border border-amber-200 bg-white p-2.5 sm:grid-cols-3"
                       >
-                        {customers.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name} ({c.documentId})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-700">
-                        Fecha de vencimiento
-                      </label>
-                      <input
-                        type="date"
-                        value={creditDueDate}
-                        onChange={(e) => setCreditDueDate(e.target.value)}
-                        className="mt-1 w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs text-slate-900 focus:border-[#76B900] focus:outline-none"
-                      />
-                    </div>
+                        <input
+                          type="text"
+                          required
+                          placeholder="Nombre o razón social *"
+                          value={newCustomerName}
+                          onChange={(e) => setNewCustomerName(e.target.value)}
+                          className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
+                        />
+                        <input
+                          type="text"
+                          placeholder="Cédula / RIF (opcional)"
+                          value={newCustomerDoc}
+                          onChange={(e) => setNewCustomerDoc(e.target.value)}
+                          className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
+                        />
+                        <div className="flex gap-1.5">
+                          <input
+                            type="tel"
+                            placeholder="WhatsApp"
+                            value={newCustomerPhone}
+                            onChange={(e) => setNewCustomerPhone(e.target.value)}
+                            className="w-full rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
+                          />
+                          <button
+                            type="submit"
+                            className="shrink-0 rounded-md bg-[#84CC16] px-2.5 py-1.5 text-xs font-bold text-slate-950 hover:bg-[#76B900] cursor-pointer"
+                          >
+                            Guardar
+                          </button>
+                        </div>
+                      </form>
+                    )}
                   </div>
                 )}
 
@@ -3654,9 +3765,17 @@ export default function App() {
                   </div>
                 )}
 
+                {saleType === 'credit' && paymentAmountInput.trim() !== '' && (
+                  <p className="text-[11px] font-medium text-amber-700">
+                    Pulsa <strong>+ Agregar</strong> para incluir este abono inicial, o déjalo vacío para enviar el 100% del monto a Cuentas por cobrar.
+                  </p>
+                )}
+
                 <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-2.5 text-xs font-mono tabular-nums">
                   <div>
-                    <span className="font-sans text-slate-500">Registrado: </span>
+                    <span className="font-sans text-slate-500">
+                      {saleType === 'credit' ? 'Abono inicial: ' : 'Registrado: '}
+                    </span>
                     <span className="font-bold text-slate-900">{formatUsd(paidTotalUsd)}</span>
                   </div>
                   {remainingUsd > 0 ? (
@@ -3844,11 +3963,16 @@ export default function App() {
                         <div className="flex flex-wrap items-center gap-1.5 text-xs font-bold text-slate-900">
                           <span className="font-mono">{sale.receiptNumber}</span>
                           <span aria-hidden="true" className="text-slate-300">·</span>
-                          <span className="truncate">{sale.customerName}</span>
+                          <span className="truncate">{formatCustomerName(sale.customerName)}</span>
                         </div>
                         <p className="mt-0.5 text-[11px] text-slate-500">
                           {sale.branchName} · {sale.cashierName} ·{' '}
-                          {sale.saleType === 'cash' ? 'Contado' : 'Crédito'} ·{' '}
+                          {sale.saleType === 'cash'
+                            ? 'Contado'
+                            : sale.pendingUsd > 0
+                            ? `Crédito (Pend. ${formatUsd(sale.pendingUsd)})`
+                            : 'Crédito (Cobrada)'}{' '}
+                          ·{' '}
                           {new Date(sale.createdAt).toLocaleString('es-VE', {
                             dateStyle: 'short',
                             timeStyle: 'short',

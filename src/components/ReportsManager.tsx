@@ -36,6 +36,12 @@ const formatVes = (amount: number): string =>
     maximumFractionDigits: 2,
   })}`;
 
+const formatCustomerName = (name?: string): string => {
+  const trimmed = (name || '').trim();
+  if (!trimmed || trimmed.toLowerCase() === 'consumidor final') return 'Cliente';
+  return trimmed;
+};
+
 interface ReportsManagerProps {
   sales: Sale[];
   products: Product[];
@@ -581,7 +587,8 @@ export const ReportsManager: React.FC<ReportsManagerProps> = ({
                   <tr key={sale.id} className="hover:bg-slate-50/70">
                     <td className="py-2 pr-3">
                       <p className="font-semibold text-slate-900">
-                        <span className="font-mono">{sale.receiptNumber}</span> · {sale.customerName}
+                        <span className="font-mono">{sale.receiptNumber}</span> ·{' '}
+                        {formatCustomerName(sale.customerName)}
                       </p>
                       <p className="text-[11px] text-slate-500">{sale.branchName}</p>
                     </td>
@@ -643,7 +650,8 @@ export const ReportsManager: React.FC<ReportsManagerProps> = ({
                   >
                     <div className="min-w-0">
                       <p className="font-semibold text-slate-900 truncate">
-                        <span className="font-mono">{sale.receiptNumber}</span> · {sale.customerName}
+                        <span className="font-mono">{sale.receiptNumber}</span> ·{' '}
+                        {formatCustomerName(sale.customerName)}
                       </p>
                       <p className="text-[11px] text-slate-500">
                         {sale.branchName} · {sale.saleType === 'cash' ? 'Contado' : 'Crédito'} ·{' '}
@@ -668,7 +676,11 @@ export const ReportsManager: React.FC<ReportsManagerProps> = ({
                             sale.pendingUsd > 0 ? 'text-amber-700' : 'text-[#558B00]'
                           }`}
                         >
-                          {sale.pendingUsd > 0 ? `Pend. ${formatUsd(sale.pendingUsd)}` : 'Cobrada'}
+                          {sale.pendingUsd > 0
+                            ? `Crédito · Pend. ${formatUsd(sale.pendingUsd)}`
+                            : sale.saleType === 'credit'
+                            ? 'Crédito · Cobrada'
+                            : 'Cobrada'}
                         </p>
                       </div>
 
@@ -774,7 +786,7 @@ export const ReportsManager: React.FC<ReportsManagerProps> = ({
                   Editar venta <span className="font-mono">{editingSale.receiptNumber}</span>
                 </h3>
                 <p className="text-xs text-slate-500">
-                  {editingSale.branchName} · {editingSale.customerName} · Tasa Bs{' '}
+                  {editingSale.branchName} · {formatCustomerName(editingSale.customerName)} · Tasa Bs{' '}
                   {editPreview.rate.toFixed(2)}/$
                 </p>
               </div>
@@ -810,17 +822,28 @@ export const ReportsManager: React.FC<ReportsManagerProps> = ({
                 </div>
 
                 <div>
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-1.5">
                     <label className="block text-xs font-semibold text-slate-700">
                       Pagado / Abonado (USD $)
                     </label>
-                    <button
-                      type="button"
-                      onClick={() => setEditPaidUsdInput(editPreview.totalUsd.toFixed(2))}
-                      className="text-[11px] font-semibold text-[#558B00] hover:underline cursor-pointer"
-                    >
-                      Igualar total
-                    </button>
+                    <div className="flex items-center gap-2">
+                      {editSaleType === 'credit' && (
+                        <button
+                          type="button"
+                          onClick={() => setEditPaidUsdInput('0.00')}
+                          className="text-[11px] font-semibold text-amber-700 hover:underline cursor-pointer"
+                        >
+                          Sin abono ($0)
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setEditPaidUsdInput(editPreview.totalUsd.toFixed(2))}
+                        className="text-[11px] font-semibold text-[#558B00] hover:underline cursor-pointer"
+                      >
+                        Igualar total
+                      </button>
+                    </div>
                   </div>
                   <input
                     type="number"
