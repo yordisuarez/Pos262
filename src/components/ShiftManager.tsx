@@ -8,6 +8,7 @@ import {
   LogOut,
   PlayCircle,
   ShieldCheck,
+  Trash2,
   UserCheck,
 } from 'lucide-react';
 import type { Branch, Cashier, Sale, Shift } from '../types/pos';
@@ -180,6 +181,8 @@ interface ShiftManagerProps {
   activeShift: Shift | null;
   shifts: Shift[];
   sales: Sale[];
+  isBranchLocked?: boolean;
+  canDeleteShifts?: boolean;
   onOpenShift: (params: {
     openingFundUsd: number;
     openingFundVes: number;
@@ -196,6 +199,7 @@ interface ShiftManagerProps {
     salesCount: number;
     closingNote?: string;
   }) => Promise<void>;
+  onDeleteShift?: (shiftId: string) => Promise<void>;
   onSwitchCashier: () => void;
 }
 
@@ -206,8 +210,11 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
   activeShift,
   shifts,
   sales,
+  isBranchLocked = false,
+  canDeleteShifts = false,
   onOpenShift,
   onCloseShift,
+  onDeleteShift,
   onSwitchCashier,
 }) => {
   const [openingFundUsdInput, setOpeningFundUsdInput] = useState<string>('0.00');
@@ -223,7 +230,11 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
 
   const [filterFromDate, setFilterFromDate] = useState<string>('');
   const [filterToDate, setFilterToDate] = useState<string>('');
-  const [filterBranchId, setFilterBranchId] = useState<string>('all');
+  const [filterBranchId, setFilterBranchId] = useState<string>(
+    isBranchLocked ? activeBranch.id : 'all'
+  );
+  const [confirmDeleteShiftId, setConfirmDeleteShiftId] = useState<string | null>(null);
+  const [deletingShiftId, setDeletingShiftId] = useState<string | null>(null);
 
   useEffect(() => {
     setCountedUsdInput('0.00');
@@ -231,6 +242,12 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
     setClosingNote('');
     setCloseError('');
   }, [activeShift?.id]);
+
+  useEffect(() => {
+    if (isBranchLocked) {
+      setFilterBranchId(activeBranch.id);
+    }
+  }, [isBranchLocked, activeBranch.id]);
 
   const activeShiftMetrics = useMemo(() => {
     if (!activeShift) {
@@ -365,15 +382,32 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
     setSuccessMessage('Turno cerrado y arqueo guardado en el historial.');
   };
 
+  const effectiveFilterBranchId = isBranchLocked ? activeBranch.id : filterBranchId;
+
   const filteredShiftHistory = useMemo(() => {
     return shifts.filter((shift) => {
-      if (filterBranchId !== 'all' && shift.branchId !== filterBranchId) return false;
+      if (effectiveFilterBranchId !== 'all' && shift.branchId !== effectiveFilterBranchId) {
+        return false;
+      }
       const shiftDate = shift.openedAt.slice(0, 10);
       if (filterFromDate && shiftDate < filterFromDate) return false;
       if (filterToDate && shiftDate > filterToDate) return false;
       return true;
     });
-  }, [shifts, filterBranchId, filterFromDate, filterToDate]);
+  }, [shifts, effectiveFilterBranchId, filterFromDate, filterToDate]);
+
+  const handleConfirmDeleteShift = async (shift: Shift) => {
+    if (!canDeleteShifts || !onDeleteShift) return;
+    setDeletingShiftId(shift.id);
+    setSuccessMessage('');
+    try {
+      await onDeleteShift(shift.id);
+      setConfirmDeleteShiftId(null);
+      setSuccessMessage(`Turno de ${shift.cashierName} (${shift.branchName}) eliminado del historial.`);
+    } finally {
+      setDeletingShiftId(null);
+    }
+  };
 
   const renderDiffLabel = (diff: number, formatter: (v: number) => string) => {
     if (Math.abs(diff) < 0.01) {
@@ -672,14 +706,22 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
             </div>
 
             <div>
-              <label className="block text-[11px] font-medium text-slate-500">Sucursal</label>
+              <label className="block text-[11px] font-medium text-slate-500">
+                Sucursal {isBranchLocked ? '(Fija)' : ''}
+              </label>
               <select
-                value={filterBranchId}
-                onChange={(e) => setFilterBranchId(e.target.value)}
-                className="mt-0.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
+                value={effectiveFilterBranchId}
+                disabled={isBranchLocked}
+                onChange={(e) => {
+                  if (!isBranchLocked) setFilterBranchId(e.target.value);
+                }}
+                className="mt-0.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none disabled:cursor-not-allowed disabled:opacity-75"
               >
-                <option value="all">Todas</option>
-                {branches.map((b) => (
+                {!isBranchLocked && <option value="all">Todas</option>}
+                {(isBranchLocked
+                  ? branches.filter((b) => b.id === activeBranch.id)
+                  : branches
+                ).map((b) => (
                   <option key={b.id} value={b.id}>
                     {b.name}
                   </option>
@@ -687,13 +729,13 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
               </select>
             </div>
 
-            {(filterFromDate || filterToDate || filterBranchId !== 'all') && (
+            {(filterFromDate || filterToDate || (!isBranchLocked && filterBranchId !== 'all')) && (
               <button
                 type="button"
                 onClick={() => {
                   setFilterFromDate('');
                   setFilterToDate('');
-                  setFilterBranchId('all');
+                  if (!isBranchLocked) setFilterBranchId('all');
                 }}
                 className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer"
               >
@@ -809,6 +851,39 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
                       >
                         {shift.syncStatus === 'synced' ? 'Sincronizado' : 'Pendiente offline'}
                       </p>
+                      {canDeleteShifts && onDeleteShift && (
+                        <div className="mt-1.5 flex justify-end">
+                          {confirmDeleteShiftId === shift.id ? (
+                            <div className="inline-flex items-center gap-1">
+                              <button
+                                type="button"
+                                disabled={deletingShiftId === shift.id}
+                                onClick={() => void handleConfirmDeleteShift(shift)}
+                                className="rounded bg-red-600 px-2 py-0.5 text-[10px] font-bold text-white hover:bg-red-700 disabled:opacity-50 cursor-pointer"
+                              >
+                                {deletingShiftId === shift.id ? '...' : 'Eliminar'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteShiftId(null)}
+                                className="rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer"
+                              >
+                                No
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteShiftId(shift.id)}
+                              aria-label={`Eliminar turno de ${shift.cashierName}`}
+                              className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] font-semibold text-slate-500 hover:border-red-200 hover:bg-red-50 hover:text-red-600 cursor-pointer"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                              Eliminar
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}

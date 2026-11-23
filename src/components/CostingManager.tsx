@@ -46,6 +46,7 @@ interface CostingManagerProps {
   sales: Sale[];
   currency: CurrencyMode;
   exchangeRate: number;
+  isBranchLocked?: boolean;
   onUpdateProductPricing: (productId: string, costUsd: number, priceUsd: number) => Promise<void>;
   onAddSupplierQuote: (params: {
     supplierName: string;
@@ -87,6 +88,7 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
   sales,
   currency,
   exchangeRate,
+  isBranchLocked = false,
   onUpdateProductPricing,
   onAddSupplierQuote,
   onDeleteSupplierQuote,
@@ -139,10 +141,21 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
   }, [products, calcProductId, compareProductId]);
 
   useEffect(() => {
+    if (isBranchLocked) {
+      setExpenseBranchId(activeBranchId);
+      setEditExpBranchId(activeBranchId);
+      return;
+    }
     if (branches.length > 0 && !branches.some((b) => b.id === expenseBranchId)) {
       setExpenseBranchId(branches[0].id);
     }
-  }, [branches, expenseBranchId]);
+  }, [branches, expenseBranchId, isBranchLocked, activeBranchId]);
+
+  const selectableBranches = useMemo(() => {
+    if (!isBranchLocked) return branches;
+    const assigned = branches.filter((b) => b.id === activeBranchId);
+    return assigned.length > 0 ? assigned : branches.slice(0, 1);
+  }, [branches, isBranchLocked, activeBranchId]);
 
   const formatPrimary = (usd: number): string =>
     currency === 'USD' ? formatUsd(usd) : formatVes(round2(usd * exchangeRate));
@@ -804,11 +817,14 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
           </select>
 
           <select
-            value={expenseBranchId}
-            onChange={(e) => setExpenseBranchId(e.target.value)}
-            className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 sm:col-span-2 focus:border-[#76B900] focus:outline-none"
+            value={isBranchLocked ? activeBranchId : expenseBranchId}
+            disabled={isBranchLocked}
+            onChange={(e) => {
+              if (!isBranchLocked) setExpenseBranchId(e.target.value);
+            }}
+            className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 sm:col-span-2 focus:border-[#76B900] focus:outline-none disabled:cursor-not-allowed disabled:opacity-75"
           >
-            {branches.map((b) => (
+            {selectableBranches.map((b) => (
               <option key={b.id} value={b.id}>
                 {b.name}
               </option>
@@ -913,11 +929,14 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
                             </select>
 
                             <select
-                              value={editExpBranchId}
-                              onChange={(e) => setEditExpBranchId(e.target.value)}
-                              className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900 sm:col-span-2 focus:border-[#76B900] focus:outline-none"
+                              value={isBranchLocked ? activeBranchId : editExpBranchId}
+                              disabled={isBranchLocked}
+                              onChange={(e) => {
+                                if (!isBranchLocked) setEditExpBranchId(e.target.value);
+                              }}
+                              className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900 sm:col-span-2 focus:border-[#76B900] focus:outline-none disabled:cursor-not-allowed disabled:opacity-75"
                             >
-                              {branches.map((b) => (
+                              {selectableBranches.map((b) => (
                                 <option key={b.id} value={b.id}>
                                   {b.name}
                                 </option>

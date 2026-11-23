@@ -4,6 +4,7 @@ import {
   ArrowRight,
   Building2,
   CheckCircle2,
+  Lock,
   PackagePlus,
   Pencil,
   Plus,
@@ -36,6 +37,8 @@ interface InventoryManagerProps {
   transfers: StockTransfer[];
   activeCashier: Cashier;
   exchangeRate: number;
+  canEditInventory?: boolean;
+  isBranchLocked?: boolean;
   onLoadStock: (params: {
     branchId: string;
     productId: string;
@@ -87,6 +90,8 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
   transfers,
   activeCashier,
   exchangeRate,
+  canEditInventory = true,
+  isBranchLocked = false,
   onLoadStock,
   onTransferStock,
   onCreateProduct,
@@ -96,8 +101,26 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
 }) => {
   const operationalBranches = useMemo(() => {
     const active = branches.filter((b) => b.isActive);
-    return active.length > 0 ? active : branches;
-  }, [branches]);
+    const pool = active.length > 0 ? active : branches;
+    if (isBranchLocked) {
+      const assigned = pool.filter((b) => b.id === activeBranchId);
+      return assigned.length > 0 ? assigned : pool.slice(0, 1);
+    }
+    return pool;
+  }, [branches, isBranchLocked, activeBranchId]);
+
+  const visibleBranches = useMemo(() => {
+    if (!isBranchLocked) return branches;
+    const assigned = branches.filter((b) => b.id === activeBranchId);
+    return assigned.length > 0 ? assigned : branches.slice(0, 1);
+  }, [branches, isBranchLocked, activeBranchId]);
+
+  const visibleTransfers = useMemo(() => {
+    if (!isBranchLocked) return transfers;
+    return transfers.filter(
+      (t) => t.toBranchId === activeBranchId || t.fromBranchId === activeBranchId
+    );
+  }, [transfers, isBranchLocked, activeBranchId]);
 
   const [loadBranchId, setLoadBranchId] = useState<string>(activeBranchId);
   const [loadProductId, setLoadProductId] = useState<string>(products[0]?.id || '');
@@ -145,6 +168,11 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
   });
 
   useEffect(() => {
+    if (isBranchLocked) {
+      setLoadBranchId(activeBranchId);
+      setFromBranchId(activeBranchId);
+      return;
+    }
     if (!operationalBranches.some((b) => b.id === loadBranchId)) {
       setLoadBranchId(operationalBranches[0]?.id || '');
     }
@@ -155,7 +183,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
       const alt = operationalBranches.find((b) => b.id !== fromBranchId) || operationalBranches[0];
       setToBranchId(alt?.id || '');
     }
-  }, [operationalBranches, loadBranchId, fromBranchId, toBranchId]);
+  }, [operationalBranches, loadBranchId, fromBranchId, toBranchId, isBranchLocked, activeBranchId]);
 
   useEffect(() => {
     if (products.length > 0) {
@@ -198,8 +226,9 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
   }, [products, inventorySearch]);
 
   const openCreateProductModal = () => {
+    if (!canEditInventory) return;
     const initialStocks: Record<string, string> = {};
-    branches.forEach((b) => {
+    visibleBranches.forEach((b) => {
       initialStocks[b.id] = '0';
     });
     setProductForm({
@@ -220,8 +249,9 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
   };
 
   const openEditProductModal = (product: Product) => {
+    if (!canEditInventory) return;
     const stocks: Record<string, string> = {};
-    branches.forEach((b) => {
+    visibleBranches.forEach((b) => {
       stocks[b.id] = String(product.stockByBranch[b.id] ?? 0);
     });
     setProductForm({
@@ -243,6 +273,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
 
   const handleSaveProductForm = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canEditInventory) return;
     setProductFormError('');
     setCatalogFeedback(null);
 
@@ -272,7 +303,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
     }
 
     const parsedStockByBranch: Record<string, number> = {};
-    for (const branch of branches) {
+    for (const branch of visibleBranches) {
       const rawVal = productForm.stockByBranch[branch.id] ?? '0';
       const qty = parseInt(rawVal, 10);
       if (!Number.isFinite(qty) || qty < 0) {
@@ -332,6 +363,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
   };
 
   const handleConfirmDeleteProduct = async (product: Product) => {
+    if (!canEditInventory) return;
     await onDeleteProduct(product.id);
     setConfirmDeleteProductId(null);
     setCatalogFeedback({
@@ -342,22 +374,24 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
 
   const handleLoadSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canEditInventory) return;
     setLoadFeedback(null);
 
+    const targetBranchId = isBranchLocked ? activeBranchId : loadBranchId;
     const qty = parseInt(loadQtyInput, 10);
-    if (!loadProductId || !loadBranchId || !Number.isFinite(qty) || qty <= 0) {
+    if (!loadProductId || !targetBranchId || !Number.isFinite(qty) || qty <= 0) {
       setLoadFeedback({ type: 'err', text: 'Ingresa una cantidad entera mayor a 0.' });
       return;
     }
 
     await onLoadStock({
-      branchId: loadBranchId,
+      branchId: targetBranchId,
       productId: loadProductId,
       quantity: qty,
       notes: loadNotes.trim() || undefined,
     });
 
-    const branchName = branches.find((b) => b.id === loadBranchId)?.name ?? '';
+    const branchName = branches.find((b) => b.id === targetBranchId)?.name ?? '';
     const productName = products.find((p) => p.id === loadProductId)?.name ?? '';
     setLoadNotes('');
     setLoadFeedback({
@@ -368,6 +402,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
 
   const handleTransferSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canEditInventory || isBranchLocked) return;
     setTransferFeedback(null);
 
     const qty = parseInt(transferQtyInput, 10);
@@ -416,33 +451,48 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
 
   return (
     <div className="mx-auto max-w-6xl space-y-5 p-4 lg:p-5">
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-        <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5">
-          <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
-            <PackagePlus className="h-4 w-4 text-[#76B900]" />
-            <div>
-              <h2 className="text-sm font-bold text-slate-900">Cargar stock a sucursal</h2>
-              <p className="text-xs text-slate-500">
-                Ingreso de mercancía por tienda · {activeCashier.name}
-              </p>
-            </div>
-          </div>
+      {!canEditInventory && (
+        <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-xs text-slate-600">
+          <Lock className="h-4 w-4 shrink-0 text-slate-400" />
+          <span>
+            <strong className="text-slate-900">Modo solo lectura:</strong> puedes consultar las existencias de tu sucursal, pero no modificar cantidades, precios ni eliminar productos.
+          </span>
+        </div>
+      )}
 
-          <form onSubmit={handleLoadSubmit} className="mt-3.5 space-y-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700">Sucursal destino</label>
-              <select
-                value={loadBranchId}
-                onChange={(e) => setLoadBranchId(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
-              >
-                {operationalBranches.map((branch) => (
-                  <option key={branch.id} value={branch.id}>
-                    {branch.name} ({branch.code})
-                  </option>
-                ))}
-              </select>
+      {canEditInventory && (
+        <div className={`grid grid-cols-1 gap-5 ${isBranchLocked ? '' : 'lg:grid-cols-2'}`}>
+          <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5">
+            <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
+              <PackagePlus className="h-4 w-4 text-[#76B900]" />
+              <div>
+                <h2 className="text-sm font-bold text-slate-900">Cargar stock a sucursal</h2>
+                <p className="text-xs text-slate-500">
+                  Ingreso de mercancía por tienda · {activeCashier.name}
+                </p>
+              </div>
             </div>
+
+            <form onSubmit={handleLoadSubmit} className="mt-3.5 space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700">
+                  Sucursal destino {isBranchLocked ? '(Fija)' : ''}
+                </label>
+                <select
+                  value={isBranchLocked ? activeBranchId : loadBranchId}
+                  disabled={isBranchLocked}
+                  onChange={(e) => {
+                    if (!isBranchLocked) setLoadBranchId(e.target.value);
+                  }}
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none disabled:cursor-not-allowed disabled:opacity-75"
+                >
+                  {operationalBranches.map((branch) => (
+                    <option key={branch.id} value={branch.id}>
+                      {branch.name} ({branch.code})
+                    </option>
+                  ))}
+                </select>
+              </div>
 
             <div>
               <label className="block text-xs font-semibold text-slate-700">Producto</label>
@@ -513,6 +563,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
           </form>
         </section>
 
+        {!isBranchLocked && (
         <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5">
           <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
             <ArrowLeftRight className="h-4 w-4 text-slate-800" />
@@ -641,7 +692,9 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
             </button>
           </form>
         </section>
+        )}
       </div>
+      )}
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 space-y-3.5">
         <div className="flex flex-col gap-3 border-b border-slate-200 pb-3 lg:flex-row lg:items-center lg:justify-between">
@@ -669,7 +722,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
               />
             </div>
 
-            {onOpenBranchSettings && (
+            {onOpenBranchSettings && !isBranchLocked && (
               <button
                 type="button"
                 onClick={onOpenBranchSettings}
@@ -680,14 +733,16 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
               </button>
             )}
 
-            <button
-              type="button"
-              onClick={openCreateProductModal}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-[#84CC16] px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-[#76B900] transition-colors whitespace-nowrap cursor-pointer"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              Nuevo producto
-            </button>
+            {canEditInventory && (
+              <button
+                type="button"
+                onClick={openCreateProductModal}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-[#84CC16] px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-[#76B900] transition-colors whitespace-nowrap cursor-pointer"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Nuevo producto
+              </button>
+            )}
           </div>
         </div>
 
@@ -712,7 +767,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
               <tr className="border-b border-slate-200 text-slate-500">
                 <th className="py-2 pr-4 font-semibold">Producto</th>
                 <th className="py-2 px-3 font-semibold text-right whitespace-nowrap">Precio / Costo</th>
-                {branches.map((branch) => (
+                {visibleBranches.map((branch) => (
                   <th
                     key={branch.id}
                     className="py-2 px-3 font-semibold text-right whitespace-nowrap"
@@ -723,13 +778,17 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                     )}
                   </th>
                 ))}
-                <th className="py-2 px-3 font-semibold text-right whitespace-nowrap">Total red</th>
-                <th className="py-2 pl-3 font-semibold text-right whitespace-nowrap">Acciones</th>
+                {!isBranchLocked && (
+                  <th className="py-2 px-3 font-semibold text-right whitespace-nowrap">Total red</th>
+                )}
+                {canEditInventory && (
+                  <th className="py-2 pl-3 font-semibold text-right whitespace-nowrap">Acciones</th>
+                )}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredProducts.map((product) => {
-                const totalNetwork = branches.reduce(
+                const totalNetwork = visibleBranches.reduce(
                   (sum, b) => sum + (product.stockByBranch[b.id] ?? 0),
                   0
                 );
@@ -750,7 +809,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                         Costo {formatUsd(product.costUsd)}
                       </p>
                     </td>
-                    {branches.map((branch) => {
+                    {visibleBranches.map((branch) => {
                       const qty = product.stockByBranch[branch.id] ?? 0;
                       const isZero = qty <= 0;
                       const isLow = qty > 0 && qty <= product.minStock;
@@ -771,55 +830,59 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                         </td>
                       );
                     })}
-                    <td className="py-2 px-3 text-right font-mono font-bold tabular-nums text-slate-900">
-                      {totalNetwork}
-                    </td>
-                    <td className="py-2 pl-3 text-right whitespace-nowrap">
-                      {isConfirmingDelete ? (
-                        <div className="inline-flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => void handleConfirmDeleteProduct(product)}
-                            className="rounded bg-red-600 px-2 py-0.5 text-[11px] font-bold text-white hover:bg-red-700 cursor-pointer"
-                          >
-                            Eliminar
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setConfirmDeleteProductId(null)}
-                            className="rounded border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer"
-                          >
-                            No
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="inline-flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => openEditProductModal(product)}
-                            className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:border-[#76B900] hover:text-slate-900 cursor-pointer"
-                          >
-                            <Pencil className="h-3 w-3" />
-                            Editar
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setConfirmDeleteProductId(product.id)}
-                            aria-label={`Eliminar ${product.name}`}
-                            className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 cursor-pointer"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      )}
-                    </td>
+                    {!isBranchLocked && (
+                      <td className="py-2 px-3 text-right font-mono font-bold tabular-nums text-slate-900">
+                        {totalNetwork}
+                      </td>
+                    )}
+                    {canEditInventory && (
+                      <td className="py-2 pl-3 text-right whitespace-nowrap">
+                        {isConfirmingDelete ? (
+                          <div className="inline-flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => void handleConfirmDeleteProduct(product)}
+                              className="rounded bg-red-600 px-2 py-0.5 text-[11px] font-bold text-white hover:bg-red-700 cursor-pointer"
+                            >
+                              Eliminar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteProductId(null)}
+                              className="rounded border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer"
+                            >
+                              No
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="inline-flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => openEditProductModal(product)}
+                              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:border-[#76B900] hover:text-slate-900 cursor-pointer"
+                            >
+                              <Pencil className="h-3 w-3" />
+                              Editar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteProductId(product.id)}
+                              aria-label={`Eliminar ${product.name}`}
+                              className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 cursor-pointer"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 );
               })}
               {filteredProducts.length === 0 && (
                 <tr>
                   <td
-                    colSpan={branches.length + 4}
+                    colSpan={visibleBranches.length + (isBranchLocked ? 2 : 3) + (canEditInventory ? 1 : 0)}
                     className="py-6 text-center text-xs text-slate-500"
                   >
                     No se encontraron productos con ese filtro.
@@ -834,20 +897,20 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
       <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 space-y-3.5">
         <div className="border-b border-slate-200 pb-3">
           <h2 className="text-sm font-bold text-slate-900">
-            Historial de cargas y traslados ({transfers.length})
+            Historial de cargas y traslados ({visibleTransfers.length})
           </h2>
           <p className="text-xs text-slate-500">
             Registro auditable almacenado en IndexedDB con estado de sincronización
           </p>
         </div>
 
-        {transfers.length === 0 ? (
+        {visibleTransfers.length === 0 ? (
           <p className="py-6 text-center text-xs text-slate-500">
             Aún no se han registrado cargas de inventario ni traslados entre sucursales.
           </p>
         ) : (
           <div className="divide-y divide-slate-100">
-            {transfers.map((movement) => (
+            {visibleTransfers.map((movement) => (
               <div
                 key={movement.id}
                 className="flex flex-col gap-1.5 py-2.5 sm:flex-row sm:items-center sm:justify-between"
@@ -1066,7 +1129,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                   </p>
                 </div>
                 <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-                  {branches.map((branch) => (
+                  {visibleBranches.map((branch) => (
                     <div key={branch.id}>
                       <label className="block truncate text-[11px] font-semibold text-slate-700">
                         {branch.name} ({branch.code})

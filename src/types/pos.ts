@@ -107,6 +107,16 @@ export interface Branch {
   syncedAt?: string;
 }
 
+export interface CashierPermissions {
+  allowCreditSales: boolean;
+  viewInventory: boolean;
+  editInventory: boolean;
+  viewReports: boolean;
+  editOrDeleteSales: boolean;
+  manageCosting: boolean;
+  deleteShifts: boolean;
+}
+
 export interface Cashier {
   id: string;
   userId?: string;
@@ -114,6 +124,7 @@ export interface Cashier {
   pin: string;
   role: 'admin' | 'cashier';
   branchId: string;
+  permissions?: CashierPermissions;
   isActive: boolean;
   createdAt?: string;
   updatedAt?: string;

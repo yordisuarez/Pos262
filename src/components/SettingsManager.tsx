@@ -16,6 +16,7 @@ import {
   RotateCcw,
   Save,
   ShieldCheck,
+  SlidersHorizontal,
   Store,
   Trash2,
   UserPlus,
@@ -28,11 +29,19 @@ import type {
   Branch,
   BusinessSettings,
   Cashier,
+  CashierPermissions,
   CloudSyncState,
   SubscriptionState,
 } from '../types/pos';
 import type { PendingSyncSummary } from '../services/syncQueue';
 import { buildSubscriptionRenewalWhatsAppUrl } from '../services/subscription';
+import {
+  CASHIER_PERMISSION_ITEMS,
+  DEFAULT_CASHIER_PERMISSIONS,
+  countActivePermissions,
+  normalizeCashierPermissions,
+  toggleCashierPermission,
+} from '../services/permissions';
 
 interface SettingsManagerProps {
   cloudUser: User | null;
@@ -68,7 +77,13 @@ interface SettingsManagerProps {
   onOpenCloudAuth: () => void;
   onSignOutCloud: () => Promise<void>;
   onOpenSyncQueue: () => void;
-  onCreateCashier: (params: { name: string; pin: string; branchId: string }) => Promise<Cashier>;
+  onCreateCashier: (params: {
+    name: string;
+    pin: string;
+    branchId: string;
+    permissions: CashierPermissions;
+  }) => Promise<Cashier>;
+  onUpdateCashier: (cashier: Cashier) => Promise<void>;
   onDeleteCashier: (cashierId: string) => Promise<void>;
   onCreateBranch: (params: {
     name: string;
@@ -107,6 +122,7 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
   onSignOutCloud,
   onOpenSyncQueue,
   onCreateCashier,
+  onUpdateCashier,
   onDeleteCashier,
   onCreateBranch,
   onUpdateBranch,
@@ -127,16 +143,26 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
   const [syncFeedback, setSyncFeedback] = useState<string>('');
   const [formError, setFormError] = useState<string>('');
 
-  // Internal cashier creation state
+  // Internal cashier creation & permissions editing state
   const [showAddCashierForm, setShowAddCashierForm] = useState<boolean>(false);
   const [newCashierName, setNewCashierName] = useState<string>('');
   const [newCashierPin, setNewCashierPin] = useState<string>('');
   const [newCashierBranchId, setNewCashierBranchId] = useState<string>(
     activeBranchId || branches[0]?.id || 'branch-principal'
   );
+  const [newCashierPermissions, setNewCashierPermissions] = useState<CashierPermissions>({
+    ...DEFAULT_CASHIER_PERMISSIONS,
+  });
   const [cashierFormError, setCashierFormError] = useState<string>('');
   const [cashierFormSuccess, setCashierFormSuccess] = useState<string>('');
   const [creatingCashier, setCreatingCashier] = useState<boolean>(false);
+
+  const [editingCashierId, setEditingCashierId] = useState<string | null>(null);
+  const [editCashierBranchId, setEditCashierBranchId] = useState<string>('');
+  const [editCashierPermissions, setEditCashierPermissions] = useState<CashierPermissions>({
+    ...DEFAULT_CASHIER_PERMISSIONS,
+  });
+  const [savingCashierEdit, setSavingCashierEdit] = useState<boolean>(false);
 
   // Branch CRUD state
   const [showAddBranchForm, setShowAddBranchForm] = useState<boolean>(false);
@@ -255,13 +281,40 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
         name: trimmedName,
         pin: newCashierPin,
         branchId: newCashierBranchId || activeBranchId || branches[0]?.id || 'branch-principal',
+        permissions: normalizeCashierPermissions(newCashierPermissions, 'cashier'),
       });
       setNewCashierName('');
       setNewCashierPin('');
-      setCashierFormSuccess(`Cajero "${trimmedName}" creado correctamente.`);
+      setNewCashierPermissions({ ...DEFAULT_CASHIER_PERMISSIONS });
+      setCashierFormSuccess(`Cajero "${trimmedName}" creado con sus permisos configurados.`);
       setShowAddCashierForm(false);
     } finally {
       setCreatingCashier(false);
+    }
+  };
+
+  const openEditCashierPermissions = (user: Cashier) => {
+    setCashierFormError('');
+    setCashierFormSuccess('');
+    setEditingCashierId(user.id);
+    setEditCashierBranchId(user.branchId || branches[0]?.id || 'branch-principal');
+    setEditCashierPermissions(normalizeCashierPermissions(user.permissions, 'cashier'));
+  };
+
+  const handleSaveCashierPermissions = async (user: Cashier) => {
+    setSavingCashierEdit(true);
+    setCashierFormError('');
+    setCashierFormSuccess('');
+    try {
+      await onUpdateCashier({
+        ...user,
+        branchId: editCashierBranchId || user.branchId,
+        permissions: normalizeCashierPermissions(editCashierPermissions, 'cashier'),
+      });
+      setEditingCashierId(null);
+      setCashierFormSuccess(`Permisos y sucursal de "${user.name}" actualizados correctamente.`);
+    } finally {
+      setSavingCashierEdit(false);
     }
   };
 
@@ -513,7 +566,7 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
                   className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-red-200 hover:bg-red-50 hover:text-red-700 transition-colors cursor-pointer whitespace-nowrap"
                 >
                   <LogOut className="h-3.5 w-3.5" />
-                  {signingOut ? 'Cerrando...' : 'Cerrar sesión nube'}
+                  {signingOut ? 'Cerrando...' : 'Cerrar sesión'}
                 </button>
               </div>
             </div>
@@ -935,6 +988,49 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
               </select>
             </div>
 
+            <div className="sm:col-span-3 space-y-2 border-t border-slate-200 pt-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-bold text-slate-800">
+                  Permisos del Cajero (por defecto restrictivos)
+                </p>
+                <span className="font-mono text-[11px] font-semibold text-slate-500 tabular-nums">
+                  {countActivePermissions(newCashierPermissions)}/{CASHIER_PERMISSION_ITEMS.length} activos
+                </span>
+              </div>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {CASHIER_PERMISSION_ITEMS.map((perm) => {
+                  const checked = newCashierPermissions[perm.key];
+                  return (
+                    <label
+                      key={perm.key}
+                      className={`flex items-start gap-2.5 rounded-lg border p-2.5 text-xs transition-colors cursor-pointer ${
+                        checked
+                          ? 'border-[#76B900] bg-[#F7FEE7]/70'
+                          : 'border-slate-200 bg-white hover:border-slate-300'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) =>
+                          setNewCashierPermissions((prev) =>
+                            toggleCashierPermission(prev, perm.key, e.target.checked)
+                          )
+                        }
+                        className="mt-0.5 h-3.5 w-3.5 rounded accent-[#76B900] cursor-pointer"
+                      />
+                      <span className="min-w-0">
+                        <span className="block font-semibold text-slate-900">{perm.label}</span>
+                        <span className="block text-[11px] leading-snug text-slate-500">
+                          {perm.description}
+                        </span>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
             {cashierFormError && (
               <p className="sm:col-span-3 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700">
                 {cashierFormError}
@@ -947,6 +1043,7 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
                 onClick={() => {
                   setShowAddCashierForm(false);
                   setCashierFormError('');
+                  setNewCashierPermissions({ ...DEFAULT_CASHIER_PERMISSIONS });
                 }}
                 className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer"
               >
@@ -980,49 +1077,163 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
             {cashiers.map((user) => {
               const branch = branches.find((b) => b.id === user.branchId);
               const isCurrent = activeCashier?.id === user.id;
+              const isEditingThis = editingCashierId === user.id;
               const canDelete = user.role === 'cashier' && !isCurrent;
+              const activePermCount =
+                user.role === 'admin'
+                  ? CASHIER_PERMISSION_ITEMS.length
+                  : countActivePermissions(user.permissions);
+
               return (
-                <li
-                  key={user.id}
-                  className="flex items-center justify-between gap-3 px-3.5 py-2.5 text-xs"
-                >
-                  <div className="flex min-w-0 items-center gap-2.5">
-                    <div
-                      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md ${
-                        user.role === 'admin'
-                          ? 'bg-[#F7FEE7] text-[#558B00] border border-[#84CC16]/40'
-                          : 'bg-slate-100 text-slate-600'
-                      }`}
-                    >
-                      <ShieldCheck className="h-3.5 w-3.5" />
+                <li key={user.id} className="px-3.5 py-2.5 text-xs">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      <div
+                        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md ${
+                          user.role === 'admin'
+                            ? 'bg-[#F7FEE7] text-[#558B00] border border-[#84CC16]/40'
+                            : 'bg-slate-100 text-slate-600'
+                        }`}
+                      >
+                        <ShieldCheck className="h-3.5 w-3.5" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="truncate font-bold text-slate-900">
+                          {user.name}
+                          {isCurrent && (
+                            <span className="ml-1.5 font-semibold text-[#558B00]">(Activo)</span>
+                          )}
+                        </p>
+                        <p className="text-[11px] text-slate-500">
+                          {user.role === 'admin' ? 'Administrador · Acceso total' : 'Cajero'}
+                          {branch ? ` · ${branch.name}` : ''}
+                          {user.role === 'cashier' && (
+                            <span className="font-mono tabular-nums">
+                              {' '}
+                              · {activePermCount}/{CASHIER_PERMISSION_ITEMS.length} permisos
+                            </span>
+                          )}
+                        </p>
+                      </div>
                     </div>
-                    <div className="min-w-0">
-                      <p className="truncate font-bold text-slate-900">
-                        {user.name}
-                        {isCurrent && (
-                          <span className="ml-1.5 font-semibold text-[#558B00]">(Activo)</span>
-                        )}
-                      </p>
-                      <p className="text-[11px] text-slate-500">
-                        {user.role === 'admin' ? 'Administrador' : 'Cajero'}
-                        {branch ? ` · ${branch.name}` : ''}
-                      </p>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className="text-[11px] font-medium text-slate-400">PIN protegido</span>
+                      {user.role === 'cashier' && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            isEditingThis
+                              ? setEditingCashierId(null)
+                              : openEditCashierPermissions(user)
+                          }
+                          className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-semibold transition-colors cursor-pointer ${
+                            isEditingThis
+                              ? 'border-[#76B900] bg-[#F7FEE7] text-[#3F6212]'
+                              : 'border-slate-200 bg-white text-slate-700 hover:border-[#76B900] hover:text-slate-900'
+                          }`}
+                        >
+                          <SlidersHorizontal className="h-3 w-3" />
+                          {isEditingThis ? 'Cerrar' : 'Permisos'}
+                        </button>
+                      )}
+                      {canDelete && (
+                        <button
+                          type="button"
+                          onClick={() => void onDeleteCashier(user.id)}
+                          aria-label={`Eliminar cajero ${user.name}`}
+                          className="rounded-md p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 transition-colors cursor-pointer"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className="text-[11px] font-medium text-slate-400">PIN protegido</span>
-                    {canDelete && (
-                      <button
-                        type="button"
-                        onClick={() => void onDeleteCashier(user.id)}
-                        aria-label={`Eliminar cajero ${user.name}`}
-                        className="rounded-md p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 transition-colors cursor-pointer"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                  </div>
+                  {isEditingThis && user.role === 'cashier' && (
+                    <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50/80 p-3 space-y-3">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-slate-900">
+                            Configurar permisos de {user.name}
+                          </p>
+                          <p className="text-[11px] text-slate-500">
+                            Este cajero operará exclusivamente en su sucursal asignada sin poder cambiarse de tienda.
+                          </p>
+                        </div>
+                        <div className="shrink-0 sm:w-56">
+                          <label className="block text-[11px] font-semibold text-slate-700">
+                            Sucursal única asignada
+                          </label>
+                          <select
+                            value={editCashierBranchId}
+                            onChange={(e) => setEditCashierBranchId(e.target.value)}
+                            className="mt-0.5 w-full rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-900 focus:border-[#76B900] focus:outline-none"
+                          >
+                            {branches.map((b) => (
+                              <option key={b.id} value={b.id}>
+                                {b.name} ({b.code})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        {CASHIER_PERMISSION_ITEMS.map((perm) => {
+                          const checked = editCashierPermissions[perm.key];
+                          return (
+                            <label
+                              key={perm.key}
+                              className={`flex items-start gap-2.5 rounded-lg border p-2 text-xs transition-colors cursor-pointer ${
+                                checked
+                                  ? 'border-[#76B900] bg-[#F7FEE7]/70'
+                                  : 'border-slate-200 bg-white hover:border-slate-300'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={(e) =>
+                                  setEditCashierPermissions((prev) =>
+                                    toggleCashierPermission(prev, perm.key, e.target.checked)
+                                  )
+                                }
+                                className="mt-0.5 h-3.5 w-3.5 rounded accent-[#76B900] cursor-pointer"
+                              />
+                              <span className="min-w-0">
+                                <span className="block font-semibold text-slate-900">
+                                  {perm.label}
+                                </span>
+                                <span className="block text-[11px] leading-snug text-slate-500">
+                                  {perm.description}
+                                </span>
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setEditingCashierId(null)}
+                          className="rounded-md border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer"
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          type="button"
+                          disabled={savingCashierEdit}
+                          onClick={() => void handleSaveCashierPermissions(user)}
+                          className="inline-flex items-center gap-1 rounded-md bg-[#84CC16] px-3 py-1 text-xs font-bold text-slate-950 hover:bg-[#76B900] disabled:opacity-50 cursor-pointer"
+                        >
+                          <Check className="h-3.5 w-3.5" />
+                          {savingCashierEdit ? 'Guardando...' : 'Guardar permisos'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </li>
               );
             })}

@@ -16,6 +16,7 @@ import {
   Download,
   History,
   Lock,
+  LogOut,
   MessageCircle,
   Minus,
   Plus,
@@ -65,11 +66,17 @@ import {
   fetchAndEvaluateSubscription,
   subscribeToSubscriptionChanges,
 } from './services/subscription';
+import {
+  getEffectivePermissions,
+  isAdminUser,
+  normalizeCashierPermissions,
+} from './services/permissions';
 import type {
   Branch,
   BusinessSettings,
   CartItem,
   Cashier,
+  CashierPermissions,
   CloudSyncState,
   CurrencyMode,
   Customer,
@@ -343,6 +350,10 @@ export default function App() {
 
     setBranches(loadedBranches);
     setCashiers(loadedCashiers);
+    setActiveCashier((prev) => {
+      if (!prev) return null;
+      return loadedCashiers.find((c) => c.id === prev.id) ?? prev;
+    });
     setProducts(loadedProducts);
     setCustomers(loadedCustomers);
     setSales(loadedSales);
@@ -821,7 +832,7 @@ export default function App() {
     void hydrateAccountScope(null, { syncFromCloud: false });
   };
 
-  const handleSignOutCloud = async (returnToAuthScreen = false) => {
+  const handleSignOutCloud = async (returnToAuthScreen = true) => {
     try {
       await supabase.auth.signOut();
     } catch {
@@ -834,8 +845,21 @@ export default function App() {
     setLastSyncError(null);
     setActiveCashier(null);
     setOnboardingStep(null);
+    setLoginModalOpen(false);
+    setCart([]);
+    setPayments([]);
+    setCheckoutOpen(false);
+    setHistoryOpen(false);
+    setActiveTab('pos');
+
+    try {
+      await db.settings.delete('activeCashierId');
+    } catch {
+      // Ignore IndexedDB errors on session cleanup
+    }
 
     if (returnToAuthScreen) {
+      setAccountHydrated(false);
       setOfflineAuthBypass(false);
       try {
         localStorage.removeItem(OFFLINE_BYPASS_KEY);
@@ -854,11 +878,92 @@ export default function App() {
     }
   };
 
+  const activeBranches = useMemo(() => {
+    const enabled = branches.filter((b) => b.isActive);
+    return enabled.length > 0 ? enabled : branches;
+  }, [branches]);
+
+  const isAdmin = isAdminUser(activeCashier);
+  const permissions = useMemo(() => getEffectivePermissions(activeCashier), [activeCashier]);
+  const isBranchLocked = Boolean(activeCashier && !isAdmin);
+
+  const lockedBranchId = useMemo(() => {
+    if (!isBranchLocked || !activeCashier) return null;
+    if (branches.some((b) => b.id === activeCashier.branchId)) {
+      return activeCashier.branchId;
+    }
+    return activeBranches[0]?.id ?? branches[0]?.id ?? null;
+  }, [isBranchLocked, activeCashier, branches, activeBranches]);
+
+  const visibleBranches = useMemo(() => {
+    if (isBranchLocked && lockedBranchId) {
+      const assigned = branches.filter((b) => b.id === lockedBranchId);
+      if (assigned.length > 0) return assigned;
+    }
+    return activeBranches;
+  }, [isBranchLocked, lockedBranchId, branches, activeBranches]);
+
+  const visibleSales = useMemo(() => {
+    if (isBranchLocked && lockedBranchId) {
+      return sales.filter((s) => s.branchId === lockedBranchId);
+    }
+    return sales;
+  }, [isBranchLocked, lockedBranchId, sales]);
+
+  const visibleExpenses = useMemo(() => {
+    if (isBranchLocked && lockedBranchId) {
+      return expenses.filter((e) => e.branchId === lockedBranchId);
+    }
+    return expenses;
+  }, [isBranchLocked, lockedBranchId, expenses]);
+
+  useEffect(() => {
+    if (isBranchLocked && lockedBranchId) {
+      if (activeBranchId !== lockedBranchId) {
+        setActiveBranchId(lockedBranchId);
+        persistSetting('activeBranchId', lockedBranchId);
+        setCart([]);
+      }
+      return;
+    }
+    if (activeBranches.length > 0 && !activeBranches.some((b) => b.id === activeBranchId)) {
+      const fallbackId = activeBranches[0].id;
+      setActiveBranchId(fallbackId);
+      persistSetting('activeBranchId', fallbackId);
+    }
+  }, [isBranchLocked, lockedBranchId, activeBranches, activeBranchId]);
+
+  useEffect(() => {
+    if (!activeCashier) return;
+    if (
+      (activeTab === 'settings' && !isAdmin) ||
+      (activeTab === 'inventory' && !isAdmin && !permissions.viewInventory) ||
+      (activeTab === 'reports' && !isAdmin && !permissions.viewReports) ||
+      (activeTab === 'costing' && !isAdmin && !permissions.manageCosting)
+    ) {
+      setActiveTab('pos');
+    }
+  }, [activeCashier, activeTab, isAdmin, permissions]);
+
+  useEffect(() => {
+    if (saleType === 'credit' && !permissions.allowCreditSales) {
+      setSaleType('cash');
+    }
+  }, [saleType, permissions.allowCreditSales]);
+
+  const activeBranch = useMemo(() => {
+    if (isBranchLocked && lockedBranchId) {
+      return branches.find((b) => b.id === lockedBranchId) || activeBranches[0] || branches[0];
+    }
+    return activeBranches.find((b) => b.id === activeBranchId) || activeBranches[0] || branches[0];
+  }, [isBranchLocked, lockedBranchId, activeBranches, branches, activeBranchId]);
+
   const handleCreateInternalUser = async (params: {
     name: string;
     pin: string;
     role: 'admin' | 'cashier';
     branchId: string;
+    permissions?: CashierPermissions;
   }): Promise<Cashier> => {
     const nowIso = new Date().toISOString();
     const ownerId = cloudUserIdRef.current ?? 'local';
@@ -869,6 +974,7 @@ export default function App() {
       pin: params.pin.trim(),
       role: params.role,
       branchId: params.branchId || activeBranchId || branches[0]?.id || CLEAN_PRIMARY_BRANCH.id,
+      permissions: normalizeCashierPermissions(params.permissions, params.role),
       isActive: true,
       createdAt: nowIso,
       updatedAt: nowIso,
@@ -904,7 +1010,46 @@ export default function App() {
     return newUser;
   };
 
+  const handleUpdateInternalUser = async (updatedCashier: Cashier) => {
+    if (!isAdmin) return;
+    const existing = cashiers.find((c) => c.id === updatedCashier.id);
+    if (!existing) return;
+
+    const nowIso = new Date().toISOString();
+    const normalizedPermissions = normalizeCashierPermissions(
+      updatedCashier.permissions,
+      existing.role
+    );
+    const nextBranchId =
+      updatedCashier.branchId || existing.branchId || branches[0]?.id || CLEAN_PRIMARY_BRANCH.id;
+
+    const queueItem = buildSyncQueueItem({
+      entityType: 'cashier',
+      entityId: existing.id,
+      operation: 'update',
+      summary: `Permisos / sucursal de ${existing.name}`,
+      timestamp: nowIso,
+    });
+
+    await db.transaction('rw', db.cashiers, db.syncQueue, async () => {
+      await db.cashiers.update(existing.id, {
+        branchId: nextBranchId,
+        permissions: normalizedPermissions,
+        updatedAt: nowIso,
+        syncStatus: 'pending',
+        syncedAt: undefined,
+      });
+      await db.syncQueue.put(queueItem);
+    });
+
+    await reloadAllData();
+    if (navigator.onLine && cloudUserIdRef.current && subscriptionActiveRef.current) {
+      void triggerSyncQueue('auto');
+    }
+  };
+
   const handleDeleteInternalUser = async (cashierId: string) => {
+    if (!isAdmin) return;
     const target = cashiers.find((c) => c.id === cashierId);
     if (!target || target.role === 'admin' || target.id === activeCashier?.id) return;
 
@@ -929,6 +1074,7 @@ export default function App() {
   };
 
   const handleBranchChange = (branchId: string) => {
+    if (isBranchLocked) return;
     setActiveBranchId(branchId);
     persistSetting('activeBranchId', branchId);
     setCart([]);
@@ -944,26 +1090,9 @@ export default function App() {
     persistSetting('activeCashierId', cashier.id);
     setActiveBranchId(cashier.branchId);
     persistSetting('activeBranchId', cashier.branchId);
+    setCart([]);
     setLoginModalOpen(false);
   };
-
-  const activeBranches = useMemo(() => {
-    const enabled = branches.filter((b) => b.isActive);
-    return enabled.length > 0 ? enabled : branches;
-  }, [branches]);
-
-  useEffect(() => {
-    if (activeBranches.length > 0 && !activeBranches.some((b) => b.id === activeBranchId)) {
-      const fallbackId = activeBranches[0].id;
-      setActiveBranchId(fallbackId);
-      persistSetting('activeBranchId', fallbackId);
-    }
-  }, [activeBranches, activeBranchId]);
-
-  const activeBranch = useMemo(
-    () => activeBranches.find((b) => b.id === activeBranchId) || activeBranches[0] || branches[0],
-    [activeBranches, branches, activeBranchId]
-  );
 
   const selectedCustomer = useMemo(
     () => (selectedCustomerId ? customers.find((c) => c.id === selectedCustomerId) || null : null),
@@ -1117,6 +1246,31 @@ export default function App() {
     }
   };
 
+  const handleDeleteShift = async (shiftId: string) => {
+    if (!isAdmin && !permissions.deleteShifts) return;
+    const targetShift = shifts.find((s) => s.id === shiftId);
+    if (!targetShift) return;
+
+    const now = new Date().toISOString();
+    const queueItem = buildSyncQueueItem({
+      entityType: 'shift',
+      entityId: shiftId,
+      operation: 'delete',
+      summary: `Eliminar turno ${targetShift.branchName} (${targetShift.cashierName})`,
+      timestamp: now,
+    });
+
+    await db.transaction('rw', [db.shifts, db.syncQueue], async () => {
+      await db.shifts.delete(shiftId);
+      await db.syncQueue.put(queueItem);
+    });
+
+    await reloadAllData();
+    if (navigator.onLine) {
+      await triggerSyncQueue('auto');
+    }
+  };
+
   // Multi-Branch Stock Load & Transfer Handlers
   const handleLoadStock = async (params: {
     branchId: string;
@@ -1124,8 +1278,10 @@ export default function App() {
     quantity: number;
     notes?: string;
   }) => {
-    if (!activeCashier) return;
-    const targetBranch = branches.find((b) => b.id === params.branchId);
+    if (!activeCashier || (!isAdmin && !permissions.editInventory)) return;
+    const effectiveBranchId =
+      isBranchLocked && lockedBranchId ? lockedBranchId : params.branchId;
+    const targetBranch = branches.find((b) => b.id === effectiveBranchId);
     const targetProduct = products.find((p) => p.id === params.productId);
     if (!targetBranch || !targetProduct) return;
 
@@ -1186,7 +1342,7 @@ export default function App() {
     quantity: number;
     notes?: string;
   }) => {
-    if (!activeCashier) return;
+    if (!activeCashier || (!isAdmin && (!permissions.editInventory || isBranchLocked))) return;
     const fromBranch = branches.find((b) => b.id === params.fromBranchId);
     const toBranch = branches.find((b) => b.id === params.toBranchId);
     const targetProduct = products.find((p) => p.id === params.productId);
@@ -1414,8 +1570,10 @@ export default function App() {
     expenseDate: string;
     notes?: string;
   }) => {
-    if (!activeCashier) return;
-    const branch = branches.find((b) => b.id === params.branchId) || activeBranch;
+    if (!activeCashier || (!isAdmin && !permissions.manageCosting)) return;
+    const effectiveBranchId =
+      isBranchLocked && lockedBranchId ? lockedBranchId : params.branchId;
+    const branch = branches.find((b) => b.id === effectiveBranchId) || activeBranch;
     if (!branch) return;
 
     const now = new Date().toISOString();
@@ -1458,6 +1616,7 @@ export default function App() {
   };
 
   const handleDeleteExpense = async (expenseId: string) => {
+    if (!isAdmin && !permissions.manageCosting) return;
     const existing = expenses.find((e) => e.id === expenseId);
     const now = new Date().toISOString();
     const queueItem = buildSyncQueueItem({
@@ -1488,7 +1647,10 @@ export default function App() {
     amountUsd: number;
     expenseDate: string;
   }) => {
-    const branch = branches.find((b) => b.id === params.branchId) || activeBranch;
+    if (!isAdmin && !permissions.manageCosting) return;
+    const effectiveBranchId =
+      isBranchLocked && lockedBranchId ? lockedBranchId : params.branchId;
+    const branch = branches.find((b) => b.id === effectiveBranchId) || activeBranch;
     if (!branch) return;
 
     const now = new Date().toISOString();
@@ -1707,6 +1869,7 @@ export default function App() {
     taxExempt: boolean;
     stockByBranch: Record<string, number>;
   }) => {
+    if (!isAdmin && !permissions.editInventory) return;
     const now = new Date().toISOString();
     const newProduct: Product = {
       id: `prod-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
@@ -1744,6 +1907,7 @@ export default function App() {
   };
 
   const handleUpdateProduct = async (updatedProduct: Product) => {
+    if (!isAdmin && !permissions.editInventory) return;
     const now = new Date().toISOString();
     const queueItem = buildSyncQueueItem({
       entityType: 'product',
@@ -1786,6 +1950,7 @@ export default function App() {
   };
 
   const handleDeleteProduct = async (productId: string) => {
+    if (!isAdmin && !permissions.editInventory) return;
     const existing = products.find((p) => p.id === productId);
     const now = new Date().toISOString();
     const queueItem = buildSyncQueueItem({
@@ -1811,6 +1976,7 @@ export default function App() {
 
   // Sale Edit & Delete Handlers (with automatic stock & receivable recalculation)
   const handleUpdateSale = async (updatedSale: Sale) => {
+    if (!isAdmin && !permissions.editOrDeleteSales) return;
     const now = new Date().toISOString();
 
     await db.transaction('rw', [db.sales, db.products, db.customers, db.syncQueue], async () => {
@@ -1906,6 +2072,7 @@ export default function App() {
   };
 
   const handleDeleteSale = async (saleId: string) => {
+    if (!isAdmin && !permissions.editOrDeleteSales) return;
     const now = new Date().toISOString();
 
     await db.transaction('rw', [db.sales, db.products, db.customers, db.syncQueue], async () => {
@@ -2276,6 +2443,11 @@ export default function App() {
   const handleConfirmSale = async () => {
     if (!activeBranch || !activeCashier || cart.length === 0) return;
     setCheckoutError('');
+
+    if (saleType === 'credit' && !permissions.allowCreditSales) {
+      setCheckoutError('Tu usuario no tiene permiso para registrar ventas a crédito.');
+      return;
+    }
 
     if (saleType === 'credit' && !selectedCustomer) {
       setCheckoutError('Las ventas a crédito requieren seleccionar o crear un cliente registrado.');
@@ -2761,14 +2933,28 @@ export default function App() {
             </span>
 
             <div className="relative flex items-center shrink-0">
-              <Building2 className="pointer-events-none absolute left-2 h-3.5 w-3.5 text-slate-400" />
+              {isBranchLocked ? (
+                <Lock className="pointer-events-none absolute left-2 h-3 w-3 text-slate-400" />
+              ) : (
+                <Building2 className="pointer-events-none absolute left-2 h-3.5 w-3.5 text-slate-400" />
+              )}
               <select
                 aria-label="Seleccionar sucursal"
                 value={activeBranchId}
+                disabled={isBranchLocked}
+                title={
+                  isBranchLocked
+                    ? 'Sucursal fija asignada a este cajero'
+                    : 'Seleccionar sucursal activa'
+                }
                 onChange={(e) => handleBranchChange(e.target.value)}
-                className="max-w-[165px] truncate rounded-md border border-slate-200 bg-slate-50 py-1 pl-6 pr-2 text-xs font-medium text-slate-800 focus:border-[#76B900] focus:bg-white focus:outline-none cursor-pointer"
+                className={`max-w-[165px] truncate rounded-md border border-slate-200 py-1 pl-6 pr-2 text-xs font-medium focus:border-[#76B900] focus:bg-white focus:outline-none ${
+                  isBranchLocked
+                    ? 'bg-slate-100 text-slate-600 cursor-not-allowed'
+                    : 'bg-slate-50 text-slate-800 cursor-pointer'
+                }`}
               >
-                {activeBranches.map((branch) => (
+                {visibleBranches.map((branch) => (
                   <option key={branch.id} value={branch.id}>
                     {branch.name} ({branch.code})
                   </option>
@@ -2803,54 +2989,62 @@ export default function App() {
                 <Lock className="h-3 w-3" />
                 Turnos
               </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab('inventory')}
-                className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                  activeTab === 'inventory'
-                    ? 'bg-[#84CC16] text-slate-950'
-                    : 'text-slate-600 hover:bg-white hover:text-slate-900'
-                }`}
-              >
-                <ArrowLeftRight className="h-3 w-3" />
-                Stock
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab('reports')}
-                className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                  activeTab === 'reports'
-                    ? 'bg-[#84CC16] text-slate-950'
-                    : 'text-slate-600 hover:bg-white hover:text-slate-900'
-                }`}
-              >
-                <BarChart3 className="h-3 w-3" />
-                Reportes
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab('costing')}
-                className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                  activeTab === 'costing'
-                    ? 'bg-[#84CC16] text-slate-950'
-                    : 'text-slate-600 hover:bg-white hover:text-slate-900'
-                }`}
-              >
-                <Calculator className="h-3 w-3" />
-                Costos
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab('settings')}
-                className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                  activeTab === 'settings'
-                    ? 'bg-[#84CC16] text-slate-950'
-                    : 'text-slate-600 hover:bg-white hover:text-slate-900'
-                }`}
-              >
-                <Settings className="h-3 w-3" />
-                Config
-              </button>
+              {(isAdmin || permissions.viewInventory) && (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('inventory')}
+                  className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                    activeTab === 'inventory'
+                      ? 'bg-[#84CC16] text-slate-950'
+                      : 'text-slate-600 hover:bg-white hover:text-slate-900'
+                  }`}
+                >
+                  <ArrowLeftRight className="h-3 w-3" />
+                  Stock
+                </button>
+              )}
+              {(isAdmin || permissions.viewReports) && (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('reports')}
+                  className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                    activeTab === 'reports'
+                      ? 'bg-[#84CC16] text-slate-950'
+                      : 'text-slate-600 hover:bg-white hover:text-slate-900'
+                  }`}
+                >
+                  <BarChart3 className="h-3 w-3" />
+                  Reportes
+                </button>
+              )}
+              {(isAdmin || permissions.manageCosting) && (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('costing')}
+                  className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                    activeTab === 'costing'
+                      ? 'bg-[#84CC16] text-slate-950'
+                      : 'text-slate-600 hover:bg-white hover:text-slate-900'
+                  }`}
+                >
+                  <Calculator className="h-3 w-3" />
+                  Costos
+                </button>
+              )}
+              {isAdmin && (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('settings')}
+                  className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                    activeTab === 'settings'
+                      ? 'bg-[#84CC16] text-slate-950'
+                      : 'text-slate-600 hover:bg-white hover:text-slate-900'
+                  }`}
+                >
+                  <Settings className="h-3 w-3" />
+                  Config
+                </button>
+              )}
             </nav>
           </div>
 
@@ -2900,7 +3094,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => {
-                if (!cloudUser) {
+                if (!cloudUser && isAdmin) {
                   setActiveTab('settings');
                 } else {
                   setHistoryTab('queue');
@@ -2910,7 +3104,7 @@ export default function App() {
               title={
                 cloudUser
                   ? `Cuenta nube: ${cloudUser.email} · Clic para ver cola`
-                  : 'Clic para vincular cuenta en la nube en Configuración'
+                  : 'Clic para ver estado local o vincular cuenta'
               }
               className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                 cloudSyncState === 'offline'
@@ -2978,6 +3172,16 @@ export default function App() {
               className="inline-flex items-center justify-center rounded-md border border-slate-200 bg-white p-1.5 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors shrink-0 cursor-pointer"
             >
               <History className="h-3.5 w-3.5" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void handleSignOutCloud(true)}
+              title="Cerrar sesión y volver al inicio con correo y contraseña"
+              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:border-red-200 hover:bg-red-50 hover:text-red-700 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              <span>Cerrar sesión</span>
             </button>
 
             {!isInstalled && (deferredPrompt || isIOS) && (
@@ -3217,15 +3421,18 @@ export default function App() {
             branches={branches}
             activeShift={activeShift}
             shifts={shifts}
-            sales={sales}
+            sales={visibleSales}
+            isBranchLocked={isBranchLocked}
+            canDeleteShifts={isAdmin || permissions.deleteShifts}
             onOpenShift={handleOpenShift}
             onCloseShift={handleCloseShift}
+            onDeleteShift={handleDeleteShift}
             onSwitchCashier={() => setLoginModalOpen(true)}
           />
         </div>
       )}
 
-      {activeTab === 'inventory' && activeCashier && (
+      {activeTab === 'inventory' && activeCashier && (isAdmin || permissions.viewInventory) && (
         <div className="flex-1 overflow-y-auto">
           <InventoryManager
             branches={branches}
@@ -3234,24 +3441,29 @@ export default function App() {
             transfers={transfers}
             activeCashier={activeCashier}
             exchangeRate={exchangeRate}
+            canEditInventory={isAdmin || permissions.editInventory}
+            isBranchLocked={isBranchLocked}
             onLoadStock={handleLoadStock}
             onTransferStock={handleTransferStock}
             onCreateProduct={handleCreateProduct}
             onUpdateProduct={handleUpdateProduct}
             onDeleteProduct={handleDeleteProduct}
-            onOpenBranchSettings={() => setActiveTab('settings')}
+            onOpenBranchSettings={isAdmin ? () => setActiveTab('settings') : undefined}
           />
         </div>
       )}
 
-      {activeTab === 'reports' && (
+      {activeTab === 'reports' && (isAdmin || permissions.viewReports) && (
         <div className="flex-1 overflow-y-auto">
           <ReportsManager
-            sales={sales}
+            sales={visibleSales}
             products={products}
             branches={branches}
             currency={currency}
             exchangeRate={exchangeRate}
+            canEditOrDeleteSales={isAdmin || permissions.editOrDeleteSales}
+            isBranchLocked={isBranchLocked}
+            lockedBranchId={lockedBranchId ?? undefined}
             onSettleReceivable={handleSettleReceivable}
             onUpdateSale={handleUpdateSale}
             onDeleteSale={handleDeleteSale}
@@ -3259,7 +3471,7 @@ export default function App() {
         </div>
       )}
 
-      {activeTab === 'costing' && activeCashier && (
+      {activeTab === 'costing' && activeCashier && (isAdmin || permissions.manageCosting) && (
         <div className="flex-1 overflow-y-auto">
           <CostingManager
             products={products}
@@ -3267,10 +3479,11 @@ export default function App() {
             activeBranchId={activeBranchId}
             activeCashier={activeCashier}
             supplierQuotes={supplierQuotes}
-            expenses={expenses}
-            sales={sales}
+            expenses={visibleExpenses}
+            sales={visibleSales}
             currency={currency}
             exchangeRate={exchangeRate}
+            isBranchLocked={isBranchLocked}
             onUpdateProductPricing={handleUpdateProductPricing}
             onAddSupplierQuote={handleAddSupplierQuote}
             onDeleteSupplierQuote={handleDeleteSupplierQuote}
@@ -3281,7 +3494,7 @@ export default function App() {
         </div>
       )}
 
-      {activeTab === 'settings' && (
+      {activeTab === 'settings' && isAdmin && (
         <div className="flex-1 overflow-y-auto">
           <SettingsManager
             cloudUser={cloudUser}
@@ -3318,7 +3531,7 @@ export default function App() {
               return 'Todo está sincronizado con Supabase.';
             }}
             onOpenCloudAuth={() => setCloudAuthModalOpen(true)}
-            onSignOutCloud={() => handleSignOutCloud(false)}
+            onSignOutCloud={() => handleSignOutCloud(true)}
             onOpenSyncQueue={() => {
               setHistoryTab('queue');
               setHistoryOpen(true);
@@ -3326,6 +3539,7 @@ export default function App() {
             onCreateCashier={(params) =>
               handleCreateInternalUser({ ...params, role: 'cashier' })
             }
+            onUpdateCashier={handleUpdateInternalUser}
             onDeleteCashier={handleDeleteInternalUser}
             onCreateBranch={handleCreateBranch}
             onUpdateBranch={handleUpdateBranch}
@@ -3537,41 +3751,51 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-1 rounded-lg border border-slate-200 bg-slate-50 p-0.5">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSaleType('cash');
-                      setCheckoutError('');
-                      prefillPaymentInput(selectedMethod, remainingUsd);
-                    }}
-                    className={`rounded-md py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
-                      saleType === 'cash'
-                        ? 'bg-[#84CC16] text-slate-950'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    Contado
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSaleType('credit');
-                      setPaymentAmountInput('');
-                      setPaymentReference('');
-                      setCheckoutError('');
-                    }}
-                    className={`rounded-md py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
-                      saleType === 'credit'
-                        ? 'bg-[#84CC16] text-slate-950'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    Crédito
-                  </button>
-                </div>
+                {permissions.allowCreditSales ? (
+                  <div className="grid grid-cols-2 gap-1 rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSaleType('cash');
+                        setCheckoutError('');
+                        prefillPaymentInput(selectedMethod, remainingUsd);
+                      }}
+                      className={`rounded-md py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
+                        saleType === 'cash'
+                          ? 'bg-[#84CC16] text-slate-950'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Contado
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSaleType('credit');
+                        setPaymentAmountInput('');
+                        setPaymentReference('');
+                        setCheckoutError('');
+                      }}
+                      className={`rounded-md py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
+                        saleType === 'credit'
+                          ? 'bg-[#84CC16] text-slate-950'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Crédito
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs">
+                    <span className="font-semibold text-slate-900">Modalidad: Contado</span>
+                    <span className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-500">
+                      <Lock className="h-3 w-3" />
+                      Crédito restringido
+                    </span>
+                  </div>
+                )}
 
-                {saleType === 'credit' && (
+                {saleType === 'credit' && permissions.allowCreditSales && (
                   <div className="space-y-2.5 rounded-lg border border-amber-200 bg-amber-50/70 p-3">
                     <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                       <div>
@@ -3886,7 +4110,7 @@ export default function App() {
                     : 'text-slate-600 hover:bg-white hover:text-slate-900'
                 }`}
               >
-                Historial de ventas ({sales.length})
+                Historial de ventas ({visibleSales.length})
               </button>
             </div>
 
@@ -3942,7 +4166,7 @@ export default function App() {
                     ))}
                   </div>
                 )
-              ) : sales.length === 0 ? (
+              ) : visibleSales.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-10 text-center">
                   <Clock className="h-7 w-7 text-slate-300" />
                   <p className="mt-2.5 text-sm font-semibold text-slate-700">
@@ -3954,7 +4178,7 @@ export default function App() {
                 </div>
               ) : (
                 <div className="divide-y divide-slate-200 rounded-lg border border-slate-200">
-                  {sales.map((sale) => (
+                  {visibleSales.map((sale) => (
                     <div
                       key={sale.id}
                       className="flex flex-col gap-2.5 p-3 sm:flex-row sm:items-center sm:justify-between"

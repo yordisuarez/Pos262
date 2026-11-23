@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   BarChart3,
@@ -48,6 +48,9 @@ interface ReportsManagerProps {
   branches: Branch[];
   currency: CurrencyMode;
   exchangeRate: number;
+  canEditOrDeleteSales?: boolean;
+  isBranchLocked?: boolean;
+  lockedBranchId?: string;
   onSettleReceivable: (saleId: string, amountUsd: number) => Promise<void>;
   onUpdateSale: (updatedSale: Sale) => Promise<void>;
   onDeleteSale: (saleId: string) => Promise<void>;
@@ -64,18 +67,31 @@ export const ReportsManager: React.FC<ReportsManagerProps> = ({
   branches,
   currency,
   exchangeRate,
+  canEditOrDeleteSales = true,
+  isBranchLocked = false,
+  lockedBranchId,
   onSettleReceivable,
   onUpdateSale,
   onDeleteSale,
 }) => {
   const [period, setPeriod] = useState<ReportPeriod>('month');
-  const [branchFilter, setBranchFilter] = useState<string>('all');
+  const [branchFilter, setBranchFilter] = useState<string>(
+    isBranchLocked && lockedBranchId ? lockedBranchId : 'all'
+  );
   const [categoryFilter, setCategoryFilter] = useState<string>('Todas');
   const [query, setQuery] = useState<string>('');
   const [settlingSaleId, setSettlingSaleId] = useState<string | null>(null);
   const [confirmDeleteSaleId, setConfirmDeleteSaleId] = useState<string | null>(null);
   const [deletingSaleId, setDeletingSaleId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string>('');
+
+  useEffect(() => {
+    if (isBranchLocked && lockedBranchId) {
+      setBranchFilter(lockedBranchId);
+    }
+  }, [isBranchLocked, lockedBranchId]);
+
+  const effectiveBranchFilter = isBranchLocked && lockedBranchId ? lockedBranchId : branchFilter;
 
   // Sale editor modal state
   const [editingSale, setEditingSale] = useState<Sale | null>(null);
@@ -131,7 +147,7 @@ export const ReportsManager: React.FC<ReportsManagerProps> = ({
     const soldQtyByProduct = new Map<string, number>();
 
     sales.forEach((sale) => {
-      if (branchFilter !== 'all' && sale.branchId !== branchFilter) return;
+      if (effectiveBranchFilter !== 'all' && sale.branchId !== effectiveBranchFilter) return;
       const createdMs = new Date(sale.createdAt).getTime();
       if (createdMs < periodRangeStart) return;
 
@@ -198,7 +214,7 @@ export const ReportsManager: React.FC<ReportsManagerProps> = ({
       totalReceivableUsd,
       soldQtyByProduct,
     };
-  }, [sales, branchFilter, periodRangeStart, categoryFilter, query, productCategoryMap]);
+  }, [sales, effectiveBranchFilter, periodRangeStart, categoryFilter, query, productCategoryMap]);
 
   const openReceivables = useMemo(
     () => filteredData.matchedSales.filter((sale) => sale.pendingUsd > 0),
@@ -209,12 +225,14 @@ export const ReportsManager: React.FC<ReportsManagerProps> = ({
     return products
       .map((product) => {
         const stock =
-          branchFilter === 'all'
+          effectiveBranchFilter === 'all'
             ? Object.values(product.stockByBranch).reduce((a, b) => a + b, 0)
-            : product.stockByBranch[branchFilter] ?? 0;
+            : product.stockByBranch[effectiveBranchFilter] ?? 0;
         const soldQty = filteredData.soldQtyByProduct.get(product.id) ?? 0;
         const threshold =
-          branchFilter === 'all' ? product.minStock * Math.max(1, branches.length) : product.minStock;
+          effectiveBranchFilter === 'all'
+            ? product.minStock * Math.max(1, branches.length)
+            : product.minStock;
         return {
           product,
           stock,
@@ -223,7 +241,7 @@ export const ReportsManager: React.FC<ReportsManagerProps> = ({
         };
       })
       .sort((a, b) => b.soldQty - a.soldQty || a.stock - b.stock);
-  }, [products, branchFilter, branches.length, filteredData.soldQtyByProduct]);
+  }, [products, effectiveBranchFilter, branches.length, filteredData.soldQtyByProduct]);
 
   const handleMarkPaid = async (sale: Sale) => {
     setSettlingSaleId(sale.id);
@@ -239,6 +257,7 @@ export const ReportsManager: React.FC<ReportsManagerProps> = ({
   };
 
   const openEditSaleModal = (sale: Sale) => {
+    if (!canEditOrDeleteSales) return;
     setEditingSale(sale);
     setEditSaleType(sale.saleType);
     setEditItems(
@@ -384,6 +403,7 @@ export const ReportsManager: React.FC<ReportsManagerProps> = ({
   };
 
   const handleConfirmDeleteSale = async (sale: Sale) => {
+    if (!canEditOrDeleteSales) return;
     setDeletingSaleId(sale.id);
     setFeedback('');
     try {
@@ -465,14 +485,21 @@ export const ReportsManager: React.FC<ReportsManagerProps> = ({
 
           <select
             aria-label="Filtrar por sucursal"
-            value={branchFilter}
-            onChange={(e) => setBranchFilter(e.target.value)}
-            className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
+            value={effectiveBranchFilter}
+            disabled={isBranchLocked}
+            onChange={(e) => {
+              if (!isBranchLocked) setBranchFilter(e.target.value);
+            }}
+            className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none disabled:cursor-not-allowed disabled:opacity-75"
           >
-            <option value="all">Todas las sucursales</option>
-            {branches.map((branch) => (
+            {!isBranchLocked && <option value="all">Todas las sucursales</option>}
+            {(isBranchLocked && lockedBranchId
+              ? branches.filter((b) => b.id === lockedBranchId)
+              : branches
+            ).map((branch) => (
               <option key={branch.id} value={branch.id}>
                 {branch.name}
+                {isBranchLocked ? ' (Fija)' : ''}
               </option>
             ))}
           </select>
@@ -631,7 +658,9 @@ export const ReportsManager: React.FC<ReportsManagerProps> = ({
                 Ventas del período ({filteredData.matchedSales.length})
               </h3>
             </div>
-            <span className="text-[11px] text-slate-500">Editable · recálculo automático</span>
+            <span className="text-[11px] text-slate-500">
+              {canEditOrDeleteSales ? 'Editable · recálculo automático' : 'Solo lectura'}
+            </span>
           </div>
 
           {filteredData.matchedSales.length === 0 ? (
@@ -684,45 +713,46 @@ export const ReportsManager: React.FC<ReportsManagerProps> = ({
                         </p>
                       </div>
 
-                      {isConfirmingDelete ? (
-                        <div className="inline-flex items-center gap-1">
-                          <button
-                            type="button"
-                            disabled={deletingSaleId === sale.id}
-                            onClick={() => void handleConfirmDeleteSale(sale)}
-                            className="rounded bg-red-600 px-2 py-1 text-[11px] font-bold text-white hover:bg-red-700 disabled:opacity-50 cursor-pointer"
-                          >
-                            {deletingSaleId === sale.id ? '...' : 'Eliminar'}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setConfirmDeleteSaleId(null)}
-                            className="rounded border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer"
-                          >
-                            No
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="inline-flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => openEditSaleModal(sale)}
-                            aria-label={`Editar venta ${sale.receiptNumber}`}
-                            className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:border-[#76B900] hover:text-slate-900 cursor-pointer"
-                          >
-                            <Pencil className="h-3 w-3" />
-                            Editar
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setConfirmDeleteSaleId(sale.id)}
-                            aria-label={`Eliminar venta ${sale.receiptNumber}`}
-                            className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 cursor-pointer"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      )}
+                      {canEditOrDeleteSales &&
+                        (isConfirmingDelete ? (
+                          <div className="inline-flex items-center gap-1">
+                            <button
+                              type="button"
+                              disabled={deletingSaleId === sale.id}
+                              onClick={() => void handleConfirmDeleteSale(sale)}
+                              className="rounded bg-red-600 px-2 py-1 text-[11px] font-bold text-white hover:bg-red-700 disabled:opacity-50 cursor-pointer"
+                            >
+                              {deletingSaleId === sale.id ? '...' : 'Eliminar'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteSaleId(null)}
+                              className="rounded border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer"
+                            >
+                              No
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="inline-flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => openEditSaleModal(sale)}
+                              aria-label={`Editar venta ${sale.receiptNumber}`}
+                              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:border-[#76B900] hover:text-slate-900 cursor-pointer"
+                            >
+                              <Pencil className="h-3 w-3" />
+                              Editar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteSaleId(sale.id)}
+                              aria-label={`Eliminar venta ${sale.receiptNumber}`}
+                              className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 cursor-pointer"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        ))}
                     </div>
                   </div>
                 );

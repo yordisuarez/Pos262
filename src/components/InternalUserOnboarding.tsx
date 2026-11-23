@@ -9,7 +9,13 @@ import {
   Users,
   ArrowRight,
 } from 'lucide-react';
-import type { Branch, Cashier } from '../types/pos';
+import type { Branch, Cashier, CashierPermissions } from '../types/pos';
+import {
+  CASHIER_PERMISSION_ITEMS,
+  DEFAULT_CASHIER_PERMISSIONS,
+  normalizeCashierPermissions,
+  toggleCashierPermission,
+} from '../services/permissions';
 
 interface InternalUserOnboardingProps {
   step: 'admin' | 'cashiers';
@@ -18,7 +24,12 @@ interface InternalUserOnboardingProps {
   cashiers: Cashier[];
   businessName: string;
   onCreateAdmin: (params: { name: string; pin: string; branchId: string }) => Promise<Cashier>;
-  onCreateCashier: (params: { name: string; pin: string; branchId: string }) => Promise<Cashier>;
+  onCreateCashier: (params: {
+    name: string;
+    pin: string;
+    branchId: string;
+    permissions: CashierPermissions;
+  }) => Promise<Cashier>;
   onContinueToSystem: () => void;
 }
 
@@ -34,7 +45,7 @@ export const InternalUserOnboarding: React.FC<InternalUserOnboardingProps> = ({
   onCreateCashier,
   onContinueToSystem,
 }) => {
-  const defaultBranchId = activeBranchId || branches[0]?.id || 'branch-centro';
+  const defaultBranchId = activeBranchId || branches[0]?.id || 'branch-principal';
 
   // Step 1: Admin creation form state
   const [adminName, setAdminName] = useState<string>('');
@@ -47,6 +58,9 @@ export const InternalUserOnboarding: React.FC<InternalUserOnboardingProps> = ({
   const [cashierName, setCashierName] = useState<string>('');
   const [cashierPin, setCashierPin] = useState<string>('');
   const [cashierBranchId, setCashierBranchId] = useState<string>(defaultBranchId);
+  const [cashierPermissions, setCashierPermissions] = useState<CashierPermissions>({
+    ...DEFAULT_CASHIER_PERMISSIONS,
+  });
   const [cashierError, setCashierError] = useState<string>('');
   const [cashierFeedback, setCashierFeedback] = useState<string>('');
   const [savingCashier, setSavingCashier] = useState<boolean>(false);
@@ -102,10 +116,12 @@ export const InternalUserOnboarding: React.FC<InternalUserOnboardingProps> = ({
         name: trimmedName,
         pin: cashierPin,
         branchId: cashierBranchId || defaultBranchId,
+        permissions: normalizeCashierPermissions(cashierPermissions, 'cashier'),
       });
       setCashierName('');
       setCashierPin('');
-      setCashierFeedback(`Cajero "${trimmedName}" agregado correctamente.`);
+      setCashierPermissions({ ...DEFAULT_CASHIER_PERMISSIONS });
+      setCashierFeedback(`Cajero "${trimmedName}" agregado con permisos configurados.`);
     } finally {
       setSavingCashier(false);
     }
@@ -359,6 +375,32 @@ export const InternalUserOnboarding: React.FC<InternalUserOnboardingProps> = ({
                       </select>
                     </div>
                   )}
+                </div>
+
+                <div className="space-y-1.5 border-t border-slate-200 pt-2.5">
+                  <p className="text-[11px] font-semibold text-slate-700">
+                    Permisos iniciales (por defecto restrictivos)
+                  </p>
+                  <div className="max-h-36 space-y-1 overflow-y-auto pr-1">
+                    {CASHIER_PERMISSION_ITEMS.map((perm) => (
+                      <label
+                        key={perm.key}
+                        className="flex items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] text-slate-800 cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={cashierPermissions[perm.key]}
+                          onChange={(e) =>
+                            setCashierPermissions((prev) =>
+                              toggleCashierPermission(prev, perm.key, e.target.checked)
+                            )
+                          }
+                          className="h-3.5 w-3.5 rounded accent-[#76B900] cursor-pointer"
+                        />
+                        <span className="font-medium">{perm.label}</span>
+                      </label>
+                    ))}
+                  </div>
                 </div>
 
                 {cashierError && (
