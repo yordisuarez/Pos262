@@ -99,27 +99,28 @@ export const CashierLoginModal: React.FC<CashierLoginModalProps> = ({
                     type="button"
                     onClick={() => {
                       setSelectedCashierId(cashier.id);
+                      setPinInput('');
                       setError('');
                     }}
-                    className={`flex items-center justify-between rounded-lg border px-3 py-2 text-left transition-colors cursor-pointer ${
+                    className={`flex items-center justify-between rounded-lg border px-3 py-2.5 text-left transition-colors cursor-pointer ${
                       isSelected
                         ? 'border-[#76B900] bg-[#F7FEE7] text-slate-900'
                         : 'border-slate-200 bg-white text-slate-800 hover:border-slate-300 hover:bg-slate-50'
                     }`}
                   >
                     <div>
-                      <p className="text-xs font-semibold text-slate-900">{cashier.name}</p>
+                      <p className="text-xs font-bold text-slate-900">{cashier.name}</p>
                       <p className="text-[11px] text-slate-500">
-                        {cashier.role === 'admin'
-                          ? 'Administrador'
-                          : cashier.role === 'manager'
-                          ? 'Encargado'
-                          : 'Cajero'}
+                        {cashier.role === 'admin' ? 'Administrador' : 'Cajero'}
                         {branch ? ` · ${branch.name}` : ''}
                       </p>
                     </div>
-                    <span className="font-mono text-[11px] tabular-nums text-slate-500">
-                      PIN: {cashier.pin}
+                    <span
+                      className={`text-[11px] font-semibold ${
+                        isSelected ? 'text-[#558B00]' : 'text-slate-400'
+                      }`}
+                    >
+                      {cashier.role === 'admin' ? 'Admin' : 'Cajero'}
                     </span>
                   </button>
                 );
@@ -137,16 +138,18 @@ export const CashierLoginModal: React.FC<CashierLoginModalProps> = ({
                 id="cashier-pin"
                 type="password"
                 inputMode="numeric"
-                maxLength={6}
+                pattern="[0-9]{4}"
+                maxLength={4}
+                autoComplete="current-password"
                 required
                 autoFocus
                 placeholder="••••"
                 value={pinInput}
                 onChange={(e) => {
-                  setPinInput(e.target.value);
+                  setPinInput(e.target.value.replace(/\D/g, '').slice(0, 4));
                   setError('');
                 }}
-                className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-8 pr-3 font-mono text-sm tracking-widest text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
+                className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-8 pr-3 font-mono text-sm tracking-[0.35em] text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
               />
             </div>
           </div>
@@ -383,7 +386,7 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
           <p className="text-sm font-bold text-slate-900">
             {activeCashier.name}{' '}
             <span className="font-normal text-slate-500">
-              · {activeCashier.role === 'admin' ? 'Administrador' : activeCashier.role === 'manager' ? 'Encargado' : 'Cajero'} · {activeBranch.name}
+              · {activeCashier.role === 'admin' ? 'Administrador' : 'Cajero'} · {activeBranch.name}
             </span>
           </p>
         </div>

@@ -80,10 +80,41 @@ class Pos262Database extends Dexie {
       syncQueue: 'id, entityType, entityId, syncStatus, timestamp',
       settings: 'key',
     });
+
+    this.version(5).stores({
+      branches: 'id, code, name, syncStatus',
+      cashiers: 'id, userId, name, role, branchId, syncStatus',
+      products: 'id, sku, barcode, name, category, syncStatus',
+      customers: 'id, name, documentId, phone, syncStatus',
+      sales: 'id, receiptNumber, branchId, shiftId, customerId, createdAt, syncStatus',
+      shifts: 'id, branchId, cashierId, status, openedAt, syncStatus',
+      stockTransfers: 'id, type, productId, fromBranchId, toBranchId, createdAt, syncStatus',
+      supplierQuotes: 'id, productId, supplierName, unitCostUsd, updatedAt, syncStatus',
+      expenses: 'id, branchId, type, expenseDate, createdAt, syncStatus',
+      syncQueue: 'id, entityType, entityId, syncStatus, timestamp',
+      settings: 'key',
+    });
   }
 }
 
 export const db = new Pos262Database();
+
+const ACTIVE_OWNER_KEY = 'activeCloudOwnerUserId';
+const LEGACY_DEMO_CASHIER_IDS = new Set(['cashier-admin', 'cashier-01', 'cashier-02']);
+
+const ACCOUNT_SCOPED_SETTING_KEYS = [
+  'activeCashierId',
+  'activeBranchId',
+  'lastSyncedAt',
+  'businessName',
+  'businessRif',
+  'businessPhone',
+  'businessAddress',
+  'exchangeRate',
+  'businessSettingsUpdatedAt',
+  'businessSettingsSyncStatus',
+  'businessSettingsSyncedAt',
+];
 
 export const DEFAULT_BRANCHES: Branch[] = [
   {
@@ -112,33 +143,6 @@ export const DEFAULT_BRANCHES: Branch[] = [
     phone: '+58 424-5550303',
     isActive: true,
     syncStatus: 'synced',
-  },
-];
-
-export const DEFAULT_CASHIERS: Cashier[] = [
-  {
-    id: 'cashier-admin',
-    name: 'Yordi Suárez (Admin)',
-    pin: '0000',
-    role: 'admin',
-    branchId: 'branch-centro',
-    isActive: true,
-  },
-  {
-    id: 'cashier-01',
-    name: 'Carlos Méndez',
-    pin: '1234',
-    role: 'cashier',
-    branchId: 'branch-centro',
-    isActive: true,
-  },
-  {
-    id: 'cashier-02',
-    name: 'Ana Lucía Pérez',
-    pin: '5678',
-    role: 'manager',
-    branchId: 'branch-este',
-    isActive: true,
   },
 ];
 
@@ -419,8 +423,8 @@ export const DEFAULT_EXPENSES: Expense[] = [
     amountVes: 29025,
     exchangeRate: 64.5,
     expenseDate: '2026-01-01',
-    cashierId: 'cashier-admin',
-    cashierName: 'Yordi Suárez (Admin)',
+    cashierId: 'system',
+    cashierName: 'Sistema',
     createdAt: '2026-01-01T08:00:00.000Z',
     updatedAt: '2026-01-01T08:00:00.000Z',
     syncStatus: 'synced',
@@ -436,8 +440,8 @@ export const DEFAULT_EXPENSES: Expense[] = [
     amountVes: 6127.5,
     exchangeRate: 64.5,
     expenseDate: '2026-01-01',
-    cashierId: 'cashier-admin',
-    cashierName: 'Yordi Suárez (Admin)',
+    cashierId: 'system',
+    cashierName: 'Sistema',
     createdAt: '2026-01-01T08:00:00.000Z',
     updatedAt: '2026-01-01T08:00:00.000Z',
     syncStatus: 'synced',
@@ -453,8 +457,8 @@ export const DEFAULT_EXPENSES: Expense[] = [
     amountVes: 2064,
     exchangeRate: 64.5,
     expenseDate: '2026-01-01',
-    cashierId: 'cashier-admin',
-    cashierName: 'Yordi Suárez (Admin)',
+    cashierId: 'system',
+    cashierName: 'Sistema',
     createdAt: '2026-01-01T08:00:00.000Z',
     updatedAt: '2026-01-01T08:00:00.000Z',
     syncStatus: 'synced',
@@ -527,19 +531,102 @@ export async function saveLocalBusinessSettings(settings: BusinessSettings): Pro
   await db.settings.bulkPut(entries);
 }
 
+/**
+ * Removes any legacy hardcoded demo cashiers and ensures all internal users
+ * belong strictly to the active owner scope.
+ */
+export async function purgeResidualCashiers(ownerUserId: string | null): Promise<void> {
+  const allCashiers = await db.cashiers.toArray();
+  const invalidIds = allCashiers
+    .filter((cashier) => {
+      if (LEGACY_DEMO_CASHIER_IDS.has(cashier.id)) return true;
+      if (ownerUserId) {
+        return cashier.userId !== ownerUserId;
+      }
+      return Boolean(cashier.userId && cashier.userId !== 'local');
+    })
+    .map((cashier) => cashier.id);
+
+  if (invalidIds.length > 0) {
+    await db.cashiers.bulkDelete(invalidIds);
+  }
+
+  const activeCashierSetting = await db.settings.get('activeCashierId');
+  if (activeCashierSetting?.value && invalidIds.includes(activeCashierSetting.value)) {
+    await db.settings.delete('activeCashierId');
+  }
+}
+
+/**
+ * Isolates IndexedDB storage by authenticated Supabase `user_id`.
+ * Whenever a different account signs in (or legacy un-owned local data exists),
+ * clears all residual data so the new account begins completely isolated with 0 internal users.
+ */
+export async function isolateLocalDatabaseForUser(userId: string | null): Promise<boolean> {
+  const targetOwner = userId ?? 'local';
+  const currentOwnerEntry = await db.settings.get(ACTIVE_OWNER_KEY);
+  const currentOwner = currentOwnerEntry?.value ?? null;
+
+  if (currentOwner !== targetOwner) {
+    await db.transaction(
+      'rw',
+      [
+        db.branches,
+        db.cashiers,
+        db.products,
+        db.customers,
+        db.sales,
+        db.shifts,
+        db.stockTransfers,
+        db.supplierQuotes,
+        db.expenses,
+        db.syncQueue,
+        db.settings,
+      ],
+      async () => {
+        await Promise.all([
+          db.branches.clear(),
+          db.cashiers.clear(),
+          db.products.clear(),
+          db.customers.clear(),
+          db.sales.clear(),
+          db.shifts.clear(),
+          db.stockTransfers.clear(),
+          db.supplierQuotes.clear(),
+          db.expenses.clear(),
+          db.syncQueue.clear(),
+          db.settings.bulkDelete(ACCOUNT_SCOPED_SETTING_KEYS),
+        ]);
+        await db.settings.put({ key: ACTIVE_OWNER_KEY, value: targetOwner });
+      }
+    );
+
+    try {
+      localStorage.removeItem('pos_262_exchange_rate');
+    } catch {
+      // Ignore storage errors
+    }
+
+    await seedDatabaseIfNeeded();
+    return true;
+  }
+
+  await purgeResidualCashiers(userId);
+  await seedDatabaseIfNeeded();
+  return false;
+}
+
 export async function seedDatabaseIfNeeded(): Promise<void> {
-  const [branchCount, cashierCount, productCount, customerCount, quoteCount, expenseCount] =
-    await Promise.all([
-      db.branches.count(),
-      db.cashiers.count(),
-      db.products.count(),
-      db.customers.count(),
-      db.supplierQuotes.count(),
-      db.expenses.count(),
-    ]);
+  const [branchCount, productCount, customerCount, quoteCount, expenseCount] = await Promise.all([
+    db.branches.count(),
+    db.products.count(),
+    db.customers.count(),
+    db.supplierQuotes.count(),
+    db.expenses.count(),
+  ]);
 
   if (branchCount === 0) await db.branches.bulkPut(DEFAULT_BRANCHES);
-  if (cashierCount === 0) await db.cashiers.bulkPut(DEFAULT_CASHIERS);
+  // Internal users (db.cashiers) are NEVER preloaded — every account starts with 0 internal users.
   if (productCount === 0) await db.products.bulkPut(DEFAULT_PRODUCTS);
   if (customerCount === 0) await db.customers.bulkPut(DEFAULT_CUSTOMERS);
   if (quoteCount === 0) await db.supplierQuotes.bulkPut(DEFAULT_SUPPLIER_QUOTES);

@@ -21,6 +21,7 @@ export type SyncEntityType =
   | 'product'
   | 'supplierQuote'
   | 'branch'
+  | 'cashier'
   | 'businessSettings';
 
 export interface BusinessSettings {
@@ -108,11 +109,16 @@ export interface Branch {
 
 export interface Cashier {
   id: string;
+  userId?: string;
   name: string;
   pin: string;
-  role: 'admin' | 'manager' | 'cashier';
+  role: 'admin' | 'cashier';
   branchId: string;
   isActive: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+  syncStatus?: SyncStatus;
+  syncedAt?: string;
 }
 
 export interface Product {

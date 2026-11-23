@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import type {
   Branch,
   BusinessSettings,
+  Cashier,
   Customer,
   Expense,
   Product,
@@ -116,6 +117,7 @@ export function computePendingSyncSummary(params: {
   customers: Customer[];
   products: Product[];
   supplierQuotes: SupplierQuote[];
+  cashiers?: Cashier[];
   syncQueue: SyncQueueItem[];
   businessSettings?: BusinessSettings | null;
 }): PendingSyncSummary {
@@ -125,6 +127,7 @@ export function computePendingSyncSummary(params: {
   const pendingExpenses = params.expenses.filter((e) => e.syncStatus === 'pending').length;
   const pendingCustomers = params.customers.filter((c) => c.syncStatus === 'pending').length;
   const pendingQuotes = params.supplierQuotes.filter((q) => q.syncStatus === 'pending').length;
+  const pendingCashiers = (params.cashiers ?? []).filter((c) => c.syncStatus === 'pending').length;
   const pendingQueueItems = params.syncQueue.filter((q) => q.syncStatus === 'pending').length;
   const pendingSettings = params.businessSettings?.syncStatus === 'pending' ? 1 : 0;
 
@@ -136,7 +139,12 @@ export function computePendingSyncSummary(params: {
   ).length;
 
   const pendingOther =
-    pendingCustomers + pendingQuotes + pendingDeleteOps + pendingProductPriceOps + pendingSettings;
+    pendingCustomers +
+    pendingQuotes +
+    pendingCashiers +
+    pendingDeleteOps +
+    pendingProductPriceOps +
+    pendingSettings;
   const domainPendingTotal =
     pendingSales + pendingShifts + pendingTransfers + pendingExpenses + pendingOther;
 
@@ -164,9 +172,10 @@ async function upsertSyncRecordsInBatches(rows: CloudSyncRecordRow[]): Promise<v
 }
 
 async function buildAllLocalSyncRows(userId: string, now: string): Promise<CloudSyncRecordRow[]> {
-  const [branches, products, customers, sales, shifts, transfers, quotes, expenses] =
+  const [branches, cashiers, products, customers, sales, shifts, transfers, quotes, expenses] =
     await Promise.all([
       db.branches.toArray(),
+      db.cashiers.toArray(),
       db.products.toArray(),
       db.customers.toArray(),
       db.sales.toArray(),
@@ -200,6 +209,10 @@ async function buildAllLocalSyncRows(userId: string, now: string): Promise<Cloud
   };
 
   pushCollection('branch', branches);
+  pushCollection(
+    'cashier',
+    cashiers.filter((c) => !c.userId || c.userId === userId).map((c) => ({ ...c, userId }))
+  );
   pushCollection('product', products);
   pushCollection('customer', customers);
   pushCollection('sale', sales);
@@ -213,7 +226,8 @@ async function buildAllLocalSyncRows(userId: string, now: string): Promise<Cloud
 
 async function mergePulledRecordsIntoIndexedDB(
   cloudRows: CloudSyncRecordRow[],
-  syncedAt: string
+  syncedAt: string,
+  userId: string
 ): Promise<number> {
   if (cloudRows.length === 0) return 0;
 
@@ -223,6 +237,7 @@ async function mergePulledRecordsIntoIndexedDB(
     'rw',
     [
       db.branches,
+      db.cashiers,
       db.products,
       db.customers,
       db.sales,
@@ -242,6 +257,12 @@ async function mergePulledRecordsIntoIndexedDB(
             case 'branch':
               if (await db.branches.get(row.record_id)) {
                 await db.branches.delete(row.record_id);
+                mergedCount += 1;
+              }
+              break;
+            case 'cashier':
+              if (await db.cashiers.get(row.record_id)) {
+                await db.cashiers.delete(row.record_id);
                 mergedCount += 1;
               }
               break;
@@ -321,6 +342,20 @@ async function mergePulledRecordsIntoIndexedDB(
             const local = await db.branches.get(row.record_id);
             if (shouldApply(local)) {
               await db.branches.put(incoming as unknown as Branch);
+              mergedCount += 1;
+            }
+            break;
+          }
+          case 'cashier': {
+            const local = await db.cashiers.get(row.record_id);
+            if (shouldApply(local)) {
+              const incomingRole =
+                row.payload.role === 'admin' ? ('admin' as const) : ('cashier' as const);
+              await db.cashiers.put({
+                ...(incoming as unknown as Cashier),
+                userId,
+                role: incomingRole,
+              });
               mergedCount += 1;
             }
             break;
@@ -434,6 +469,7 @@ async function executeSyncQueue(options?: {
       pendingCustomers,
       pendingProducts,
       pendingBranches,
+      pendingCashiers,
       pendingQuotes,
       pendingQueue,
       localSettings,
@@ -445,6 +481,7 @@ async function executeSyncQueue(options?: {
       db.customers.where('syncStatus').equals('pending').toArray(),
       db.products.where('syncStatus').equals('pending').toArray(),
       db.branches.where('syncStatus').equals('pending').toArray(),
+      db.cashiers.where('syncStatus').equals('pending').toArray(),
       db.supplierQuotes.where('syncStatus').equals('pending').toArray(),
       db.syncQueue.where('syncStatus').equals('pending').toArray(),
       getLocalBusinessSettings(),
@@ -474,6 +511,10 @@ async function executeSyncQueue(options?: {
     };
 
     appendPending('branch', pendingBranches);
+    appendPending(
+      'cashier',
+      pendingCashiers.filter((c) => !c.userId || c.userId === userId).map((c) => ({ ...c, userId }))
+    );
     appendPending('product', pendingProducts);
     appendPending('customer', pendingCustomers);
     appendPending('sale', pendingSales);
@@ -577,6 +618,7 @@ async function executeSyncQueue(options?: {
           db.customers,
           db.products,
           db.branches,
+          db.cashiers,
           db.supplierQuotes,
           db.syncQueue,
           db.settings,
@@ -599,6 +641,9 @@ async function executeSyncQueue(options?: {
             ),
             ...pendingBranches.map((r) =>
               db.branches.update(r.id, { syncStatus: 'synced', syncedAt: now })
+            ),
+            ...pendingCashiers.map((r) =>
+              db.cashiers.update(r.id, { userId, syncStatus: 'synced', syncedAt: now })
             ),
             ...pendingQuotes.map((r) =>
               db.supplierQuotes.update(r.id, { syncStatus: 'synced', syncedAt: now })
@@ -637,7 +682,7 @@ async function executeSyncQueue(options?: {
           reconciledPushed = seedRows.length;
         }
       } else {
-        pulledCount += await mergePulledRecordsIntoIndexedDB(cloudRows, now);
+        pulledCount += await mergePulledRecordsIntoIndexedDB(cloudRows, now, userId);
 
         // On manual sync or reconciliation, also upload any pre-existing local records absent from cloud
         if (options?.reconcileMissingLocal) {
@@ -660,6 +705,7 @@ async function executeSyncQueue(options?: {
       pendingCustomers.length +
       pendingQuotes.length +
       pendingBranches.length +
+      pendingCashiers.length +
       (settingsPushed ? 1 : 0) +
       pendingQueue.filter((q) => q.operation === 'delete' || q.entityType === 'product').length;
 
@@ -782,6 +828,8 @@ export function formatSyncEntityLabel(entityType: SyncEntityType): string {
       return 'Proveedor';
     case 'branch':
       return 'Sucursal';
+    case 'cashier':
+      return 'Usuario interno';
     case 'businessSettings':
       return 'Configuración';
   }

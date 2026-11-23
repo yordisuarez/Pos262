@@ -37,8 +37,8 @@ import {
   DEFAULT_BUSINESS_SETTINGS,
   db,
   getLocalBusinessSettings,
+  isolateLocalDatabaseForUser,
   saveLocalBusinessSettings,
-  seedDatabaseIfNeeded,
 } from './db/posDb';
 import { getSafeSession, supabase } from './lib/supabase';
 import {
@@ -49,6 +49,7 @@ import {
   subscribeToCloudChanges,
 } from './services/syncQueue';
 import { CashierLoginModal, ShiftManager } from './components/ShiftManager';
+import { InternalUserOnboarding } from './components/InternalUserOnboarding';
 import { InventoryManager } from './components/InventoryManager';
 import { ReportsManager } from './components/ReportsManager';
 import { CostingManager } from './components/CostingManager';
@@ -247,6 +248,8 @@ export default function App() {
   // Active session state
   const [activeCashier, setActiveCashier] = useState<Cashier | null>(null);
   const [loginModalOpen, setLoginModalOpen] = useState<boolean>(false);
+  const [accountHydrated, setAccountHydrated] = useState<boolean>(false);
+  const [onboardingStep, setOnboardingStep] = useState<'admin' | 'cashiers' | null>(null);
   const [activeBranchId, setActiveBranchId] = useState<string>('branch-centro');
 
   // Global currency & persisted offline USD->Bs rate
@@ -480,11 +483,28 @@ export default function App() {
     }
   };
 
-  useEffect(() => {
-    let active = true;
+  const hydrateAccountScope = useCallback(
+    async (
+      userId: string | null,
+      options?: { registeredBusinessName?: string; syncFromCloud?: boolean }
+    ) => {
+      setAccountHydrated(false);
+      await isolateLocalDatabaseForUser(userId);
 
-    async function init() {
-      await seedDatabaseIfNeeded();
+      if (options?.registeredBusinessName && options.registeredBusinessName.trim()) {
+        const current = await getLocalBusinessSettings();
+        await saveLocalBusinessSettings({
+          ...current,
+          businessName: options.registeredBusinessName.trim(),
+          updatedAt: new Date().toISOString(),
+          syncStatus: 'pending',
+        });
+      }
+
+      if (userId && options?.syncFromCloud && navigator.onLine && subscriptionActiveRef.current) {
+        await triggerSyncQueue('auto', userId, true);
+      }
+
       const { loadedBranches, loadedCashiers } = await reloadAllData();
       const [branchSetting, currSetting, cashierSetting, syncedSetting] = await Promise.all([
         db.settings.get('activeBranchId'),
@@ -493,41 +513,64 @@ export default function App() {
         db.settings.get('lastSyncedAt'),
       ]);
 
-      const { user } = await getSafeSession();
+      if (branchSetting?.value && loadedBranches.some((b) => b.id === branchSetting.value)) {
+        setActiveBranchId(branchSetting.value);
+      } else if (loadedBranches[0]) {
+        setActiveBranchId(loadedBranches[0].id);
+      }
 
+      if (currSetting?.value === 'USD' || currSetting?.value === 'VES') {
+        setCurrency(currSetting.value);
+      }
+      setLastSyncedAt(syncedSetting?.value ?? null);
+
+      if (loadedCashiers.length === 0) {
+        setActiveCashier(null);
+        setLoginModalOpen(false);
+        setOnboardingStep('admin');
+      } else {
+        setOnboardingStep(null);
+        const found = cashierSetting?.value
+          ? loadedCashiers.find((c) => c.id === cashierSetting.value)
+          : undefined;
+        if (found) {
+          setActiveCashier(found);
+          setLoginModalOpen(false);
+        } else {
+          setActiveCashier(null);
+          setLoginModalOpen(true);
+        }
+      }
+
+      setAccountHydrated(true);
+      setIsReady(true);
+    },
+    [reloadAllData, triggerSyncQueue]
+  );
+
+  useEffect(() => {
+    let active = true;
+
+    async function init() {
+      const { user } = await getSafeSession();
       if (!active) return;
 
       cloudUserIdRef.current = user?.id ?? null;
       setCloudUser(user);
       setAuthChecked(true);
 
-      if (branchSetting?.value && loadedBranches.some((b) => b.id === branchSetting.value)) {
-        setActiveBranchId(branchSetting.value);
-      }
-      if (currSetting?.value === 'USD' || currSetting?.value === 'VES') {
-        setCurrency(currSetting.value);
-      }
-      if (syncedSetting?.value) {
-        setLastSyncedAt(syncedSetting.value);
-      }
-      if (cashierSetting?.value) {
-        const found = loadedCashiers.find((c) => c.id === cashierSetting.value);
-        if (found) setActiveCashier(found);
-      } else {
-        setLoginModalOpen(true);
-      }
-
-      setIsReady(true);
-
       if (user) {
         const subState = await verifyUserSubscription(user.id, { showLoading: true });
         if (!active) return;
-        if (subState.accessStatus === 'active' && navigator.onLine) {
-          await triggerSyncQueue('auto', user.id, true);
+        if (subState.accessStatus === 'active') {
+          await hydrateAccountScope(user.id, { syncFromCloud: true });
+        } else {
+          setIsReady(true);
         }
       } else {
         subscriptionActiveRef.current = false;
         setSubscription(createInitialSubscriptionState('idle'));
+        await hydrateAccountScope(null, { syncFromCloud: false });
       }
     }
 
@@ -545,7 +588,14 @@ export default function App() {
         subscriptionActiveRef.current = false;
         setSubscription(createInitialSubscriptionState('idle'));
       } else if (nextUser.id !== prevUserId || event === 'TOKEN_REFRESHED') {
-        void verifyUserSubscription(nextUser.id, { showLoading: nextUser.id !== prevUserId });
+        void verifyUserSubscription(nextUser.id, { showLoading: nextUser.id !== prevUserId }).then(
+          (subState) => {
+            if (!active) return;
+            if (nextUser.id !== prevUserId && subState.accessStatus === 'active') {
+              void hydrateAccountScope(nextUser.id, { syncFromCloud: true });
+            }
+          }
+        );
       }
     });
 
@@ -556,7 +606,7 @@ export default function App() {
         window.clearTimeout(rateSyncTimerRef.current);
       }
     };
-  }, [reloadAllData, triggerSyncQueue, verifyUserSubscription]);
+  }, [hydrateAccountScope, verifyUserSubscription]);
 
   useEffect(() => {
     const handleOnline = () => {
@@ -625,7 +675,11 @@ export default function App() {
       ? subscribeToSubscriptionChanges(cloudUser.id, () => {
           void verifyUserSubscription(cloudUser.id).then((next) => {
             if (next.accessStatus === 'active' && navigator.onLine) {
-              void triggerSyncQueue('auto', cloudUser.id, true);
+              if (!accountHydrated) {
+                void hydrateAccountScope(cloudUser.id, { syncFromCloud: true });
+              } else {
+                void triggerSyncQueue('auto', cloudUser.id, true);
+              }
             }
           });
         })
@@ -648,7 +702,7 @@ export default function App() {
       unsubscribeSub();
       window.clearInterval(expiryTicker);
     };
-  }, [cloudUser, isOnline, triggerSyncQueue, verifyUserSubscription]);
+  }, [cloudUser, isOnline, accountHydrated, hydrateAccountScope, triggerSyncQueue, verifyUserSubscription]);
 
   const persistSetting = (key: string, value: string) => {
     void db.settings.put({ key, value });
@@ -738,22 +792,12 @@ export default function App() {
       // Ignore storage errors
     }
 
-    if (registeredBusinessName && registeredBusinessName.trim()) {
-      const current = await getLocalBusinessSettings();
-      await saveLocalBusinessSettings({
-        ...current,
-        businessName: registeredBusinessName.trim(),
-        updatedAt: new Date().toISOString(),
-        syncStatus: 'pending',
-      });
-    }
-
     const subState = await verifyUserSubscription(user.id, { showLoading: true });
     if (subState.accessStatus === 'active') {
-      if (!activeCashier) {
-        setLoginModalOpen(true);
-      }
-      await triggerSyncQueue('auto', user.id, true);
+      await hydrateAccountScope(user.id, {
+        registeredBusinessName,
+        syncFromCloud: true,
+      });
     }
   };
 
@@ -765,9 +809,7 @@ export default function App() {
     } catch {
       // Ignore storage errors
     }
-    if (!activeCashier) {
-      setLoginModalOpen(true);
-    }
+    void hydrateAccountScope(null, { syncFromCloud: false });
   };
 
   const handleSignOutCloud = async (returnToAuthScreen = false) => {
@@ -781,6 +823,8 @@ export default function App() {
     setCloudUser(null);
     setSubscription(createInitialSubscriptionState('idle'));
     setLastSyncError(null);
+    setActiveCashier(null);
+    setOnboardingStep(null);
 
     if (returnToAuthScreen) {
       setOfflineAuthBypass(false);
@@ -796,7 +840,82 @@ export default function App() {
       } catch {
         // Ignore storage errors
       }
-      showTemporarySyncNotice('Sesión nube cerrada. Tus datos siguen disponibles offline en este equipo.');
+      await hydrateAccountScope(null, { syncFromCloud: false });
+      showTemporarySyncNotice('Sesión nube cerrada. Modo local aislado listo en este equipo.');
+    }
+  };
+
+  const handleCreateInternalUser = async (params: {
+    name: string;
+    pin: string;
+    role: 'admin' | 'cashier';
+    branchId: string;
+  }): Promise<Cashier> => {
+    const nowIso = new Date().toISOString();
+    const ownerId = cloudUserIdRef.current ?? 'local';
+    const newUser: Cashier = {
+      id: `user-${params.role}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      userId: ownerId,
+      name: params.name.trim(),
+      pin: params.pin.trim(),
+      role: params.role,
+      branchId: params.branchId || activeBranchId || branches[0]?.id || 'branch-centro',
+      isActive: true,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      syncStatus: 'pending',
+    };
+
+    const queueItem = buildSyncQueueItem({
+      entityType: 'cashier',
+      entityId: newUser.id,
+      operation: 'create',
+      summary: `${params.role === 'admin' ? 'Administrador' : 'Cajero'}: ${newUser.name}`,
+      timestamp: nowIso,
+    });
+
+    await db.transaction('rw', db.cashiers, db.syncQueue, async () => {
+      await db.cashiers.put(newUser);
+      await db.syncQueue.put(queueItem);
+    });
+
+    if (params.role === 'admin') {
+      setActiveCashier(newUser);
+      persistSetting('activeCashierId', newUser.id);
+      setActiveBranchId(newUser.branchId);
+      persistSetting('activeBranchId', newUser.branchId);
+      setOnboardingStep('cashiers');
+    }
+
+    await reloadAllData();
+    if (navigator.onLine && cloudUserIdRef.current && subscriptionActiveRef.current) {
+      void triggerSyncQueue('auto');
+    }
+
+    return newUser;
+  };
+
+  const handleDeleteInternalUser = async (cashierId: string) => {
+    const target = cashiers.find((c) => c.id === cashierId);
+    if (!target || target.role === 'admin' || target.id === activeCashier?.id) return;
+
+    const nowIso = new Date().toISOString();
+    const queueItem = buildSyncQueueItem({
+      entityType: 'cashier',
+      entityId: cashierId,
+      operation: 'delete',
+      summary: `Eliminar cajero: ${target.name}`,
+      timestamp: nowIso,
+    });
+
+    await db.transaction('rw', db.cashiers, db.syncQueue, async () => {
+      await db.cashiers.delete(cashierId);
+      await db.syncQueue.put(queueItem);
+    });
+
+    await reloadAllData();
+    if (navigator.onLine && cloudUserIdRef.current && subscriptionActiveRef.current) {
+      void triggerSyncQueue('auto');
     }
   };
 
@@ -850,10 +969,22 @@ export default function App() {
         customers,
         products,
         supplierQuotes,
+        cashiers,
         syncQueue,
         businessSettings,
       }),
-    [sales, shifts, transfers, expenses, customers, products, supplierQuotes, syncQueue, businessSettings]
+    [
+      sales,
+      shifts,
+      transfers,
+      expenses,
+      customers,
+      products,
+      supplierQuotes,
+      cashiers,
+      syncQueue,
+      businessSettings,
+    ]
   );
 
   const cloudSyncState: CloudSyncState = useMemo(() => {
@@ -1977,18 +2108,27 @@ export default function App() {
         onRecheck={async () => {
           const next = await verifyUserSubscription(cloudUser.id);
           if (next.accessStatus === 'active') {
-            if (!activeCashier) {
-              setLoginModalOpen(true);
-            }
-            if (navigator.onLine) {
-              void triggerSyncQueue('auto', cloudUser.id, true);
-            }
+            await hydrateAccountScope(cloudUser.id, { syncFromCloud: true });
             return true;
           }
           return false;
         }}
         onSignOut={() => handleSignOutCloud(true)}
       />
+    );
+  }
+
+  if (authChecked && !accountHydrated) {
+    return (
+      <div className="flex min-h-screen w-full flex-col items-center justify-center bg-[#F8FAFC] px-4 text-slate-900">
+        <p className="text-xl font-extrabold tracking-tight">
+          Pos <span className="text-[#558B00]">262</span>
+        </p>
+        <div className="mt-3 inline-flex items-center gap-2 text-xs font-medium text-slate-500">
+          <RefreshCw className="h-3.5 w-3.5 animate-spin text-[#76B900]" />
+          <span>Preparando tu cuenta...</span>
+        </div>
+      </div>
     );
   }
 
@@ -2283,18 +2423,18 @@ export default function App() {
       {activeTab === 'pos' && (
         <>
           {!activeShift && activeCashier && (
-            <div className="border-b border-amber-200 bg-amber-50/80 px-3 py-1.5 text-xs text-amber-900 lg:px-5">
+            <div className="border-b border-slate-200 bg-slate-50/90 px-3 py-1.5 text-xs text-slate-600 lg:px-5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="inline-flex items-center gap-1.5 font-medium">
-                  <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0" />
-                  Sin turno abierto en {activeBranch?.name}. Abre un turno con fondo inicial para llevar el arqueo.
+                  <AlertTriangle className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                  Apertura de caja opcional en {activeBranch?.name}: puedes operar normalmente o abrir un turno si deseas llevar arqueo.
                 </span>
                 <button
                   type="button"
                   onClick={() => setActiveTab('shifts')}
-                  className="font-semibold text-amber-950 underline underline-offset-2 hover:text-amber-700 cursor-pointer whitespace-nowrap"
+                  className="font-semibold text-[#558B00] underline underline-offset-2 hover:text-[#3F6212] cursor-pointer whitespace-nowrap"
                 >
-                  Abrir turno
+                  Abrir turno (opcional)
                 </button>
               </div>
             </div>
@@ -2566,6 +2706,10 @@ export default function App() {
             pendingSyncSummary={pendingSyncSummary}
             subscription={subscription}
             businessSettings={businessSettings}
+            cashiers={cashiers}
+            activeCashier={activeCashier}
+            branches={branches}
+            activeBranchId={activeBranchId}
             counts={{
               products: products.length,
               customers: customers.length,
@@ -2592,6 +2736,10 @@ export default function App() {
               setHistoryTab('queue');
               setHistoryOpen(true);
             }}
+            onCreateCashier={(params) =>
+              handleCreateInternalUser({ ...params, role: 'cashier' })
+            }
+            onDeleteCashier={handleDeleteInternalUser}
           />
         </div>
       )}
@@ -2607,15 +2755,41 @@ export default function App() {
         />
       )}
 
-      {loginModalOpen && !cloudAuthModalOpen && cashiers.length > 0 && (
-        <CashierLoginModal
-          cashiers={cashiers}
-          branches={branches}
-          activeCashier={activeCashier}
-          onLogin={handleCashierLogin}
-          onClose={activeCashier ? () => setLoginModalOpen(false) : undefined}
-        />
-      )}
+      {!cloudAuthModalOpen &&
+        accountHydrated &&
+        (cashiers.length === 0 || onboardingStep !== null) && (
+          <InternalUserOnboarding
+            step={cashiers.length === 0 ? 'admin' : onboardingStep ?? 'cashiers'}
+            branches={branches}
+            activeBranchId={activeBranchId}
+            cashiers={cashiers}
+            businessName={businessSettings.businessName}
+            onCreateAdmin={(params) =>
+              handleCreateInternalUser({ ...params, role: 'admin' })
+            }
+            onCreateCashier={(params) =>
+              handleCreateInternalUser({ ...params, role: 'cashier' })
+            }
+            onContinueToSystem={() => {
+              setOnboardingStep(null);
+              setLoginModalOpen(false);
+            }}
+          />
+        )}
+
+      {loginModalOpen &&
+        !cloudAuthModalOpen &&
+        accountHydrated &&
+        onboardingStep === null &&
+        cashiers.length > 0 && (
+          <CashierLoginModal
+            cashiers={cashiers}
+            branches={branches}
+            activeCashier={activeCashier}
+            onLogin={handleCashierLogin}
+            onClose={activeCashier ? () => setLoginModalOpen(false) : undefined}
+          />
+        )}
 
       {mobileCartOpen && (
         <div className="fixed inset-0 z-40 flex justify-end bg-slate-950/50 lg:hidden">
