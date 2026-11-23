@@ -46,6 +46,7 @@ import {
   computePendingSyncSummary,
   formatSyncEntityLabel,
   processSyncQueue,
+  resetOperationalData,
   subscribeToCloudChanges,
 } from './services/syncQueue';
 import { CashierLoginModal, ShiftManager } from './components/ShiftManager';
@@ -938,9 +939,22 @@ export default function App() {
     setLoginModalOpen(false);
   };
 
+  const activeBranches = useMemo(() => {
+    const enabled = branches.filter((b) => b.isActive);
+    return enabled.length > 0 ? enabled : branches;
+  }, [branches]);
+
+  useEffect(() => {
+    if (activeBranches.length > 0 && !activeBranches.some((b) => b.id === activeBranchId)) {
+      const fallbackId = activeBranches[0].id;
+      setActiveBranchId(fallbackId);
+      persistSetting('activeBranchId', fallbackId);
+    }
+  }, [activeBranches, activeBranchId]);
+
   const activeBranch = useMemo(
-    () => branches.find((b) => b.id === activeBranchId) || branches[0],
-    [branches, activeBranchId]
+    () => activeBranches.find((b) => b.id === activeBranchId) || activeBranches[0] || branches[0],
+    [activeBranches, branches, activeBranchId]
   );
 
   const selectedCustomer = useMemo(
@@ -1449,6 +1463,524 @@ export default function App() {
     if (navigator.onLine) {
       await triggerSyncQueue('auto');
     }
+  };
+
+  const handleUpdateExpense = async (params: {
+    id: string;
+    branchId: string;
+    type: ExpenseType;
+    category: string;
+    description: string;
+    amountUsd: number;
+    expenseDate: string;
+  }) => {
+    const branch = branches.find((b) => b.id === params.branchId) || activeBranch;
+    if (!branch) return;
+
+    const now = new Date().toISOString();
+    const roundedUsd = round2(params.amountUsd);
+    const queueItem = buildSyncQueueItem({
+      entityType: 'expense',
+      entityId: params.id,
+      operation: 'update',
+      summary: `Editar gasto: ${params.description} (${formatUsd(roundedUsd)})`,
+      timestamp: now,
+    });
+
+    await db.transaction('rw', [db.expenses, db.syncQueue], async () => {
+      await db.expenses.update(params.id, {
+        branchId: branch.id,
+        branchName: branch.name,
+        type: params.type,
+        category: params.category,
+        description: params.description,
+        amountUsd: roundedUsd,
+        amountVes: round2(roundedUsd * exchangeRate),
+        exchangeRate,
+        expenseDate: params.expenseDate,
+        updatedAt: now,
+        syncStatus: 'pending',
+        syncedAt: undefined,
+      });
+      await db.syncQueue.put(queueItem);
+    });
+
+    await reloadAllData();
+    if (navigator.onLine) {
+      await triggerSyncQueue('auto');
+    }
+  };
+
+  // Branch CRUD Handlers (preserving branch ID on edit so stock/shifts/transfers remain intact)
+  const handleCreateBranch = async (params: {
+    name: string;
+    code: string;
+    address: string;
+    phone: string;
+  }): Promise<Branch> => {
+    const now = new Date().toISOString();
+    const newBranch: Branch = {
+      id: `branch-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+      name: params.name.trim(),
+      code: params.code.trim().toUpperCase(),
+      address: params.address.trim(),
+      phone: params.phone.trim(),
+      isActive: true,
+      updatedAt: now,
+      syncStatus: 'pending',
+    };
+
+    const queueItem = buildSyncQueueItem({
+      entityType: 'branch',
+      entityId: newBranch.id,
+      operation: 'create',
+      summary: `Nueva sucursal: ${newBranch.name} (${newBranch.code})`,
+      timestamp: now,
+    });
+
+    await db.transaction('rw', [db.branches, db.syncQueue], async () => {
+      await db.branches.put(newBranch);
+      await db.syncQueue.put(queueItem);
+    });
+
+    await reloadAllData();
+    if (navigator.onLine) {
+      await triggerSyncQueue('auto');
+    }
+    return newBranch;
+  };
+
+  const handleUpdateBranch = async (updatedBranch: Branch) => {
+    const now = new Date().toISOString();
+    const queueItem = buildSyncQueueItem({
+      entityType: 'branch',
+      entityId: updatedBranch.id,
+      operation: 'update',
+      summary: `Editar sucursal: ${updatedBranch.name} (${updatedBranch.code})`,
+      timestamp: now,
+    });
+
+    await db.transaction('rw', [db.branches, db.syncQueue], async () => {
+      await db.branches.update(updatedBranch.id, {
+        name: updatedBranch.name.trim(),
+        code: updatedBranch.code.trim().toUpperCase(),
+        address: updatedBranch.address.trim(),
+        phone: updatedBranch.phone.trim(),
+        isActive: updatedBranch.isActive,
+        updatedAt: now,
+        syncStatus: 'pending',
+        syncedAt: undefined,
+      });
+      await db.syncQueue.put(queueItem);
+    });
+
+    await reloadAllData();
+    if (navigator.onLine) {
+      await triggerSyncQueue('auto');
+    }
+  };
+
+  const handleToggleBranchActive = async (
+    branchId: string
+  ): Promise<{ ok: boolean; error?: string }> => {
+    const target = branches.find((b) => b.id === branchId);
+    if (!target) return { ok: false, error: 'Sucursal no encontrada.' };
+
+    const activeCount = branches.filter((b) => b.isActive).length;
+    if (target.isActive && activeCount <= 1) {
+      return {
+        ok: false,
+        error: 'Debe permanecer al menos una sucursal activa para operar en caja.',
+      };
+    }
+
+    const now = new Date().toISOString();
+    const nextActive = !target.isActive;
+    const queueItem = buildSyncQueueItem({
+      entityType: 'branch',
+      entityId: branchId,
+      operation: 'update',
+      summary: `${nextActive ? 'Activar' : 'Desactivar'} sucursal: ${target.name}`,
+      timestamp: now,
+    });
+
+    await db.transaction('rw', [db.branches, db.syncQueue], async () => {
+      await db.branches.update(branchId, {
+        isActive: nextActive,
+        updatedAt: now,
+        syncStatus: 'pending',
+        syncedAt: undefined,
+      });
+      await db.syncQueue.put(queueItem);
+    });
+
+    if (!nextActive && activeBranchId === branchId) {
+      const replacement = branches.find((b) => b.id !== branchId && b.isActive);
+      if (replacement) {
+        setActiveBranchId(replacement.id);
+        persistSetting('activeBranchId', replacement.id);
+        setCart([]);
+      }
+    }
+
+    await reloadAllData();
+    if (navigator.onLine) {
+      await triggerSyncQueue('auto');
+    }
+    return { ok: true };
+  };
+
+  const handleDeleteBranch = async (
+    branchId: string
+  ): Promise<{ ok: boolean; error?: string }> => {
+    const target = branches.find((b) => b.id === branchId);
+    if (!target) return { ok: false, error: 'Sucursal no encontrada.' };
+    if (branches.length <= 1) {
+      return {
+        ok: false,
+        error: 'No puedes eliminar la única sucursal registrada.',
+      };
+    }
+
+    const otherActive = branches.find((b) => b.id !== branchId && b.isActive);
+    const replacement = otherActive || branches.find((b) => b.id !== branchId);
+
+    const now = new Date().toISOString();
+    const queueItem = buildSyncQueueItem({
+      entityType: 'branch',
+      entityId: branchId,
+      operation: 'delete',
+      summary: `Eliminar sucursal: ${target.name} (${target.code})`,
+      timestamp: now,
+    });
+
+    await db.transaction('rw', [db.branches, db.syncQueue], async () => {
+      await db.branches.delete(branchId);
+      if (!otherActive && replacement) {
+        await db.branches.update(replacement.id, {
+          isActive: true,
+          updatedAt: now,
+          syncStatus: 'pending',
+          syncedAt: undefined,
+        });
+      }
+      await db.syncQueue.put(queueItem);
+    });
+
+    if (activeBranchId === branchId && replacement) {
+      setActiveBranchId(replacement.id);
+      persistSetting('activeBranchId', replacement.id);
+      setCart([]);
+    }
+
+    await reloadAllData();
+    if (navigator.onLine) {
+      await triggerSyncQueue('auto');
+    }
+    return { ok: true };
+  };
+
+  // Direct Product & Stock CRUD Handlers (no duplicate products on edit)
+  const handleCreateProduct = async (params: {
+    name: string;
+    sku: string;
+    barcode?: string;
+    category: string;
+    unit: string;
+    minStock: number;
+    costUsd: number;
+    priceUsd: number;
+    taxExempt: boolean;
+    stockByBranch: Record<string, number>;
+  }) => {
+    const now = new Date().toISOString();
+    const newProduct: Product = {
+      id: `prod-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+      name: params.name.trim(),
+      sku: params.sku.trim().toUpperCase(),
+      barcode: params.barcode?.trim() || undefined,
+      category: params.category.trim() || 'General',
+      unit: params.unit.trim() || 'und',
+      minStock: Math.max(0, params.minStock),
+      costUsd: round2(params.costUsd),
+      priceUsd: round2(params.priceUsd),
+      taxExempt: params.taxExempt,
+      stockByBranch: params.stockByBranch,
+      updatedAt: now,
+      syncStatus: 'pending',
+    };
+
+    const queueItem = buildSyncQueueItem({
+      entityType: 'product',
+      entityId: newProduct.id,
+      operation: 'create',
+      summary: `Nuevo producto: ${newProduct.sku} — ${newProduct.name}`,
+      timestamp: now,
+    });
+
+    await db.transaction('rw', [db.products, db.syncQueue], async () => {
+      await db.products.put(newProduct);
+      await db.syncQueue.put(queueItem);
+    });
+
+    await reloadAllData();
+    if (navigator.onLine) {
+      await triggerSyncQueue('auto');
+    }
+  };
+
+  const handleUpdateProduct = async (updatedProduct: Product) => {
+    const now = new Date().toISOString();
+    const queueItem = buildSyncQueueItem({
+      entityType: 'product',
+      entityId: updatedProduct.id,
+      operation: 'update',
+      summary: `Editar stock/producto: ${updatedProduct.sku} — ${updatedProduct.name}`,
+      timestamp: now,
+    });
+
+    await db.transaction('rw', [db.products, db.syncQueue], async () => {
+      await db.products.put({
+        ...updatedProduct,
+        updatedAt: now,
+        syncStatus: 'pending',
+        syncedAt: undefined,
+      });
+      await db.syncQueue.put(queueItem);
+    });
+
+    setCart((prev) =>
+      prev.map((item) =>
+        item.productId === updatedProduct.id
+          ? {
+              ...item,
+              sku: updatedProduct.sku,
+              name: updatedProduct.name,
+              unit: updatedProduct.unit,
+              priceUsd: updatedProduct.priceUsd,
+              costUsd: updatedProduct.costUsd,
+              taxExempt: updatedProduct.taxExempt,
+            }
+          : item
+      )
+    );
+
+    await reloadAllData();
+    if (navigator.onLine) {
+      await triggerSyncQueue('auto');
+    }
+  };
+
+  const handleDeleteProduct = async (productId: string) => {
+    const existing = products.find((p) => p.id === productId);
+    const now = new Date().toISOString();
+    const queueItem = buildSyncQueueItem({
+      entityType: 'product',
+      entityId: productId,
+      operation: 'delete',
+      summary: `Eliminar producto: ${existing?.sku ?? productId} — ${existing?.name ?? ''}`,
+      timestamp: now,
+    });
+
+    await db.transaction('rw', [db.products, db.syncQueue], async () => {
+      await db.products.delete(productId);
+      await db.syncQueue.put(queueItem);
+    });
+
+    setCart((prev) => prev.filter((item) => item.productId !== productId));
+
+    await reloadAllData();
+    if (navigator.onLine) {
+      await triggerSyncQueue('auto');
+    }
+  };
+
+  // Sale Edit & Delete Handlers (with automatic stock & receivable recalculation)
+  const handleUpdateSale = async (updatedSale: Sale) => {
+    const now = new Date().toISOString();
+
+    await db.transaction('rw', [db.sales, db.products, db.customers, db.syncQueue], async () => {
+      const oldSale = await db.sales.get(updatedSale.id);
+      if (!oldSale) return;
+
+      // Adjust stock deltas in the sale's branch
+      const oldQtyByProd = new Map<string, number>();
+      oldSale.items.forEach((item) => {
+        oldQtyByProd.set(item.productId, (oldQtyByProd.get(item.productId) ?? 0) + item.quantity);
+      });
+      const newQtyByProd = new Map<string, number>();
+      updatedSale.items.forEach((item) => {
+        newQtyByProd.set(item.productId, (newQtyByProd.get(item.productId) ?? 0) + item.quantity);
+      });
+
+      const allProductIds = new Set([...oldQtyByProd.keys(), ...newQtyByProd.keys()]);
+      for (const productId of allProductIds) {
+        const oldQty = oldQtyByProd.get(productId) ?? 0;
+        const newQty = newQtyByProd.get(productId) ?? 0;
+        const stockDelta = oldQty - newQty; // positive restores stock, negative deducts more
+        if (stockDelta !== 0) {
+          const prod = await db.products.get(productId);
+          if (prod) {
+            const currentStock = prod.stockByBranch[oldSale.branchId] ?? 0;
+            await db.products.update(prod.id, {
+              stockByBranch: {
+                ...prod.stockByBranch,
+                [oldSale.branchId]: Math.max(0, currentStock + stockDelta),
+              },
+              updatedAt: now,
+              syncStatus: 'pending',
+              syncedAt: undefined,
+            });
+            await db.syncQueue.put(
+              buildSyncQueueItem({
+                entityType: 'product',
+                entityId: prod.id,
+                operation: 'update',
+                summary: `Ajuste stock por edición venta ${updatedSale.receiptNumber}`,
+                timestamp: now,
+              })
+            );
+          }
+        }
+      }
+
+      // Adjust customer receivable balance delta
+      const pendingDelta = round2(updatedSale.pendingUsd - oldSale.pendingUsd);
+      if (Math.abs(pendingDelta) >= 0.01) {
+        const customer = await db.customers.get(oldSale.customerId);
+        if (customer) {
+          await db.customers.update(customer.id, {
+            balanceUsd: round2(Math.max(0, (customer.balanceUsd || 0) + pendingDelta)),
+            updatedAt: now,
+            syncStatus: 'pending',
+            syncedAt: undefined,
+          });
+          await db.syncQueue.put(
+            buildSyncQueueItem({
+              entityType: 'customer',
+              entityId: customer.id,
+              operation: 'update',
+              summary: `Ajuste saldo por edición venta ${updatedSale.receiptNumber}`,
+              timestamp: now,
+            })
+          );
+        }
+      }
+
+      await db.sales.put({
+        ...updatedSale,
+        updatedAt: now,
+        syncStatus: 'pending',
+        syncedAt: undefined,
+      });
+
+      await db.syncQueue.put(
+        buildSyncQueueItem({
+          entityType: 'sale',
+          entityId: updatedSale.id,
+          operation: 'update',
+          summary: `Editar venta ${updatedSale.receiptNumber} (${formatUsd(updatedSale.totalUsd)})`,
+          timestamp: now,
+        })
+      );
+    });
+
+    await reloadAllData();
+    if (navigator.onLine) {
+      await triggerSyncQueue('auto');
+    }
+  };
+
+  const handleDeleteSale = async (saleId: string) => {
+    const now = new Date().toISOString();
+
+    await db.transaction('rw', [db.sales, db.products, db.customers, db.syncQueue], async () => {
+      const oldSale = await db.sales.get(saleId);
+      if (!oldSale) return;
+
+      // Restore sold quantities back to the branch's stock
+      for (const item of oldSale.items) {
+        const prod = await db.products.get(item.productId);
+        if (prod) {
+          const currentStock = prod.stockByBranch[oldSale.branchId] ?? 0;
+          await db.products.update(prod.id, {
+            stockByBranch: {
+              ...prod.stockByBranch,
+              [oldSale.branchId]: currentStock + item.quantity,
+            },
+            updatedAt: now,
+            syncStatus: 'pending',
+            syncedAt: undefined,
+          });
+          await db.syncQueue.put(
+            buildSyncQueueItem({
+              entityType: 'product',
+              entityId: prod.id,
+              operation: 'update',
+              summary: `Devolución stock por eliminación venta ${oldSale.receiptNumber}`,
+              timestamp: now,
+            })
+          );
+        }
+      }
+
+      // Reduce customer receivable balance if the deleted sale had pending credit
+      if (oldSale.pendingUsd > 0) {
+        const customer = await db.customers.get(oldSale.customerId);
+        if (customer) {
+          await db.customers.update(customer.id, {
+            balanceUsd: round2(Math.max(0, (customer.balanceUsd || 0) - oldSale.pendingUsd)),
+            updatedAt: now,
+            syncStatus: 'pending',
+            syncedAt: undefined,
+          });
+          await db.syncQueue.put(
+            buildSyncQueueItem({
+              entityType: 'customer',
+              entityId: customer.id,
+              operation: 'update',
+              summary: `Ajuste saldo por eliminación venta ${oldSale.receiptNumber}`,
+              timestamp: now,
+            })
+          );
+        }
+      }
+
+      await db.sales.delete(saleId);
+      await db.syncQueue.put(
+        buildSyncQueueItem({
+          entityType: 'sale',
+          entityId: saleId,
+          operation: 'delete',
+          summary: `Eliminar venta ${oldSale.receiptNumber}`,
+          timestamp: now,
+        })
+      );
+    });
+
+    await reloadAllData();
+    if (navigator.onLine) {
+      await triggerSyncQueue('auto');
+    }
+  };
+
+  // Manual Operational Test Data Reset (preserves account, subscription, internal users, branches & catalog)
+  const handleResetOperationalData = async () => {
+    const result = await resetOperationalData(cloudUserIdRef.current);
+    setCart([]);
+    setPayments([]);
+    setOrderNotes('');
+    setCompletedSale(null);
+    setLastSyncError(null);
+    await reloadAllData();
+    if (result.ok) {
+      showTemporarySyncNotice(
+        result.cloudCleared
+          ? 'Datos operativos de prueba reiniciados en local y en Supabase.'
+          : 'Datos operativos de prueba reiniciados localmente.'
+      );
+    }
+    return result;
   };
 
   // Catalog & Cart helpers
@@ -2187,11 +2719,11 @@ export default function App() {
                 aria-label="Seleccionar sucursal"
                 value={activeBranchId}
                 onChange={(e) => handleBranchChange(e.target.value)}
-                className="max-w-[120px] truncate rounded-md border border-slate-200 bg-slate-50 py-1 pl-6 pr-2 text-xs font-medium text-slate-800 focus:border-[#76B900] focus:bg-white focus:outline-none cursor-pointer"
+                className="max-w-[165px] truncate rounded-md border border-slate-200 bg-slate-50 py-1 pl-6 pr-2 text-xs font-medium text-slate-800 focus:border-[#76B900] focus:bg-white focus:outline-none cursor-pointer"
               >
-                {branches.map((branch) => (
+                {activeBranches.map((branch) => (
                   <option key={branch.id} value={branch.id}>
-                    {branch.name}
+                    {branch.name} ({branch.code})
                   </option>
                 ))}
               </select>
@@ -2654,8 +3186,13 @@ export default function App() {
             products={products}
             transfers={transfers}
             activeCashier={activeCashier}
+            exchangeRate={exchangeRate}
             onLoadStock={handleLoadStock}
             onTransferStock={handleTransferStock}
+            onCreateProduct={handleCreateProduct}
+            onUpdateProduct={handleUpdateProduct}
+            onDeleteProduct={handleDeleteProduct}
+            onOpenBranchSettings={() => setActiveTab('settings')}
           />
         </div>
       )}
@@ -2669,6 +3206,8 @@ export default function App() {
             currency={currency}
             exchangeRate={exchangeRate}
             onSettleReceivable={handleSettleReceivable}
+            onUpdateSale={handleUpdateSale}
+            onDeleteSale={handleDeleteSale}
           />
         </div>
       )}
@@ -2689,6 +3228,7 @@ export default function App() {
             onAddSupplierQuote={handleAddSupplierQuote}
             onDeleteSupplierQuote={handleDeleteSupplierQuote}
             onAddExpense={handleAddExpense}
+            onUpdateExpense={handleUpdateExpense}
             onDeleteExpense={handleDeleteExpense}
           />
         </div>
@@ -2740,6 +3280,11 @@ export default function App() {
               handleCreateInternalUser({ ...params, role: 'cashier' })
             }
             onDeleteCashier={handleDeleteInternalUser}
+            onCreateBranch={handleCreateBranch}
+            onUpdateBranch={handleUpdateBranch}
+            onToggleBranchActive={handleToggleBranchActive}
+            onDeleteBranch={handleDeleteBranch}
+            onResetOperationalData={handleResetOperationalData}
           />
         </div>
       )}

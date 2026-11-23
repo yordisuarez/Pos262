@@ -1,12 +1,19 @@
 import React, { useEffect, useState } from 'react';
 import {
+  AlertTriangle,
+  Building2,
+  Check,
   CheckCircle2,
   Cloud,
   CloudOff,
   Database,
   KeyRound,
   LogOut,
+  Pencil,
+  Plus,
+  Power,
   RefreshCw,
+  RotateCcw,
   Save,
   ShieldCheck,
   Store,
@@ -14,6 +21,7 @@ import {
   UserPlus,
   Users,
   WifiOff,
+  X,
 } from 'lucide-react';
 import type { User } from '@supabase/supabase-js';
 import type {
@@ -62,6 +70,20 @@ interface SettingsManagerProps {
   onOpenSyncQueue: () => void;
   onCreateCashier: (params: { name: string; pin: string; branchId: string }) => Promise<Cashier>;
   onDeleteCashier: (cashierId: string) => Promise<void>;
+  onCreateBranch: (params: {
+    name: string;
+    code: string;
+    address: string;
+    phone: string;
+  }) => Promise<Branch>;
+  onUpdateBranch: (branch: Branch) => Promise<void>;
+  onToggleBranchActive: (branchId: string) => Promise<{ ok: boolean; error?: string }>;
+  onDeleteBranch: (branchId: string) => Promise<{ ok: boolean; error?: string }>;
+  onResetOperationalData: () => Promise<{
+    ok: boolean;
+    cloudCleared: boolean;
+    errorMessage?: string;
+  }>;
 }
 
 export const SettingsManager: React.FC<SettingsManagerProps> = ({
@@ -86,6 +108,11 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
   onOpenSyncQueue,
   onCreateCashier,
   onDeleteCashier,
+  onCreateBranch,
+  onUpdateBranch,
+  onToggleBranchActive,
+  onDeleteBranch,
+  onResetOperationalData,
 }) => {
   const [businessName, setBusinessName] = useState<string>(businessSettings.businessName);
   const [rif, setRif] = useState<string>(businessSettings.rif);
@@ -111,6 +138,35 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
   const [cashierFormSuccess, setCashierFormSuccess] = useState<string>('');
   const [creatingCashier, setCreatingCashier] = useState<boolean>(false);
 
+  // Branch CRUD state
+  const [showAddBranchForm, setShowAddBranchForm] = useState<boolean>(false);
+  const [newBranchName, setNewBranchName] = useState<string>('');
+  const [newBranchCode, setNewBranchCode] = useState<string>('');
+  const [newBranchAddress, setNewBranchAddress] = useState<string>('');
+  const [newBranchPhone, setNewBranchPhone] = useState<string>('');
+  const [creatingBranch, setCreatingBranch] = useState<boolean>(false);
+
+  const [editingBranchId, setEditingBranchId] = useState<string | null>(null);
+  const [editBranchName, setEditBranchName] = useState<string>('');
+  const [editBranchCode, setEditBranchCode] = useState<string>('');
+  const [editBranchAddress, setEditBranchAddress] = useState<string>('');
+  const [editBranchPhone, setEditBranchPhone] = useState<string>('');
+  const [savingBranchEdit, setSavingBranchEdit] = useState<boolean>(false);
+  const [confirmDeleteBranchId, setConfirmDeleteBranchId] = useState<string | null>(null);
+  const [branchFeedback, setBranchFeedback] = useState<{
+    type: 'ok' | 'err';
+    text: string;
+  } | null>(null);
+
+  // Operational data reset (double confirmation)
+  const [resetPanelOpen, setResetPanelOpen] = useState<boolean>(false);
+  const [resetConfirmText, setResetConfirmText] = useState<string>('');
+  const [resettingData, setResettingData] = useState<boolean>(false);
+  const [resetFeedback, setResetFeedback] = useState<{
+    type: 'ok' | 'err';
+    text: string;
+  } | null>(null);
+
   useEffect(() => {
     setBusinessName(businessSettings.businessName);
     setRif(businessSettings.rif);
@@ -118,6 +174,12 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
     setAddress(businessSettings.address);
     setExchangeRateInput(businessSettings.exchangeRate.toFixed(2));
   }, [businessSettings]);
+
+  useEffect(() => {
+    if (branches.length > 0 && !branches.some((b) => b.id === newCashierBranchId)) {
+      setNewCashierBranchId(branches[0].id);
+    }
+  }, [branches, newCashierBranchId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -200,6 +262,139 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
       setShowAddCashierForm(false);
     } finally {
       setCreatingCashier(false);
+    }
+  };
+
+  const handleCreateBranchSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBranchFeedback(null);
+
+    const trimmedName = newBranchName.trim();
+    const trimmedCode =
+      newBranchCode.trim().toUpperCase() || `SUC-${String(branches.length + 1).padStart(2, '0')}`;
+
+    if (!trimmedName) {
+      setBranchFeedback({ type: 'err', text: 'Ingresa el nombre de la sucursal.' });
+      return;
+    }
+
+    setCreatingBranch(true);
+    try {
+      const created = await onCreateBranch({
+        name: trimmedName,
+        code: trimmedCode,
+        address: newBranchAddress.trim(),
+        phone: newBranchPhone.trim(),
+      });
+      setNewBranchName('');
+      setNewBranchCode('');
+      setNewBranchAddress('');
+      setNewBranchPhone('');
+      setShowAddBranchForm(false);
+      setBranchFeedback({
+        type: 'ok',
+        text: `Sucursal "${created.name} (${created.code})" creada correctamente.`,
+      });
+    } finally {
+      setCreatingBranch(false);
+    }
+  };
+
+  const startEditBranch = (branch: Branch) => {
+    setConfirmDeleteBranchId(null);
+    setBranchFeedback(null);
+    setEditingBranchId(branch.id);
+    setEditBranchName(branch.name);
+    setEditBranchCode(branch.code);
+    setEditBranchAddress(branch.address);
+    setEditBranchPhone(branch.phone);
+  };
+
+  const handleSaveBranchEdit = async (branch: Branch) => {
+    setBranchFeedback(null);
+    const trimmedName = editBranchName.trim();
+    const trimmedCode = editBranchCode.trim().toUpperCase();
+    if (!trimmedName || !trimmedCode) {
+      setBranchFeedback({
+        type: 'err',
+        text: 'El nombre y el código de la sucursal son obligatorios.',
+      });
+      return;
+    }
+
+    setSavingBranchEdit(true);
+    try {
+      await onUpdateBranch({
+        ...branch,
+        name: trimmedName,
+        code: trimmedCode,
+        address: editBranchAddress.trim(),
+        phone: editBranchPhone.trim(),
+      });
+      setEditingBranchId(null);
+      setBranchFeedback({
+        type: 'ok',
+        text: `Sucursal actualizada: "${trimmedName} (${trimmedCode})". Stock, turnos y traslados intactos.`,
+      });
+    } finally {
+      setSavingBranchEdit(false);
+    }
+  };
+
+  const handleToggleBranch = async (branch: Branch) => {
+    setBranchFeedback(null);
+    const result = await onToggleBranchActive(branch.id);
+    if (!result.ok && result.error) {
+      setBranchFeedback({ type: 'err', text: result.error });
+    } else {
+      setBranchFeedback({
+        type: 'ok',
+        text: branch.isActive
+          ? `Sucursal "${branch.name}" desactivada.`
+          : `Sucursal "${branch.name}" activada nuevamente.`,
+      });
+    }
+  };
+
+  const handleConfirmDeleteBranch = async (branch: Branch) => {
+    setBranchFeedback(null);
+    const result = await onDeleteBranch(branch.id);
+    setConfirmDeleteBranchId(null);
+    if (!result.ok && result.error) {
+      setBranchFeedback({ type: 'err', text: result.error });
+    } else {
+      setBranchFeedback({
+        type: 'ok',
+        text: `Sucursal "${branch.name} (${branch.code})" eliminada.`,
+      });
+    }
+  };
+
+  const handleExecuteOperationalReset = async () => {
+    if (resetConfirmText.trim().toUpperCase() !== 'REINICIAR') return;
+    setResettingData(true);
+    setResetFeedback(null);
+    try {
+      const result = await onResetOperationalData();
+      if (result.ok) {
+        setResetPanelOpen(false);
+        setResetConfirmText('');
+        setResetFeedback({
+          type: 'ok',
+          text: result.cloudCleared
+            ? 'Datos operativos reiniciados en este dispositivo y en Supabase (cuenta y suscripción intactas).'
+            : 'Datos operativos reiniciados localmente. Tu cuenta y suscripción siguen intactas.',
+        });
+      } else {
+        setResetFeedback({
+          type: 'err',
+          text:
+            result.errorMessage ||
+            'Se limpiaron los datos locales, pero ocurrió un error al limpiar la nube. Reintenta al reconectar.',
+        });
+      }
+    } finally {
+      setResettingData(false);
     }
   };
 
@@ -370,6 +565,276 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
       <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-3">
           <div className="flex items-center gap-2">
+            <Building2 className="h-4 w-4 text-[#76B900]" />
+            <div>
+              <h2 className="text-sm font-bold text-slate-900">
+                Sucursales y tiendas ({branches.length})
+              </h2>
+              <p className="text-xs text-slate-500">
+                Crea, edita nombre/código, desactiva o elimina sucursales sin perder stock ni historial asociado
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              setShowAddBranchForm((prev) => !prev);
+              setBranchFeedback(null);
+            }}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-[#84CC16] px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-[#76B900] transition-colors cursor-pointer whitespace-nowrap"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            {showAddBranchForm ? 'Cerrar formulario' : 'Nueva sucursal'}
+          </button>
+        </div>
+
+        {showAddBranchForm && (
+          <form
+            onSubmit={handleCreateBranchSubmit}
+            className="grid grid-cols-1 gap-3 rounded-lg border border-slate-200 bg-slate-50/70 p-3.5 sm:grid-cols-2"
+          >
+            <div>
+              <label className="block text-xs font-semibold text-slate-700">
+                Nombre de la sucursal *
+              </label>
+              <input
+                type="text"
+                required
+                placeholder="Ej. Sucursal Oeste"
+                value={newBranchName}
+                onChange={(e) => setNewBranchName(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-[#76B900] focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700">Código *</label>
+              <input
+                type="text"
+                required
+                placeholder={`Ej. SUC-${String(branches.length + 1).padStart(2, '0')}`}
+                value={newBranchCode}
+                onChange={(e) => setNewBranchCode(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-mono text-xs uppercase text-slate-900 focus:border-[#76B900] focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700">Dirección</label>
+              <input
+                type="text"
+                placeholder="Av. Principal, Local 2"
+                value={newBranchAddress}
+                onChange={(e) => setNewBranchAddress(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-[#76B900] focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700">Teléfono</label>
+              <input
+                type="text"
+                placeholder="+58 412-0000000"
+                value={newBranchPhone}
+                onChange={(e) => setNewBranchPhone(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-mono text-xs text-slate-900 focus:border-[#76B900] focus:outline-none"
+              />
+            </div>
+
+            <div className="sm:col-span-2 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowAddBranchForm(false)}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={creatingBranch}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-[#84CC16] px-3.5 py-1.5 text-xs font-bold text-slate-950 hover:bg-[#76B900] disabled:bg-slate-200 disabled:text-slate-400 transition-colors cursor-pointer"
+              >
+                <Save className="h-3.5 w-3.5" />
+                {creatingBranch ? 'Guardando...' : 'Guardar sucursal'}
+              </button>
+            </div>
+          </form>
+        )}
+
+        {branchFeedback && (
+          <div
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium ${
+              branchFeedback.type === 'ok'
+                ? 'border-[#84CC16]/40 bg-[#F7FEE7] text-[#3F6212]'
+                : 'border-red-200 bg-red-50 text-red-700'
+            }`}
+          >
+            {branchFeedback.type === 'ok' && (
+              <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-[#76B900]" />
+            )}
+            <span>{branchFeedback.text}</span>
+          </div>
+        )}
+
+        <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white">
+          {branches.map((branch) => {
+            const isEditing = editingBranchId === branch.id;
+            const isConfirmingDelete = confirmDeleteBranchId === branch.id;
+            const isSelected = activeBranchId === branch.id;
+
+            if (isEditing) {
+              return (
+                <li key={branch.id} className="bg-[#F7FEE7]/60 p-3.5">
+                  <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-700">
+                        Nombre *
+                      </label>
+                      <input
+                        type="text"
+                        value={editBranchName}
+                        onChange={(e) => setEditBranchName(e.target.value)}
+                        className="mt-0.5 w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-[#76B900] focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-700">
+                        Código *
+                      </label>
+                      <input
+                        type="text"
+                        value={editBranchCode}
+                        onChange={(e) => setEditBranchCode(e.target.value)}
+                        className="mt-0.5 w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs uppercase text-slate-900 focus:border-[#76B900] focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-700">
+                        Dirección
+                      </label>
+                      <input
+                        type="text"
+                        value={editBranchAddress}
+                        onChange={(e) => setEditBranchAddress(e.target.value)}
+                        className="mt-0.5 w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-[#76B900] focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-700">
+                        Teléfono
+                      </label>
+                      <input
+                        type="text"
+                        value={editBranchPhone}
+                        onChange={(e) => setEditBranchPhone(e.target.value)}
+                        className="mt-0.5 w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs text-slate-900 focus:border-[#76B900] focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                  <div className="mt-2.5 flex items-center justify-end gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setEditingBranchId(null)}
+                      className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer"
+                    >
+                      <X className="h-3 w-3" />
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      disabled={savingBranchEdit}
+                      onClick={() => void handleSaveBranchEdit(branch)}
+                      className="inline-flex items-center gap-1 rounded-md bg-[#84CC16] px-3 py-1 text-xs font-bold text-slate-950 hover:bg-[#76B900] disabled:opacity-50 cursor-pointer"
+                    >
+                      <Check className="h-3 w-3" />
+                      {savingBranchEdit ? 'Guardando...' : 'Guardar'}
+                    </button>
+                  </div>
+                </li>
+              );
+            }
+
+            return (
+              <li
+                key={branch.id}
+                className="flex flex-col gap-2 px-3.5 py-2.5 text-xs sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div className="min-w-0">
+                  <p className="font-bold text-slate-900">
+                    {branch.name}{' '}
+                    <span className="font-mono font-semibold text-slate-600">({branch.code})</span>
+                    {isSelected && (
+                      <span className="ml-1.5 font-semibold text-[#558B00]">· En caja</span>
+                    )}
+                    {!branch.isActive && (
+                      <span className="ml-1.5 font-semibold text-amber-700">· Inactiva</span>
+                    )}
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-slate-500">
+                    {branch.address || 'Sin dirección'}
+                    {branch.phone ? ` · ${branch.phone}` : ''}
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                  {isConfirmingDelete ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => void handleConfirmDeleteBranch(branch)}
+                        className="rounded bg-red-600 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-red-700 cursor-pointer"
+                      >
+                        Confirmar eliminar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteBranchId(null)}
+                        className="rounded border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer"
+                      >
+                        Cancelar
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => startEditBranch(branch)}
+                        className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:border-[#76B900] hover:text-slate-900 cursor-pointer"
+                      >
+                        <Pencil className="h-3 w-3" />
+                        Editar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleToggleBranch(branch)}
+                        className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                      >
+                        <Power className="h-3 w-3" />
+                        {branch.isActive ? 'Desactivar' : 'Activar'}
+                      </button>
+                      {branches.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteBranchId(branch.id)}
+                          aria-label={`Eliminar sucursal ${branch.name}`}
+                          className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 cursor-pointer"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-3">
+          <div className="flex items-center gap-2">
             <Users className="h-4 w-4 text-[#76B900]" />
             <div>
               <h2 className="text-sm font-bold text-slate-900">
@@ -464,7 +929,7 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
               >
                 {branches.map((branch) => (
                   <option key={branch.id} value={branch.id}>
-                    {branch.name}
+                    {branch.name} ({branch.code})
                   </option>
                 ))}
               </select>
@@ -587,7 +1052,10 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
 
         <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
           <div>
-            <label htmlFor="settings-business-name" className="block text-xs font-semibold text-slate-700">
+            <label
+              htmlFor="settings-business-name"
+              className="block text-xs font-semibold text-slate-700"
+            >
               Nombre del comercio *
             </label>
             <input
@@ -646,7 +1114,10 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
           </div>
 
           <div className="sm:col-span-2">
-            <label htmlFor="settings-address" className="block text-xs font-semibold text-slate-700">
+            <label
+              htmlFor="settings-address"
+              className="block text-xs font-semibold text-slate-700"
+            >
               Dirección fiscal
             </label>
             <input
@@ -685,7 +1156,7 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
         </form>
       </section>
 
-      <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 space-y-3.5">
+      <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-3">
           <div className="flex items-center gap-2">
             <Database className="h-4 w-4 text-slate-700" />
@@ -722,6 +1193,97 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
               <p className="mt-0.5 text-base font-bold text-slate-900">{stat.value}</p>
             </div>
           ))}
+        </div>
+
+        <div className="rounded-lg border border-red-200 bg-red-50/50 p-3.5 space-y-3">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-600" />
+              <div>
+                <h3 className="text-xs font-bold text-slate-900">
+                  Reiniciar datos operativos de prueba
+                </h3>
+                <p className="mt-0.5 text-[11px] text-slate-600">
+                  Borra turnos/cierres, ventas, gastos fijos/variables, traslados de stock, saldos por cobrar y cola pendiente (local y en Supabase).{' '}
+                  <strong className="text-slate-800">
+                    Conserva tu cuenta, suscripción, usuarios internos, sucursales y catálogo.
+                  </strong>
+                </p>
+              </div>
+            </div>
+
+            {!resetPanelOpen && (
+              <button
+                type="button"
+                onClick={() => {
+                  setResetPanelOpen(true);
+                  setResetConfirmText('');
+                  setResetFeedback(null);
+                }}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-bold text-red-700 hover:bg-red-50 transition-colors cursor-pointer whitespace-nowrap"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                Reiniciar datos de prueba
+              </button>
+            )}
+          </div>
+
+          {resetPanelOpen && (
+            <div className="rounded-lg border border-red-200 bg-white p-3 space-y-2.5">
+              <p className="text-xs font-semibold text-red-700">
+                Confirmación doble requerida: esta acción eliminará permanentemente {counts.sales}{' '}
+                ventas, {counts.shifts} turnos, {counts.expenses} gastos y {counts.transfers}{' '}
+                movimientos de stock.
+              </p>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <input
+                  type="text"
+                  value={resetConfirmText}
+                  onChange={(e) => setResetConfirmText(e.target.value)}
+                  placeholder="Escribe REINICIAR para confirmar"
+                  className="flex-1 rounded-md border border-slate-300 bg-slate-50 px-3 py-1.5 font-mono text-xs font-bold uppercase text-slate-900 focus:border-red-500 focus:bg-white focus:outline-none"
+                />
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setResetPanelOpen(false);
+                      setResetConfirmText('');
+                    }}
+                    className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    disabled={
+                      resettingData || resetConfirmText.trim().toUpperCase() !== 'REINICIAR'
+                    }
+                    onClick={() => void handleExecuteOperationalReset()}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-red-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-red-700 disabled:bg-slate-200 disabled:text-slate-400 transition-colors cursor-pointer disabled:cursor-not-allowed whitespace-nowrap"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    {resettingData ? 'Reiniciando...' : 'Confirmar reinicio definitivo'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {resetFeedback && (
+            <p
+              className={`flex items-center gap-1.5 rounded-md border px-3 py-2 text-xs font-medium ${
+                resetFeedback.type === 'ok'
+                  ? 'border-[#84CC16]/40 bg-[#F7FEE7] text-[#3F6212]'
+                  : 'border-red-200 bg-red-50 text-red-700'
+              }`}
+            >
+              {resetFeedback.type === 'ok' && (
+                <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-[#76B900]" />
+              )}
+              <span>{resetFeedback.text}</span>
+            </p>
+          )}
         </div>
       </section>
     </div>

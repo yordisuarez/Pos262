@@ -159,9 +159,34 @@ export function computePendingSyncSummary(params: {
   };
 }
 
-async function upsertSyncRecordsInBatches(rows: CloudSyncRecordRow[]): Promise<void> {
-  for (let i = 0; i < rows.length; i += SYNC_BATCH_SIZE) {
-    const batch = rows.slice(i, i + SYNC_BATCH_SIZE);
+/**
+ * Deduplicates rows by composite primary key `(user_id, entity_type, record_id)`
+ * keeping the most recent state (`updated_at`, or later entry on tie).
+ * Prevents PostgreSQL `ON CONFLICT DO UPDATE command cannot affect row a second time`.
+ */
+function deduplicateSyncRows(rows: CloudSyncRecordRow[]): CloudSyncRecordRow[] {
+  const map = new Map<string, CloudSyncRecordRow>();
+  for (const row of rows) {
+    if (!row.user_id || !row.entity_type || !row.record_id) continue;
+    const key = `${row.user_id}::${row.entity_type}::${row.record_id}`;
+    const existing = map.get(key);
+    if (!existing) {
+      map.set(key, row);
+      continue;
+    }
+    const existingTs = existing.updated_at || '';
+    const nextTs = row.updated_at || '';
+    if (nextTs >= existingTs) {
+      map.set(key, row);
+    }
+  }
+  return Array.from(map.values());
+}
+
+async function upsertSyncRecordsInBatches(rows: CloudSyncRecordRow[]): Promise<number> {
+  const uniqueRows = deduplicateSyncRows(rows);
+  for (let i = 0; i < uniqueRows.length; i += SYNC_BATCH_SIZE) {
+    const batch = uniqueRows.slice(i, i + SYNC_BATCH_SIZE);
     const { error } = await supabase
       .from('sync_records')
       .upsert(batch, { onConflict: 'user_id,entity_type,record_id' });
@@ -169,6 +194,7 @@ async function upsertSyncRecordsInBatches(rows: CloudSyncRecordRow[]): Promise<v
       throw new Error(error.message);
     }
   }
+  return uniqueRows.length;
 }
 
 async function buildAllLocalSyncRows(userId: string, now: string): Promise<CloudSyncRecordRow[]> {
@@ -523,9 +549,10 @@ async function executeSyncQueue(options?: {
     appendPending('supplierQuote', pendingQuotes);
     appendPending('expense', pendingExpenses);
 
-    // Push explicit delete tombstones tracked in syncQueue
-    pendingQueue
+    // Push explicit delete tombstones tracked in syncQueue (sorted oldest->newest so latest wins)
+    [...pendingQueue]
       .filter((item) => item.operation === 'delete' && item.entityType !== 'businessSettings')
+      .sort((a, b) => (a.timestamp || '').localeCompare(b.timestamp || ''))
       .forEach((item) => {
         rowsToPush.push({
           user_id: userId,
@@ -537,9 +564,12 @@ async function executeSyncQueue(options?: {
         });
       });
 
-    // 1. Push pending sync_records to Supabase via upsert
-    if (rowsToPush.length > 0) {
-      await upsertSyncRecordsInBatches(rowsToPush);
+    const deduplicatedRowsToPush = deduplicateSyncRows(rowsToPush);
+
+    // 1. Push deduplicated pending sync_records to Supabase via upsert
+    let confirmedRowsPushed = 0;
+    if (deduplicatedRowsToPush.length > 0) {
+      confirmedRowsPushed = await upsertSyncRecordsInBatches(deduplicatedRowsToPush);
     }
 
     // 2. Sync business_settings (upsert local changes or pull newer cloud settings)
@@ -675,11 +705,10 @@ async function executeSyncQueue(options?: {
       const cloudRows = (cloudRecordsData ?? []) as CloudSyncRecordRow[];
 
       if (cloudRows.length === 0) {
-        // First sync for a brand-new cloud account: upload full local dataset
-        const seedRows = await buildAllLocalSyncRows(userId, now);
+        // First sync for a brand-new cloud account: upload full deduplicated local dataset
+        const seedRows = deduplicateSyncRows(await buildAllLocalSyncRows(userId, now));
         if (seedRows.length > 0) {
-          await upsertSyncRecordsInBatches(seedRows);
-          reconciledPushed = seedRows.length;
+          reconciledPushed = await upsertSyncRecordsInBatches(seedRows);
         }
       } else {
         pulledCount += await mergePulledRecordsIntoIndexedDB(cloudRows, now, userId);
@@ -687,13 +716,12 @@ async function executeSyncQueue(options?: {
         // On manual sync or reconciliation, also upload any pre-existing local records absent from cloud
         if (options?.reconcileMissingLocal) {
           const cloudKeySet = new Set(cloudRows.map((r) => `${r.entity_type}:${r.record_id}`));
-          const allLocalRows = await buildAllLocalSyncRows(userId, now);
+          const allLocalRows = deduplicateSyncRows(await buildAllLocalSyncRows(userId, now));
           const missingOnCloud = allLocalRows.filter(
             (row) => !cloudKeySet.has(`${row.entity_type}:${row.record_id}`)
           );
           if (missingOnCloud.length > 0) {
-            await upsertSyncRecordsInBatches(missingOnCloud);
-            reconciledPushed = missingOnCloud.length;
+            reconciledPushed = await upsertSyncRecordsInBatches(missingOnCloud);
           }
         }
       }
@@ -710,14 +738,8 @@ async function executeSyncQueue(options?: {
       pendingQueue.filter((q) => q.operation === 'delete' || q.entityType === 'product').length;
 
     const pushedCount =
-      Math.max(
-        pendingQueue.length,
-        pendingSales.length +
-          pendingShifts.length +
-          pendingTransfers.length +
-          pendingExpenses.length +
-          otherCount
-      ) + reconciledPushed;
+      Math.max(confirmedRowsPushed + (settingsPushed ? 1 : 0), pendingQueue.length) +
+      reconciledPushed;
 
     const totalSynced = pushedCount + pulledCount;
 
@@ -808,6 +830,99 @@ export function subscribeToCloudChanges(userId: string, onRemoteChange: () => vo
   } catch {
     return () => {};
   }
+}
+
+/**
+ * Clears operational test data (sales, shifts, expenses, stock transfers, sync queue, and customer receivable balances)
+ * locally in IndexedDB/localStorage and in Supabase `sync_records` strictly for the authenticated `user_id`,
+ * while preserving the user account, `public.subscriptions`, internal users, branches, products, and business settings.
+ */
+export async function resetOperationalData(userId: string | null): Promise<{
+  ok: boolean;
+  cloudCleared: boolean;
+  errorMessage?: string;
+}> {
+  const now = new Date().toISOString();
+  const operationalEntityTypes: SyncEntityType[] = ['sale', 'shift', 'expense', 'stockTransfer'];
+
+  let cloudCleared = false;
+  let errorMessage: string | undefined;
+
+  if (userId && typeof navigator !== 'undefined' && navigator.onLine) {
+    try {
+      const { error: deleteError } = await supabase
+        .from('sync_records')
+        .delete()
+        .eq('user_id', userId)
+        .in('entity_type', operationalEntityTypes);
+
+      if (deleteError) {
+        errorMessage = deleteError.message;
+      } else {
+        cloudCleared = true;
+      }
+    } catch (err) {
+      errorMessage =
+        err instanceof Error
+          ? err.message
+          : 'No se pudo limpiar la nube ahora. Los datos locales sí fueron reiniciados.';
+    }
+  }
+
+  const allCustomers = await db.customers.toArray();
+  const resetCustomers = allCustomers
+    .filter((c) => c.balanceUsd !== 0)
+    .map((c) => ({
+      ...c,
+      balanceUsd: 0,
+      updatedAt: now,
+      syncStatus: 'pending' as const,
+    }));
+
+  await db.transaction(
+    'rw',
+    [db.sales, db.shifts, db.expenses, db.stockTransfers, db.syncQueue, db.customers, db.settings],
+    async () => {
+      await Promise.all([
+        db.sales.clear(),
+        db.shifts.clear(),
+        db.expenses.clear(),
+        db.stockTransfers.clear(),
+        db.syncQueue.clear(),
+        ...resetCustomers.map((c) => db.customers.put(c)),
+        db.settings.put({ key: 'operationalResetCompleted', value: now }),
+        db.settings.delete('lastSyncedAt'),
+      ]);
+    }
+  );
+
+  // Sync reset customer receivable balances (0.00) back to Supabase if online
+  if (userId && cloudCleared && resetCustomers.length > 0) {
+    try {
+      const customerRows: CloudSyncRecordRow[] = resetCustomers.map((c) => ({
+        user_id: userId,
+        entity_type: 'customer',
+        record_id: c.id,
+        payload: { ...c, syncStatus: 'synced', syncedAt: now } as unknown as Record<string, unknown>,
+        deleted: false,
+        updated_at: now,
+      }));
+      await upsertSyncRecordsInBatches(customerRows);
+      await db.transaction('rw', db.customers, async () => {
+        await Promise.all(
+          resetCustomers.map((c) => db.customers.update(c.id, { syncStatus: 'synced', syncedAt: now }))
+        );
+      });
+    } catch {
+      // Customer zero-balances remain pending for next sync
+    }
+  }
+
+  return {
+    ok: !errorMessage,
+    cloudCleared,
+    errorMessage,
+  };
 }
 
 export function formatSyncEntityLabel(entityType: SyncEntityType): string {

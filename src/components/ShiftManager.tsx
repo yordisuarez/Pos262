@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Calendar,
   CheckCircle2,
@@ -210,13 +210,13 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
   onCloseShift,
   onSwitchCashier,
 }) => {
-  const [openingFundUsdInput, setOpeningFundUsdInput] = useState<string>('50.00');
-  const [openingFundVesInput, setOpeningFundVesInput] = useState<string>('2000.00');
+  const [openingFundUsdInput, setOpeningFundUsdInput] = useState<string>('0.00');
+  const [openingFundVesInput, setOpeningFundVesInput] = useState<string>('0.00');
   const [openingNote, setOpeningNote] = useState<string>('');
   const [openError, setOpenError] = useState<string>('');
 
-  const [countedUsdInput, setCountedUsdInput] = useState<string>('');
-  const [countedVesInput, setCountedVesInput] = useState<string>('');
+  const [countedUsdInput, setCountedUsdInput] = useState<string>('0.00');
+  const [countedVesInput, setCountedVesInput] = useState<string>('0.00');
   const [closingNote, setClosingNote] = useState<string>('');
   const [closeError, setCloseError] = useState<string>('');
   const [successMessage, setSuccessMessage] = useState<string>('');
@@ -224,6 +224,13 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
   const [filterFromDate, setFilterFromDate] = useState<string>('');
   const [filterToDate, setFilterToDate] = useState<string>('');
   const [filterBranchId, setFilterBranchId] = useState<string>('all');
+
+  useEffect(() => {
+    setCountedUsdInput('0.00');
+    setCountedVesInput('0.00');
+    setClosingNote('');
+    setCloseError('');
+  }, [activeShift?.id]);
 
   const activeShiftMetrics = useMemo(() => {
     if (!activeShift) {
@@ -352,8 +359,8 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
       closingNote: closingNote.trim() || undefined,
     });
 
-    setCountedUsdInput('');
-    setCountedVesInput('');
+    setCountedUsdInput('0.00');
+    setCountedVesInput('0.00');
     setClosingNote('');
     setSuccessMessage('Turno cerrado y arqueo guardado en el historial.');
   };
@@ -564,7 +571,7 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
                   step="0.01"
                   min="0"
                   required
-                  placeholder={activeShiftMetrics.expectedCashUsd.toFixed(2)}
+                  placeholder="0.00"
                   value={countedUsdInput}
                   onChange={(e) => setCountedUsdInput(e.target.value)}
                   className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 font-mono text-sm font-bold tabular-nums text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
@@ -585,7 +592,7 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
                   step="0.01"
                   min="0"
                   required
-                  placeholder={activeShiftMetrics.expectedCashVes.toFixed(2)}
+                  placeholder="0.00"
                   value={countedVesInput}
                   onChange={(e) => setCountedVesInput(e.target.value)}
                   className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 font-mono text-sm font-bold tabular-nums text-[#558B00] focus:border-[#76B900] focus:bg-white focus:outline-none"

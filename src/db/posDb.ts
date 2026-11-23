@@ -114,6 +114,7 @@ const ACCOUNT_SCOPED_SETTING_KEYS = [
   'businessSettingsUpdatedAt',
   'businessSettingsSyncStatus',
   'businessSettingsSyncedAt',
+  'operationalResetCompleted',
 ];
 
 export const DEFAULT_BRANCHES: Branch[] = [
@@ -617,20 +618,22 @@ export async function isolateLocalDatabaseForUser(userId: string | null): Promis
 }
 
 export async function seedDatabaseIfNeeded(): Promise<void> {
-  const [branchCount, productCount, customerCount, quoteCount, expenseCount] = await Promise.all([
-    db.branches.count(),
-    db.products.count(),
-    db.customers.count(),
-    db.supplierQuotes.count(),
-    db.expenses.count(),
-  ]);
+  const [branchCount, productCount, customerCount, quoteCount, expenseCount, resetMarker] =
+    await Promise.all([
+      db.branches.count(),
+      db.products.count(),
+      db.customers.count(),
+      db.supplierQuotes.count(),
+      db.expenses.count(),
+      db.settings.get('operationalResetCompleted'),
+    ]);
 
   if (branchCount === 0) await db.branches.bulkPut(DEFAULT_BRANCHES);
   // Internal users (db.cashiers) are NEVER preloaded — every account starts with 0 internal users.
   if (productCount === 0) await db.products.bulkPut(DEFAULT_PRODUCTS);
   if (customerCount === 0) await db.customers.bulkPut(DEFAULT_CUSTOMERS);
   if (quoteCount === 0) await db.supplierQuotes.bulkPut(DEFAULT_SUPPLIER_QUOTES);
-  if (expenseCount === 0) await db.expenses.bulkPut(DEFAULT_EXPENSES);
+  if (expenseCount === 0 && !resetMarker) await db.expenses.bulkPut(DEFAULT_EXPENSES);
 
   const existingName = await db.settings.get('businessName');
   if (!existingName) {

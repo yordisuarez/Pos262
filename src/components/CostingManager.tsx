@@ -1,12 +1,15 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Calculator,
+  Check,
   CheckCircle2,
+  Pencil,
   Plus,
   Receipt,
   Scale,
   Trash2,
   Truck,
+  X,
 } from 'lucide-react';
 import type {
   Branch,
@@ -62,6 +65,15 @@ interface CostingManagerProps {
     expenseDate: string;
     notes?: string;
   }) => Promise<void>;
+  onUpdateExpense: (params: {
+    id: string;
+    branchId: string;
+    type: ExpenseType;
+    category: string;
+    description: string;
+    amountUsd: number;
+    expenseDate: string;
+  }) => Promise<void>;
   onDeleteExpense: (expenseId: string) => Promise<void>;
 }
 
@@ -79,6 +91,7 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
   onAddSupplierQuote,
   onDeleteSupplierQuote,
   onAddExpense,
+  onUpdateExpense,
   onDeleteExpense,
 }) => {
   const [calcProductId, setCalcProductId] = useState<string>(products[0]?.id || '');
@@ -105,6 +118,31 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
   const [expenseAmountInput, setExpenseAmountInput] = useState<string>('');
   const [expenseDate, setExpenseDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
   const [expenseFeedback, setExpenseFeedback] = useState<string>('');
+
+  // Inline expense editing & deletion state
+  const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
+  const [editExpType, setEditExpType] = useState<ExpenseType>('fixed');
+  const [editExpBranchId, setEditExpBranchId] = useState<string>(activeBranchId);
+  const [editExpCategory, setEditExpCategory] = useState<string>('');
+  const [editExpDescription, setEditExpDescription] = useState<string>('');
+  const [editExpCurrency, setEditExpCurrency] = useState<CurrencyMode>('USD');
+  const [editExpAmount, setEditExpAmount] = useState<string>('');
+  const [editExpDate, setEditExpDate] = useState<string>('');
+  const [savingExpenseEdit, setSavingExpenseEdit] = useState<boolean>(false);
+  const [confirmDeleteExpenseId, setConfirmDeleteExpenseId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (products.length > 0) {
+      if (!products.some((p) => p.id === calcProductId)) setCalcProductId(products[0].id);
+      if (!products.some((p) => p.id === compareProductId)) setCompareProductId(products[0].id);
+    }
+  }, [products, calcProductId, compareProductId]);
+
+  useEffect(() => {
+    if (branches.length > 0 && !branches.some((b) => b.id === expenseBranchId)) {
+      setExpenseBranchId(branches[0].id);
+    }
+  }, [branches, expenseBranchId]);
 
   const formatPrimary = (usd: number): string =>
     currency === 'USD' ? formatUsd(usd) : formatVes(round2(usd * exchangeRate));
@@ -144,7 +182,14 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
       totalBulkProfitUsd,
       actualGrossMarginPct,
     };
-  }, [bulkCostInput, bulkInputCurrency, unitCountInput, marginPercentInput, pricingFormula, exchangeRate]);
+  }, [
+    bulkCostInput,
+    bulkInputCurrency,
+    unitCountInput,
+    marginPercentInput,
+    pricingFormula,
+    exchangeRate,
+  ]);
 
   const handleApplyPricing = async () => {
     if (!calcProductId || pricingCalc.unitCostUsd <= 0 || pricingCalc.salePriceUsd <= 0) return;
@@ -240,7 +285,9 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
     const breakEvenSalesUsd =
       safeMarginRatio > 0 ? round2(totalFixedUsd / safeMarginRatio) : 0;
     const progressPct =
-      breakEvenSalesUsd > 0 ? round2(Math.min(100, (salesRevenueUsd / breakEvenSalesUsd) * 100)) : 0;
+      breakEvenSalesUsd > 0
+        ? round2(Math.min(100, (salesRevenueUsd / breakEvenSalesUsd) * 100))
+        : 0;
     const missingToBreakEvenUsd = round2(Math.max(0, breakEvenSalesUsd - salesRevenueUsd));
     const netProfitUsd = round2(salesRevenueUsd - salesCogsUsd - totalExpensesUsd);
 
@@ -278,7 +325,55 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
 
     setExpenseDescription('');
     setExpenseAmountInput('');
-    setExpenseFeedback('Gasto registrado en IndexedDB.');
+    setExpenseFeedback('Gasto registrado y punto de equilibrio recalculado.');
+  };
+
+  const startEditExpense = (expense: Expense) => {
+    setConfirmDeleteExpenseId(null);
+    setEditingExpenseId(expense.id);
+    setEditExpType(expense.type);
+    setEditExpBranchId(expense.branchId);
+    setEditExpCategory(expense.category);
+    setEditExpDescription(expense.description);
+    setEditExpCurrency('USD');
+    setEditExpAmount(expense.amountUsd.toFixed(2));
+    setEditExpDate(expense.expenseDate);
+    setExpenseFeedback('');
+  };
+
+  const handleSaveExpenseEdit = async () => {
+    if (!editingExpenseId) return;
+    const raw = parseFloat(editExpAmount.replace(',', '.'));
+    if (!editExpDescription.trim() || !Number.isFinite(raw) || raw <= 0) return;
+
+    const amountUsd =
+      editExpCurrency === 'VES' ? round2(raw / exchangeRate) : round2(raw);
+
+    setSavingExpenseEdit(true);
+    try {
+      await onUpdateExpense({
+        id: editingExpenseId,
+        branchId: editExpBranchId,
+        type: editExpType,
+        category: editExpCategory.trim() || 'General',
+        description: editExpDescription.trim(),
+        amountUsd,
+        expenseDate: editExpDate || new Date().toISOString().slice(0, 10),
+      });
+      setEditingExpenseId(null);
+      setExpenseFeedback('Gasto actualizado y métricas de equilibrio recalculadas.');
+    } finally {
+      setSavingExpenseEdit(false);
+    }
+  };
+
+  const handleConfirmDeleteExpense = async (expense: Expense) => {
+    await onDeleteExpense(expense.id);
+    setConfirmDeleteExpenseId(null);
+    if (editingExpenseId === expense.id) {
+      setEditingExpenseId(null);
+    }
+    setExpenseFeedback(`Gasto "${expense.description}" eliminado y punto de equilibrio recalculado.`);
   };
 
   return (
@@ -437,7 +532,9 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
               </p>
             </div>
             <div>
-              <p className="font-sans text-[11px] font-medium text-slate-500">Precio venta sugerido</p>
+              <p className="font-sans text-[11px] font-medium text-slate-500">
+                Precio venta sugerido
+              </p>
               <p className="mt-0.5 text-base font-bold text-slate-900">
                 {formatUsd(pricingCalc.salePriceUsd)}
               </p>
@@ -633,7 +730,8 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
               Gastos fijos / variables y punto de equilibrio
             </h2>
             <p className="text-xs text-slate-500">
-              {activeCashier.name} · Calculado con {breakEvenMetrics.marginSourceLabel} ({breakEvenMetrics.contributionMarginPct}%)
+              {activeCashier.name} · Calculado con {breakEvenMetrics.marginSourceLabel} (
+              {breakEvenMetrics.contributionMarginPct}%)
             </p>
           </div>
         </div>
@@ -676,7 +774,9 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
           </div>
 
           <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
-            <p className="font-sans text-[11px] font-medium text-slate-500">Utilidad neta estimada</p>
+            <p className="font-sans text-[11px] font-medium text-slate-500">
+              Utilidad neta estimada
+            </p>
             <p
               className={`mt-1 text-base font-bold ${
                 breakEvenMetrics.netProfitUsd >= 0 ? 'text-[#558B00]' : 'text-red-600'
@@ -717,11 +817,19 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
 
           <input
             type="text"
+            placeholder="Categoría (Alquiler, Servicios)"
+            value={expenseCategory}
+            onChange={(e) => setExpenseCategory(e.target.value)}
+            className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 sm:col-span-2 focus:border-[#76B900] focus:outline-none"
+          />
+
+          <input
+            type="text"
             required
             placeholder="Descripción (ej: Nómina, Flete) *"
             value={expenseDescription}
             onChange={(e) => setExpenseDescription(e.target.value)}
-            className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 sm:col-span-3 focus:border-[#76B900] focus:outline-none"
+            className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 sm:col-span-2 focus:border-[#76B900] focus:outline-none"
           />
 
           <div className="flex sm:col-span-2">
@@ -755,71 +863,209 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
 
           <button
             type="submit"
-            className="inline-flex items-center justify-center gap-1 rounded-md bg-[#84CC16] px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-[#76B900] sm:col-span-2 cursor-pointer whitespace-nowrap"
+            className="inline-flex items-center justify-center gap-1 rounded-md bg-[#84CC16] px-2.5 py-1.5 text-xs font-bold text-slate-950 hover:bg-[#76B900] sm:col-span-1 cursor-pointer whitespace-nowrap"
           >
             <Receipt className="h-3.5 w-3.5" />
-            Registrar
+            Guardar
           </button>
         </form>
 
         {expenseFeedback && (
-          <p className="text-xs font-semibold text-[#558B00]">{expenseFeedback}</p>
+          <p className="flex items-center gap-1.5 rounded-lg border border-[#84CC16]/40 bg-[#F7FEE7] px-3 py-1.5 text-xs font-semibold text-[#3F6212]">
+            <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-[#76B900]" />
+            {expenseFeedback}
+          </p>
         )}
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead>
-              <tr className="border-b border-slate-200 text-slate-500">
-                <th className="py-2 pr-3 font-semibold">Fecha / Descripción</th>
-                <th className="py-2 px-3 font-semibold">Tipo</th>
-                <th className="py-2 px-3 font-semibold">Sucursal</th>
-                <th className="py-2 px-3 font-semibold text-right">Monto</th>
-                <th className="py-2 pl-3 font-semibold text-right">Sync / Acción</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {expenses.map((expense) => (
-                <tr key={expense.id} className="hover:bg-slate-50/70">
-                  <td className="py-2 pr-3">
-                    <p className="font-semibold text-slate-900">{expense.description}</p>
-                    <p className="text-[11px] font-mono tabular-nums text-slate-500">
-                      {expense.expenseDate} · {expense.category}
-                    </p>
-                  </td>
-                  <td className="py-2 px-3 font-semibold text-slate-700">
-                    {expense.type === 'fixed' ? 'Fijo' : 'Variable'}
-                  </td>
-                  <td className="py-2 px-3 text-slate-600">{expense.branchName}</td>
-                  <td className="py-2 px-3 text-right font-mono font-bold tabular-nums text-slate-900">
-                    <p>{formatUsd(expense.amountUsd)}</p>
-                    <p className="text-[11px] font-semibold text-[#558B00]">
-                      {formatVes(round2(expense.amountUsd * exchangeRate))}
-                    </p>
-                  </td>
-                  <td className="py-2 pl-3 text-right">
-                    <div className="inline-flex items-center gap-2">
-                      <span
-                        className={`text-[11px] font-semibold ${
-                          expense.syncStatus === 'synced' ? 'text-[#558B00]' : 'text-amber-700'
-                        }`}
-                      >
-                        {expense.syncStatus === 'synced' ? 'Sincronizado' : 'Pendiente'}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => void onDeleteExpense(expense.id)}
-                        aria-label="Eliminar gasto"
-                        className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 cursor-pointer"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </td>
+        {expenses.length === 0 ? (
+          <p className="py-6 text-center text-xs text-slate-500">
+            No hay gastos fijos ni variables registrados. Registra un gasto arriba para calcular tu punto de equilibrio.
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-slate-200 text-slate-500">
+                  <th className="py-2 pr-3 font-semibold">Fecha / Descripción</th>
+                  <th className="py-2 px-3 font-semibold">Tipo</th>
+                  <th className="py-2 px-3 font-semibold">Sucursal</th>
+                  <th className="py-2 px-3 font-semibold text-right">Monto</th>
+                  <th className="py-2 pl-3 font-semibold text-right">Acciones</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {expenses.map((expense) => {
+                  const isEditing = editingExpenseId === expense.id;
+                  const isConfirmingDelete = confirmDeleteExpenseId === expense.id;
+
+                  if (isEditing) {
+                    return (
+                      <tr key={expense.id} className="bg-[#F7FEE7]/60">
+                        <td colSpan={5} className="p-2.5">
+                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-12">
+                            <select
+                              value={editExpType}
+                              onChange={(e) => setEditExpType(e.target.value as ExpenseType)}
+                              className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-900 sm:col-span-2 focus:border-[#76B900] focus:outline-none"
+                            >
+                              <option value="fixed">Fijo</option>
+                              <option value="variable">Variable</option>
+                            </select>
+
+                            <select
+                              value={editExpBranchId}
+                              onChange={(e) => setEditExpBranchId(e.target.value)}
+                              className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900 sm:col-span-2 focus:border-[#76B900] focus:outline-none"
+                            >
+                              {branches.map((b) => (
+                                <option key={b.id} value={b.id}>
+                                  {b.name}
+                                </option>
+                              ))}
+                            </select>
+
+                            <input
+                              type="text"
+                              value={editExpCategory}
+                              onChange={(e) => setEditExpCategory(e.target.value)}
+                              placeholder="Categoría"
+                              className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900 sm:col-span-2 focus:border-[#76B900] focus:outline-none"
+                            />
+
+                            <input
+                              type="text"
+                              value={editExpDescription}
+                              onChange={(e) => setEditExpDescription(e.target.value)}
+                              placeholder="Descripción *"
+                              className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900 sm:col-span-2 focus:border-[#76B900] focus:outline-none"
+                            />
+
+                            <div className="flex sm:col-span-2">
+                              <select
+                                aria-label="Moneda edición gasto"
+                                value={editExpCurrency}
+                                onChange={(e) => setEditExpCurrency(e.target.value as CurrencyMode)}
+                                className="rounded-l-md border border-r-0 border-slate-200 bg-slate-100 px-1.5 py-1.5 text-xs font-bold text-slate-700"
+                              >
+                                <option value="USD">$</option>
+                                <option value="VES">Bs</option>
+                              </select>
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0.01"
+                                value={editExpAmount}
+                                onChange={(e) => setEditExpAmount(e.target.value)}
+                                className="w-full rounded-r-md border border-slate-200 bg-white px-2 py-1.5 font-mono text-xs tabular-nums text-slate-900 focus:border-[#76B900] focus:outline-none"
+                              />
+                            </div>
+
+                            <input
+                              type="date"
+                              value={editExpDate}
+                              onChange={(e) => setEditExpDate(e.target.value)}
+                              className="rounded-md border border-slate-200 bg-white px-1.5 py-1.5 font-mono text-xs text-slate-900 sm:col-span-1 focus:border-[#76B900] focus:outline-none"
+                            />
+
+                            <div className="flex items-center justify-end gap-1 sm:col-span-1">
+                              <button
+                                type="button"
+                                disabled={savingExpenseEdit}
+                                onClick={() => void handleSaveExpenseEdit()}
+                                aria-label="Guardar gasto"
+                                className="inline-flex items-center justify-center rounded-md bg-[#84CC16] p-1.5 text-slate-950 hover:bg-[#76B900] disabled:opacity-50 cursor-pointer"
+                              >
+                                <Check className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingExpenseId(null)}
+                                aria-label="Cancelar edición"
+                                className="inline-flex items-center justify-center rounded-md border border-slate-200 bg-white p-1.5 text-slate-600 hover:bg-slate-50 cursor-pointer"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  }
+
+                  return (
+                    <tr key={expense.id} className="hover:bg-slate-50/70">
+                      <td className="py-2 pr-3">
+                        <p className="font-semibold text-slate-900">{expense.description}</p>
+                        <p className="text-[11px] font-mono tabular-nums text-slate-500">
+                          {expense.expenseDate} · {expense.category} ·{' '}
+                          <span
+                            className={
+                              expense.syncStatus === 'synced'
+                                ? 'font-sans font-semibold text-[#558B00]'
+                                : 'font-sans font-semibold text-amber-700'
+                            }
+                          >
+                            {expense.syncStatus === 'synced' ? 'Sincronizado' : 'Pendiente'}
+                          </span>
+                        </p>
+                      </td>
+                      <td className="py-2 px-3 font-semibold text-slate-700">
+                        {expense.type === 'fixed' ? 'Fijo' : 'Variable'}
+                      </td>
+                      <td className="py-2 px-3 text-slate-600">{expense.branchName}</td>
+                      <td className="py-2 px-3 text-right font-mono font-bold tabular-nums text-slate-900">
+                        <p>{formatUsd(expense.amountUsd)}</p>
+                        <p className="text-[11px] font-semibold text-[#558B00]">
+                          {formatVes(round2(expense.amountUsd * exchangeRate))}
+                        </p>
+                      </td>
+                      <td className="py-2 pl-3 text-right whitespace-nowrap">
+                        {isConfirmingDelete ? (
+                          <div className="inline-flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => void handleConfirmDeleteExpense(expense)}
+                              className="rounded bg-red-600 px-2 py-0.5 text-[11px] font-bold text-white hover:bg-red-700 cursor-pointer"
+                            >
+                              Eliminar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteExpenseId(null)}
+                              className="rounded border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer"
+                            >
+                              No
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="inline-flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => startEditExpense(expense)}
+                              aria-label={`Editar gasto ${expense.description}`}
+                              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:border-[#76B900] hover:text-slate-900 cursor-pointer"
+                            >
+                              <Pencil className="h-3 w-3" />
+                              Editar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteExpenseId(expense.id)}
+                              aria-label={`Eliminar gasto ${expense.description}`}
+                              className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 cursor-pointer"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
     </div>
   );
