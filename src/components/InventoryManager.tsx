@@ -1049,10 +1049,10 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700">Código SKU *</label>
+                  <label className="block text-xs font-semibold text-slate-700">Código SKU Opcional</label>
                   <input
                     type="text"
-                    required
+                  
                     value={productForm.sku}
                     onChange={(e) => setProductForm({ ...productForm, sku: e.target.value })}
                     placeholder="Ej: VIV-105"
