@@ -293,10 +293,10 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
       setProductFormError('El nombre del producto es obligatorio.');
       return;
     }
-    if (!trimmedSku) {
-      setProductFormError('El código SKU es obligatorio.');
-      return;
-    }
+ //   if (!trimmedSku) {
+ //     setProductFormError('El código SKU es obligatorio.');
+  //    return;
+   // }
     if (!Number.isFinite(parsedCost) || parsedCost < 0) {
       setProductFormError('Ingresa un costo en USD válido (0 o mayor).');
       return;
