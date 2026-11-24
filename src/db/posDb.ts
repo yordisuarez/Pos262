@@ -326,9 +326,7 @@ const branchCount = await db.branches.count();
 if (branchCount === 0) {
   await db.branches.put({ ...CLEAN_PRIMARY_BRANCH });
 }
-  
-  }
-
+}
   const existingName = await db.settings.get('businessName');
   if (!existingName) {
     await saveLocalBusinessSettings(DEFAULT_BUSINESS_SETTINGS);
