@@ -15,6 +15,7 @@ import {
   CreditCard,
   Download,
   History,
+  Image as ImageIcon,
   Lock,
   MessageCircle,
   Minus,
@@ -23,6 +24,7 @@ import {
   Search,
   Settings,
   ShoppingCart,
+  SlidersHorizontal,
   Smartphone,
   Trash2,
   UserCheck,
@@ -279,6 +281,69 @@ export default function App() {
   const [applyTax, setApplyTax] = useState<boolean>(false);
   const [orderNotes, setOrderNotes] = useState<string>('');
   const [mobileCartOpen, setMobileCartOpen] = useState<boolean>(false);
+
+  // POS View Customization state
+  const [showPhoto, setShowPhoto] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('pos_view_show_photo') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [showCategory, setShowCategory] = useState<boolean>(() => {
+    try {
+      const val = localStorage.getItem('pos_view_show_category');
+      return val !== null ? val === 'true' : true;
+    } catch {
+      return true;
+    }
+  });
+  const [showSku, setShowSku] = useState<boolean>(() => {
+    try {
+      const val = localStorage.getItem('pos_view_show_sku');
+      return val !== null ? val === 'true' : true;
+    } catch {
+      return true;
+    }
+  });
+  const [showDualCurrency, setShowDualCurrency] = useState<boolean>(() => {
+    try {
+      const val = localStorage.getItem('pos_view_show_dual_currency');
+      return val !== null ? val === 'true' : true;
+    } catch {
+      return true;
+    }
+  });
+  const [hideOutOfStock, setHideOutOfStock] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('pos_view_hide_out_of_stock') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [customizeViewOpen, setCustomizeViewOpen] = useState<boolean>(false);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('pos_view_show_photo', String(showPhoto));
+      localStorage.setItem('pos_view_show_category', String(showCategory));
+      localStorage.setItem('pos_view_show_sku', String(showSku));
+      localStorage.setItem('pos_view_show_dual_currency', String(showDualCurrency));
+      localStorage.setItem('pos_view_hide_out_of_stock', String(hideOutOfStock));
+    } catch {
+      // Ignore storage errors
+    }
+  }, [showPhoto, showCategory, showSku, showDualCurrency, hideOutOfStock]);
+
+  const activeCustomizeCount = useMemo(() => {
+    let count = 0;
+    if (showPhoto) count++;
+    if (!showCategory) count++;
+    if (!showSku) count++;
+    if (!showDualCurrency) count++;
+    if (hideOutOfStock) count++;
+    return count;
+  }, [showPhoto, showCategory, showSku, showDualCurrency, hideOutOfStock]);
 
   const [showNewCustomerForm, setShowNewCustomerForm] = useState<boolean>(false);
   const [showCheckoutNewCustomer, setShowCheckoutNewCustomer] = useState<boolean>(false);
@@ -2153,6 +2218,8 @@ export default function App() {
   const filteredProducts = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return products.filter((product) => {
+      const stock = product.stockByBranch[activeBranchId] ?? 0;
+      if (hideOutOfStock && stock <= 0) return false;
       const matchesCategory =
         selectedCategory === 'Todos' || product.category === selectedCategory;
       if (!matchesCategory) return false;
@@ -2163,7 +2230,7 @@ export default function App() {
         (product.barcode && product.barcode.toLowerCase().includes(q))
       );
     });
-  }, [products, searchQuery, selectedCategory]);
+  }, [products, searchQuery, selectedCategory, activeBranchId, hideOutOfStock]);
 
   const formatPrimary = (usd: number): string =>
     currency === 'USD' ? formatUsd(usd) : formatVes(round2(usd * exchangeRate));
@@ -3195,16 +3262,96 @@ export default function App() {
             <section className="flex flex-1 flex-col overflow-hidden">
               <div className="border-b border-slate-200 bg-white px-3.5 py-2.5 lg:px-5">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="relative flex-1 max-w-lg">
-                    <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-                    <input
-                      type="search"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      onKeyDown={handleSearchKeyDown}
-                      placeholder="Buscar por nombre, SKU o código de barras (Enter)..."
-                      className="w-full rounded-md border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-3 text-xs text-slate-900 placeholder:text-slate-400 focus:border-[#76B900] focus:bg-white focus:outline-none"
-                    />
+                  <div className="flex flex-1 items-center gap-2 max-w-xl">
+                    <div className="relative flex-1">
+                      <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type="search"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        onKeyDown={handleSearchKeyDown}
+                        placeholder="Buscar por nombre, SKU o código de barras (Enter)..."
+                        className="w-full rounded-md border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-3 text-xs text-slate-900 placeholder:text-slate-400 focus:border-[#76B900] focus:bg-white focus:outline-none"
+                      />
+                    </div>
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => setCustomizeViewOpen(!customizeViewOpen)}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:border-slate-300 hover:text-slate-900 transition-colors cursor-pointer whitespace-nowrap"
+                      >
+                        <SlidersHorizontal className="h-3.5 w-3.5 text-slate-500" />
+                        <span className="hidden sm:inline">Personalizar vista</span>
+                        <span className="sm:hidden">Vista</span>
+                        {activeCustomizeCount > 0 && (
+                          <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-[#84CC16] text-[10px] font-bold text-slate-950">
+                            {activeCustomizeCount}
+                          </span>
+                        )}
+                      </button>
+
+                      {customizeViewOpen && (
+                        <div className="absolute right-0 top-full z-30 mt-1.5 w-64 rounded-lg border border-slate-200 bg-white p-3 shadow-lg">
+                          <div className="flex items-center justify-between border-b border-slate-100 pb-2 mb-2">
+                            <span className="text-xs font-bold text-slate-900">Personalizar vista POS</span>
+                            <button
+                              type="button"
+                              onClick={() => setCustomizeViewOpen(false)}
+                              className="text-slate-400 hover:text-slate-600 cursor-pointer"
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                          </div>
+                          <div className="space-y-2 text-xs text-slate-700">
+                            <label className="flex items-center justify-between cursor-pointer select-none">
+                              <span>Mostrar Foto</span>
+                              <input
+                                type="checkbox"
+                                checked={showPhoto}
+                                onChange={(e) => setShowPhoto(e.target.checked)}
+                                className="rounded border-slate-300 text-[#84CC16] focus:ring-[#84CC16]"
+                              />
+                            </label>
+                            <label className="flex items-center justify-between cursor-pointer select-none">
+                              <span>Mostrar Categoría</span>
+                              <input
+                                type="checkbox"
+                                checked={showCategory}
+                                onChange={(e) => setShowCategory(e.target.checked)}
+                                className="rounded border-slate-300 text-[#84CC16] focus:ring-[#84CC16]"
+                              />
+                            </label>
+                            <label className="flex items-center justify-between cursor-pointer select-none">
+                              <span>Mostrar SKU / Código</span>
+                              <input
+                                type="checkbox"
+                                checked={showSku}
+                                onChange={(e) => setShowSku(e.target.checked)}
+                                className="rounded border-slate-300 text-[#84CC16] focus:ring-[#84CC16]"
+                              />
+                            </label>
+                            <label className="flex items-center justify-between cursor-pointer select-none">
+                              <span>Mostrar doble moneda ($ / Bs)</span>
+                              <input
+                                type="checkbox"
+                                checked={showDualCurrency}
+                                onChange={(e) => setShowDualCurrency(e.target.checked)}
+                                className="rounded border-slate-300 text-[#84CC16] focus:ring-[#84CC16]"
+                              />
+                            </label>
+                            <label className="flex items-center justify-between cursor-pointer select-none border-t border-slate-100 pt-2">
+                              <span>Ocultar Agotados</span>
+                              <input
+                                type="checkbox"
+                                checked={hideOutOfStock}
+                                onChange={(e) => setHideOutOfStock(e.target.checked)}
+                                className="rounded border-slate-300 text-[#84CC16] focus:ring-[#84CC16]"
+                              />
+                            </label>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <p className="text-xs font-medium text-slate-500 whitespace-nowrap shrink-0">
                     {filteredProducts.length} productos · {activeBranch?.name ?? 'Sucursal'}
@@ -3266,7 +3413,7 @@ export default function App() {
                     </button>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5">
                     {filteredProducts.map((product) => {
                       const stock = getBranchStock(product);
                       const inCartQty = getCartQuantity(product.id);
@@ -3279,7 +3426,7 @@ export default function App() {
                           type="button"
                           disabled={outOfStock}
                           onClick={() => addToCart(product)}
-                          className={`group flex flex-col justify-between rounded-lg border p-3 text-left transition-all cursor-pointer ${
+                          className={`group flex flex-col justify-between rounded-lg border p-2 text-left transition-all cursor-pointer ${
                             outOfStock
                               ? 'border-slate-200 bg-slate-100/70 opacity-60 cursor-not-allowed'
                               : inCartQty > 0
@@ -3288,8 +3435,17 @@ export default function App() {
                           }`}
                         >
                           <div>
-                            <div className="flex items-start justify-between gap-2">
-                              <h2 className="text-xs font-semibold leading-snug text-slate-900 group-hover:text-[#3F6212] transition-colors">
+                            {showPhoto && (
+                              <div className="mb-1.5 flex h-14 w-full items-center justify-center overflow-hidden rounded bg-slate-100 text-slate-400">
+                                {product.imageUrl ? (
+                                  <img src={product.imageUrl} alt={product.name} className="h-full w-full object-cover" />
+                                ) : (
+                                  <ImageIcon className="h-5 w-5 text-slate-400" />
+                                )}
+                              </div>
+                            )}
+                            <div className="flex items-start justify-between gap-1.5">
+                              <h2 className="text-xs font-semibold leading-tight text-slate-900 line-clamp-2 group-hover:text-[#3F6212] transition-colors">
                                 {product.name}
                               </h2>
                               {inCartQty > 0 && (
@@ -3298,44 +3454,48 @@ export default function App() {
                                 </span>
                               )}
                             </div>
-                            <p className="mt-1 text-[11px] text-slate-500">
-                              <span className="font-mono">{product.sku}</span>
-                              <span aria-hidden="true"> · </span>
-                              <span>{product.category}</span>
-                              {product.taxExempt && (
-                                <>
-                                  <span aria-hidden="true"> · </span>
-                                  <span>Exento</span>
-                                </>
-                              )}
-                            </p>
+                            {(showSku || showCategory || product.taxExempt) && (
+                              <p className="mt-0.5 text-[10px] text-slate-500 truncate">
+                                {showSku && <span className="font-mono">{product.sku}</span>}
+                                {showSku && (showCategory || product.taxExempt) && <span> · </span>}
+                                {showCategory && <span>{product.category}</span>}
+                                {product.taxExempt && (
+                                  <>
+                                    <span> · </span>
+                                    <span>Exento</span>
+                                  </>
+                                )}
+                              </p>
+                            )}
                           </div>
 
-                          <div className="mt-3 flex items-end justify-between gap-2 border-t border-slate-100 pt-2">
-                            <div className="font-mono tabular-nums">
+                          <div className="mt-2 flex items-end justify-between gap-1.5 border-t border-slate-100 pt-1.5 font-mono tabular-nums">
+                            <div>
                               <p
-                                className={`text-sm font-bold ${
+                                className={`text-xs font-bold ${
                                   currency === 'VES' ? 'text-[#558B00]' : 'text-slate-900'
                                 }`}
                               >
                                 {formatPrimary(product.priceUsd)}
                               </p>
-                              <p
-                                className={`text-[11px] ${
-                                  currency === 'USD' ? 'text-[#558B00] font-medium' : 'text-slate-500'
-                                }`}
-                              >
-                                {formatSecondary(product.priceUsd)}
-                              </p>
+                              {showDualCurrency && (
+                                <p
+                                  className={`text-[10px] ${
+                                    currency === 'USD' ? 'text-[#558B00] font-medium' : 'text-slate-500'
+                                  }`}
+                                >
+                                  {formatSecondary(product.priceUsd)}
+                                </p>
+                              )}
                             </div>
 
-                            <div className="text-right text-[11px] font-semibold tabular-nums">
+                            <div className="text-right text-[10px] font-semibold tabular-nums">
                               {outOfStock ? (
                                 <span className="text-red-600">Agotado</span>
                               ) : lowStock ? (
                                 <span className="text-amber-700">Bajo: {stock}</span>
                               ) : (
-                                <span className="text-slate-500">Stock: {stock}</span>
+                                <span className="text-slate-500">{stock} {product.unit}</span>
                               )}
                             </div>
                           </div>

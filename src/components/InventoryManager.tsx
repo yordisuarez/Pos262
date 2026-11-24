@@ -325,7 +325,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
         await onUpdateProduct({
           ...original,
           name: trimmedName,
-          sku: trimmedSku || undefined,
+          sku: trimmedSku,
           barcode: productForm.barcode.trim() || undefined,
           category: trimmedCategory,
           unit: trimmedUnit,
@@ -345,7 +345,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
       } else {
         await onCreateProduct({
           name: trimmedName,
-          sku: trimmedSku || undefined,
+          sku: trimmedSku,
           barcode: productForm.barcode.trim() || undefined,
           category: trimmedCategory,
           unit: trimmedUnit,
