@@ -331,7 +331,7 @@ if (branchCount === 0) {
   if (!existingName) {
     await saveLocalBusinessSettings(DEFAULT_BUSINESS_SETTINGS);
   }
-
+}
 export type StockHealthStatus = 'critical' | 'warning' | 'ok';
 
 export interface CategoryValuationItem {
