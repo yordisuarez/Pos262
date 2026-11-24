@@ -320,51 +320,13 @@ export async function isolateLocalDatabaseForUser(userId: string | null): Promis
   return false;
 }
 
-export async function seedDatabaseIfNeeded(ownerUserId?: string | null): Promise<void> {
+export async function seedDatabaseIfNeeded(_ownerUserId?: string | null): Promise<void> {
   await purgeLegacyGenericCustomers();
-
-  const resolvedOwner =
-    ownerUserId !== undefined
-      ? ownerUserId
-      : ((await db.settings.get(ACTIVE_OWNER_KEY))?.value ?? null);
-  const effectiveOwnerId = resolvedOwner === 'local' ? null : resolvedOwner;
-
-  const [
-    branchCount,
-    productCount,
-    customerCount,
-    quoteCount,
-    expenseCount,
-    resetMarker,
-    fullWipeEntry,
-  ] = await Promise.all([
-    db.branches.count(),
-    db.products.count(),
-    db.customers.count(),
-    db.supplierQuotes.count(),
-    db.expenses.count(),
-    db.settings.get('operationalResetCompleted'),
-    db.settings.get('fullDataWipeAt'),
-  ]);
-
-  const fullWipeAt = fullWipeEntry?.value || readFullWipeLocalMarker(effectiveOwnerId);
-
-  if (fullWipeAt) {
-    // Account has been explicitly wiped clean: NEVER re-seed demo data.
-    // Ensure at most 1 clean operational branch exists without demo details.
-    if (!fullWipeEntry) {
-      await db.settings.put({ key: 'fullDataWipeAt', value: fullWipeAt });
-    }
-    if (branchCount === 0) {
-      await db.branches.put({ ...CLEAN_PRIMARY_BRANCH, updatedAt: fullWipeAt });
-    }
-  } else {
-    if (branchCount === 0) await db.branches.bulkPut(DEFAULT_BRANCHES);
-    // Internal users (db.cashiers) are NEVER preloaded — every account starts with 0 internal users.
-    if (productCount === 0) await db.products.bulkPut(DEFAULT_PRODUCTS);
-    if (customerCount === 0) await db.customers.bulkPut(DEFAULT_CUSTOMERS);
-    if (quoteCount === 0) await db.supplierQuotes.bulkPut(DEFAULT_SUPPLIER_QUOTES);
-    if (expenseCount === 0 && !resetMarker) await db.expenses.bulkPut(DEFAULT_EXPENSES);
+const branchCount = await db.branches.count();
+if (branchCount === 0) {
+  await db.branches.put({ ...CLEAN_PRIMARY_BRANCH });
+}
+  
   }
 
   const existingName = await db.settings.get('businessName');
