@@ -156,6 +156,7 @@ export interface Customer {
   documentId: string;
   phone?: string;
   address?: string;
+  notes?: string;
   creditLimitUsd: number;
   balanceUsd: number;
   createdAt: string;

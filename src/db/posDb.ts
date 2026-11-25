@@ -790,3 +790,10 @@ export async function getInventoryValuationSummary(options?: {
     historyDays: options?.historyDays ?? 30,
   });
 }
+
+export async function updateCustomer(id: string, updates: Partial<Customer>): Promise<void> {
+  await db.customers.update(id, {
+    ...updates,
+    updatedAt: new Date().toISOString(),
+  });
+}

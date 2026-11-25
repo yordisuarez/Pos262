@@ -60,6 +60,7 @@ import { CostingManager } from './components/CostingManager';
 import { CloudAuthScreen } from './components/CloudAuthScreen';
 import { SettingsManager } from './components/SettingsManager';
 import { SubscriptionLockScreen } from './components/SubscriptionLockScreen';
+import { CustomersModule } from './components/CustomersModule';
 import {
   buildSubscriptionRenewalWhatsAppUrl,
   createInitialSubscriptionState,
@@ -95,7 +96,7 @@ import type {
   SyncQueueItem,
 } from './types/pos';
 
-type WorkspaceTab = 'pos' | 'shifts' | 'inventory' | 'reports' | 'costing' | 'settings';
+type WorkspaceTab = 'pos' | 'shifts' | 'inventory' | 'customers' | 'reports' | 'costing' | 'settings';
 
 const RATE_STORAGE_KEY = 'pos_262_exchange_rate';
 
@@ -2369,6 +2370,53 @@ export default function App() {
     setCheckoutError('');
   };
 
+  const handleRegisterCustomerFromModule = async (customer: Customer): Promise<void> => {
+    const now = new Date().toISOString();
+    const queueItem = buildSyncQueueItem({
+      entityType: 'customer',
+      entityId: customer.id,
+      operation: 'create',
+      summary: `Nuevo cliente: ${customer.name}${customer.documentId ? ` (${customer.documentId})` : ''}`,
+      timestamp: now,
+    });
+
+    await db.transaction('rw', [db.customers, db.syncQueue], async () => {
+      await db.customers.put({
+        ...customer,
+        updatedAt: now,
+        syncStatus: 'pending',
+      });
+      await db.syncQueue.put(queueItem);
+    });
+
+    await reloadAllData();
+    if (navigator.onLine) {
+      await triggerSyncQueue('auto');
+    }
+  };
+
+  const handleDeleteCustomer = async (customerId: string): Promise<void> => {
+    const customer = customers.find((c) => c.id === customerId);
+    const now = new Date().toISOString();
+    const queueItem = buildSyncQueueItem({
+      entityType: 'customer',
+      entityId: customerId,
+      operation: 'delete',
+      summary: `Eliminar cliente: ${customer?.name ?? customerId}`,
+      timestamp: now,
+    });
+
+    await db.transaction('rw', [db.customers, db.syncQueue], async () => {
+      await db.customers.delete(customerId);
+      await db.syncQueue.put(queueItem);
+    });
+
+    await reloadAllData();
+    if (navigator.onLine) {
+      await triggerSyncQueue('auto');
+    }
+  };
+
   // Checkout helpers
   const activeMethodConfig = useMemo(
     () => PAYMENT_METHODS.find((m) => m.method === selectedMethod) || PAYMENT_METHODS[0],
@@ -3034,6 +3082,18 @@ export default function App() {
                 <Lock className="h-3 w-3" />
                 Turnos
               </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('customers')}
+                className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                  activeTab === 'customers'
+                    ? 'bg-[#84CC16] text-slate-950'
+                    : 'text-slate-600 hover:bg-white hover:text-slate-900'
+                }`}
+              >
+                <Users className="h-3 w-3" />
+                Clientes
+              </button>
               {(isAdmin || permissions.viewInventory) && (
                 <button
                   type="button"
@@ -3556,6 +3616,21 @@ export default function App() {
             onCloseShift={handleCloseShift}
             onDeleteShift={handleDeleteShift}
             onSwitchCashier={() => setLoginModalOpen(true)}
+          />
+        </div>
+      )}
+
+      {activeTab === 'customers' && (
+        <div className="flex-1 overflow-y-auto">
+          <CustomersModule
+            customers={customers}
+            sales={visibleSales}
+            exchangeRate={exchangeRate}
+            onRefreshData={async () => {
+              await reloadAllData();
+            }}
+            onAddCustomer={handleRegisterCustomerFromModule}
+            onDeleteCustomer={handleDeleteCustomer}
           />
         </div>
       )}
