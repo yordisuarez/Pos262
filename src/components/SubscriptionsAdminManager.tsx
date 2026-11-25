@@ -67,8 +67,6 @@ export const SubscriptionsAdminManager: React.FC<SubscriptionsAdminManagerProps>
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>('');
   const [feedback, setFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
-  const [usedFallback, setUsedFallback] = useState<boolean>(false);
-  const [rpcWarning, setRpcWarning] = useState<string>('');
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -86,14 +84,9 @@ export const SubscriptionsAdminManager: React.FC<SubscriptionsAdminManagerProps>
   const loadSubscriptions = useCallback(async () => {
     setLoading(true);
     setError('');
-    setRpcWarning('');
     try {
       const result = await fetchAllClientSubscriptions();
       setItems(result.items);
-      setUsedFallback(result.usedFallbackQuery);
-      if (result.rpcWarning) {
-        setRpcWarning(result.rpcWarning);
-      }
       if (result.errorMessage) {
         setError(result.errorMessage);
       }
@@ -146,8 +139,7 @@ export const SubscriptionsAdminManager: React.FC<SubscriptionsAdminManagerProps>
       return;
     }
 
-    const rowKey = item.id ?? item.userId;
-    const opKey = `${rowKey}:${days}`;
+    const opKey = `${item.userId}:${days}`;
     setBusyKey(opKey);
     setFeedback(null);
 
@@ -211,7 +203,6 @@ export const SubscriptionsAdminManager: React.FC<SubscriptionsAdminManagerProps>
     try {
       const nextExpiresAt = dateInputToEndOfDayIso(editExpiryDate);
       const res = await updateClientSubscription({
-        id: editingItem.id,
         userId: editingItem.userId,
         plan: editPlan,
         status: editStatus,
@@ -370,15 +361,6 @@ export const SubscriptionsAdminManager: React.FC<SubscriptionsAdminManagerProps>
         </div>
       )}
 
-      {usedFallback && !loading && !error && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-2 text-[11px] text-amber-800">
-          No se pudieron cargar los correos mediante{' '}
-          <span className="font-mono font-semibold">get_admin_subscriptions</span>
-          {rpcWarning ? ` (${rpcWarning})` : ''}. Mostrando registros directos de{' '}
-          <span className="font-mono">subscriptions</span>.
-        </div>
-      )}
-
       {loading ? (
         <div className="space-y-2.5">
           {Array.from({ length: 3 }).map((_, idx) => (
@@ -400,17 +382,21 @@ export const SubscriptionsAdminManager: React.FC<SubscriptionsAdminManagerProps>
       ) : (
         <div className="space-y-3">
           {filteredItems.map((item) => {
-            const rowKey = item.id ?? item.userId;
             const whatsappUrl = buildClientSubscriptionWhatsAppUrl(item);
             const displayEmail = item.email || 'Correo no disponible';
-            const secondaryDetails = [item.businessName, item.phone, item.rif]
+            const normalizedEmail = item.email.trim().toLowerCase();
+            const distinctBusinessName =
+              item.businessName && item.businessName.trim().toLowerCase() !== normalizedEmail
+                ? item.businessName
+                : '';
+            const secondaryDetails = [distinctBusinessName, item.phone, item.rif]
               .filter(Boolean)
               .join(' · ');
-            const isRowBusy = busyKey !== null && busyKey.startsWith(`${rowKey}:`);
+            const isRowBusy = busyKey !== null && busyKey.startsWith(`${item.userId}:`);
 
             return (
               <article
-                key={rowKey}
+                key={item.userId}
                 className="rounded-xl border border-slate-200 bg-white p-3.5 sm:p-4 space-y-3"
               >
                 <div className="flex flex-wrap items-start justify-between gap-2">
@@ -496,7 +482,7 @@ export const SubscriptionsAdminManager: React.FC<SubscriptionsAdminManagerProps>
                 <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-2.5">
                   <div className="flex flex-wrap items-center gap-1.5">
                     {[7, 15, 30].map((days) => {
-                      const isThisBusy = busyKey === `${rowKey}:${days}`;
+                      const isThisBusy = busyKey === `${item.userId}:${days}`;
                       return (
                         <button
                           key={days}
@@ -549,7 +535,11 @@ export const SubscriptionsAdminManager: React.FC<SubscriptionsAdminManagerProps>
                 <h3 className="text-sm font-bold text-slate-900">Editar suscripción</h3>
                 <p className="truncate text-xs text-slate-500">
                   {editingItem.email || 'Correo no disponible'}
-                  {editingItem.businessName ? ` · ${editingItem.businessName}` : ''}
+                  {editingItem.businessName &&
+                  editingItem.businessName.trim().toLowerCase() !==
+                    editingItem.email.trim().toLowerCase()
+                    ? ` · ${editingItem.businessName}`
+                    : ''}
                 </p>
               </div>
               <button

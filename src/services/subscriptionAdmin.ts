@@ -172,24 +172,28 @@ export function normalizeAdminSubscription(
 
 export async function fetchAllClientSubscriptions(): Promise<{
   items: AdminSubscriptionItem[];
-  usedFallbackQuery: boolean;
-  rpcWarning?: string;
   errorMessage?: string;
 }> {
   if (!isSupabaseConfigured) {
     return {
       items: [],
-      usedFallbackQuery: false,
       errorMessage: 'Supabase no está configurado en este entorno.',
     };
   }
 
-  // Primary path: get_admin_subscriptions RPC joining public.subscriptions with auth.users
-  // Fetch optional business metadata in parallel so cards also display business name / phone / RIF
-  const [rpcResult, bizRes] = await Promise.all([
-    supabase.rpc('get_admin_subscriptions'),
+  const [subsRes, bizRes] = await Promise.all([
+    supabase.from('subscriptions').select('*').order('expires_at', { ascending: true }),
     supabase.from('business_settings').select('user_id, business_name, phone, rif'),
   ]);
+
+  if (subsRes.error) {
+    return {
+      items: [],
+      errorMessage:
+        subsRes.error.message ||
+        'No se pudieron cargar las suscripciones desde Supabase. Verifica las políticas RLS de Super Admin.',
+    };
+  }
 
   const businessMap = new Map<string, RawBusinessSettingsRow>();
   if (!bizRes.error && Array.isArray(bizRes.data)) {
@@ -200,64 +204,21 @@ export async function fetchAllClientSubscriptions(): Promise<{
     });
   }
 
-  const normalizeAndSort = (rows: RawSubscriptionRow[]): AdminSubscriptionItem[] =>
-    rows
-      .map((row) =>
-        normalizeAdminSubscription(row, row.user_id ? businessMap.get(row.user_id) : undefined)
-      )
-      .filter((item): item is AdminSubscriptionItem => item !== null)
-      .sort((a, b) => {
-        const aMs = new Date(a.expiresAt).getTime() || 0;
-        const bMs = new Date(b.expiresAt).getTime() || 0;
-        return aMs - bMs;
-      });
+  const items = ((subsRes.data as RawSubscriptionRow[] | null) ?? [])
+    .map((row) =>
+      normalizeAdminSubscription(row, row.user_id ? businessMap.get(row.user_id) : undefined)
+    )
+    .filter((item): item is AdminSubscriptionItem => item !== null)
+    .sort((a, b) => {
+      const aMs = new Date(a.expiresAt).getTime() || 0;
+      const bMs = new Date(b.expiresAt).getTime() || 0;
+      return aMs - bMs;
+    });
 
-  if (!rpcResult.error) {
-    const rpcRows = Array.isArray(rpcResult.data)
-      ? (rpcResult.data as RawSubscriptionRow[])
-      : [];
-    return {
-      items: normalizeAndSort(rpcRows),
-      usedFallbackQuery: false,
-    };
-  }
-
-  // Secondary RPC compatibility fallback
-  const legacyRpcResult = await supabase.rpc('admin_list_subscriptions');
-  if (!legacyRpcResult.error && Array.isArray(legacyRpcResult.data)) {
-    return {
-      items: normalizeAndSort(legacyRpcResult.data as RawSubscriptionRow[]),
-      usedFallbackQuery: false,
-    };
-  }
-
-  // Final fallback: direct public.subscriptions query (without auth.users email)
-  const subsRes = await supabase
-    .from('subscriptions')
-    .select('*')
-    .order('expires_at', { ascending: true });
-
-  if (subsRes.error) {
-    return {
-      items: [],
-      usedFallbackQuery: true,
-      rpcWarning: rpcResult.error.message,
-      errorMessage:
-        subsRes.error.message ||
-        rpcResult.error.message ||
-        'No se pudieron cargar las suscripciones desde Supabase. Verifica el RPC get_admin_subscriptions y las políticas RLS de Super Admin.',
-    };
-  }
-
-  return {
-    items: normalizeAndSort((subsRes.data as RawSubscriptionRow[] | null) ?? []),
-    usedFallbackQuery: true,
-    rpcWarning: rpcResult.error.message,
-  };
+  return { items };
 }
 
 export async function updateClientSubscription(params: {
-  id?: string;
   userId: string;
   plan: string;
   status: string;
@@ -267,12 +228,8 @@ export async function updateClientSubscription(params: {
   if (!isSupabaseConfigured) {
     return { ok: false, errorMessage: 'Supabase no está configurado.' };
   }
-  const hasValidUserId = UUID_REGEX.test(params.userId);
-  const hasValidRowId = Boolean(
-    params.id && (UUID_REGEX.test(params.id) || /^\d+$/.test(params.id))
-  );
-  if (!hasValidUserId && !hasValidRowId) {
-    return { ok: false, errorMessage: 'Identificador de suscripción inválido.' };
+  if (!UUID_REGEX.test(params.userId)) {
+    return { ok: false, errorMessage: 'Identificador de usuario inválido.' };
   }
 
   const cleanStatus = params.status.trim().toLowerCase();
@@ -297,47 +254,29 @@ export async function updateClientSubscription(params: {
     notes: cleanNotes,
   };
 
-  const runUpdate = async (column: 'user_id' | 'id', matchValue: string) => {
-    let { data, error } = await supabase
+  let { data, error } = await supabase
+    .from('subscriptions')
+    .update(fullPayload)
+    .eq('user_id', params.userId)
+    .select('user_id')
+    .maybeSingle();
+
+  // Graceful fallback if the live Supabase table doesn't have a `notes` column yet
+  if (error && (error.code === '42703' || error.message?.toLowerCase().includes('notes'))) {
+    const basePayload = {
+      plan: cleanPlan,
+      status: cleanStatus,
+      expires_at: expiryDate.toISOString(),
+      updated_at: nowIso,
+    };
+    const retry = await supabase
       .from('subscriptions')
-      .update(fullPayload)
-      .eq(column, matchValue)
-      .select(column)
+      .update(basePayload)
+      .eq('user_id', params.userId)
+      .select('user_id')
       .maybeSingle();
-
-    // Graceful fallback if the live Supabase table doesn't have a `notes` column yet
-    if (error && (error.code === '42703' || error.message?.toLowerCase().includes('notes'))) {
-      const basePayload = {
-        plan: cleanPlan,
-        status: cleanStatus,
-        expires_at: expiryDate.toISOString(),
-        updated_at: nowIso,
-      };
-      const retry = await supabase
-        .from('subscriptions')
-        .update(basePayload)
-        .eq(column, matchValue)
-        .select(column)
-        .maybeSingle();
-      data = retry.data;
-      error = retry.error;
-    }
-
-    return { data, error };
-  };
-
-  let { data, error } = hasValidRowId
-    ? await runUpdate('id', params.id as string)
-    : await runUpdate('user_id', params.userId);
-
-  if (
-    hasValidUserId &&
-    ((error && (error.code === '42703' || error.message?.toLowerCase().includes('column'))) ||
-      (!error && !data && hasValidRowId && params.id !== params.userId))
-  ) {
-    const byUserIdResult = await runUpdate('user_id', params.userId);
-    data = byUserIdResult.data;
-    error = byUserIdResult.error;
+    data = retry.data;
+    error = retry.error;
   }
 
   if (error) {
@@ -352,7 +291,7 @@ export async function updateClientSubscription(params: {
     return {
       ok: false,
       errorMessage:
-        'Supabase no permitió modificar este registro (verifica las políticas RLS de Super Admin en supabase/schema.sql).',
+        'Supabase no permitió modificar este registro (verifica las políticas RLS de Super Admin).',
     };
   }
 
@@ -378,7 +317,6 @@ export async function extendClientSubscriptionDays(
     item.plan.trim().toLowerCase() === 'trial' && safeDays >= 30 ? 'mensual' : item.plan;
 
   const result = await updateClientSubscription({
-    id: item.id,
     userId: item.userId,
     plan: nextPlan,
     status: 'active',
