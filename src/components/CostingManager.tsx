@@ -7,6 +7,7 @@ import {
   Plus,
   Receipt,
   Scale,
+  Search,
   Trash2,
   Truck,
   X,
@@ -97,6 +98,7 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
   onDeleteExpense,
 }) => {
   const [calcProductId, setCalcProductId] = useState<string>(products[0]?.id || '');
+  const [calcProductQuery, setCalcProductQuery] = useState<string>('');
   const [bulkInputCurrency, setBulkInputCurrency] = useState<CurrencyMode>('USD');
   const [bulkCostInput, setBulkCostInput] = useState<string>('24.00');
   const [unitCountInput, setUnitCountInput] = useState<string>('12');
@@ -433,25 +435,99 @@ export const CostingManager: React.FC<CostingManagerProps> = ({
 
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
           <div className="space-y-3 lg:col-span-7">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700">
-                Producto del catálogo
-              </label>
-              <select
-                value={calcProductId}
-                onChange={(e) => {
-                  setCalcProductId(e.target.value);
-                  setPricingFeedback('');
-                }}
-                className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <label
+                  htmlFor="costing-product-search"
+                  className="block text-xs font-semibold text-slate-700"
+                >
+                  Producto del catálogo
+                </label>
+                <span className="text-[11px] font-medium tabular-nums text-slate-500">
+                  {products.length} {products.length === 1 ? 'producto' : 'productos'}
+                </span>
+              </div>
+
+              {products.length > 5 && (
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                  <input
+                    id="costing-product-search"
+                    type="search"
+                    value={calcProductQuery}
+                    onChange={(e) => setCalcProductQuery(e.target.value)}
+                    placeholder="Filtrar producto..."
+                    className="w-full rounded-lg border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-2.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-[#76B900] focus:bg-white focus:outline-none"
+                  />
+                </div>
+              )}
+
+              <div
+                role="radiogroup"
+                aria-label="Producto del catálogo"
+                className="max-h-56 overflow-y-auto divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white"
               >
-                {products.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.sku} — {p.name} (Actual: Costo {formatUsd(p.costUsd)} / Venta{' '}
-                    {formatUsd(p.priceUsd)})
-                  </option>
-                ))}
-              </select>
+                {(() => {
+                  const q = calcProductQuery.trim().toLowerCase();
+                  const visibleProducts = q
+                    ? products.filter(
+                        (p) =>
+                          p.name.toLowerCase().includes(q) ||
+                          p.sku.toLowerCase().includes(q)
+                      )
+                    : products;
+
+                  if (visibleProducts.length === 0) {
+                    return (
+                      <p className="px-3 py-3 text-center text-xs text-slate-500">
+                        Sin coincidencias en el catálogo.
+                      </p>
+                    );
+                  }
+
+                  return visibleProducts.map((p) => {
+                    const isSelected = p.id === calcProductId;
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={isSelected}
+                        onClick={() => {
+                          setCalcProductId(p.id);
+                          setPricingFeedback('');
+                        }}
+                        className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left transition-colors cursor-pointer ${
+                          isSelected
+                            ? 'bg-[#F7FEE7]/70'
+                            : 'bg-white hover:bg-slate-50'
+                        }`}
+                      >
+                        <span className="flex min-w-0 flex-1 items-center gap-2">
+                          <span
+                            aria-hidden="true"
+                            className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border ${
+                              isSelected
+                                ? 'border-[#76B900] bg-[#84CC16]'
+                                : 'border-slate-300 bg-white'
+                            }`}
+                          >
+                            {isSelected && (
+                              <span className="h-1.5 w-1.5 rounded-full bg-slate-950" />
+                            )}
+                          </span>
+                          <span className="truncate text-sm font-medium text-slate-900">
+                            {p.name}
+                          </span>
+                        </span>
+                        <span className="shrink-0 whitespace-nowrap text-xs tabular-nums text-slate-600">
+                          C: {formatUsd(p.costUsd)} · V: {formatUsd(p.priceUsd)}
+                        </span>
+                      </button>
+                    );
+                  });
+                })()}
+              </div>
             </div>
 
             <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
