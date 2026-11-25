@@ -77,6 +77,7 @@ interface SettingsManagerProps {
     address: string;
     exchangeRate: number;
   }) => Promise<void>;
+  onSaveExchangeRate: (exchangeRate: number) => Promise<void>;
   onManualSync: () => Promise<string | null>;
   onSignOutCloud: () => Promise<void>;
   onOpenSyncQueue: () => void;
@@ -123,6 +124,7 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
   onSelectBranch,
   counts,
   onSaveBusinessSettings,
+  onSaveExchangeRate,
   onManualSync,
   onSignOutCloud,
   onOpenSyncQueue,
@@ -142,6 +144,14 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
   const [exchangeRateInput, setExchangeRateInput] = useState<string>(
     businessSettings.exchangeRate.toFixed(2)
   );
+  const [quickRateInput, setQuickRateInput] = useState<string>(
+    businessSettings.exchangeRate.toFixed(2)
+  );
+  const [savingQuickRate, setSavingQuickRate] = useState<boolean>(false);
+  const [quickRateFeedback, setQuickRateFeedback] = useState<{
+    type: 'ok' | 'err';
+    text: string;
+  } | null>(null);
   const [saving, setSaving] = useState<boolean>(false);
   const [signingOut, setSigningOut] = useState<boolean>(false);
   const [saveMessage, setSaveMessage] = useState<string>('');
@@ -203,7 +213,9 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
     setRif(businessSettings.rif);
     setPhone(businessSettings.phone);
     setAddress(businessSettings.address);
-    setExchangeRateInput(businessSettings.exchangeRate.toFixed(2));
+    const formattedRate = businessSettings.exchangeRate.toFixed(2);
+    setExchangeRateInput(formattedRate);
+    setQuickRateInput(formattedRate);
   }, [businessSettings]);
 
   useEffect(() => {
@@ -245,6 +257,34 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
       );
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSaveQuickRate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setQuickRateFeedback(null);
+    const parsedRate = parseFloat(quickRateInput.replace(',', '.'));
+    if (!Number.isFinite(parsedRate) || parsedRate <= 0) {
+      setQuickRateFeedback({
+        type: 'err',
+        text: 'Ingresa una tasa de cambio válida mayor a 0.',
+      });
+      return;
+    }
+
+    const rounded = Math.round((parsedRate + Number.EPSILON) * 100) / 100;
+    setSavingQuickRate(true);
+    try {
+      await onSaveExchangeRate(rounded);
+      setQuickRateFeedback({
+        type: 'ok',
+        text:
+          cloudUser && isOnline
+            ? `Tasa actualizada a Bs ${rounded.toFixed(2)}/$ y sincronizada con Supabase.`
+            : `Tasa actualizada a Bs ${rounded.toFixed(2)}/$ localmente (se sincronizará al conectar).`,
+      });
+    } finally {
+      setSavingQuickRate(false);
     }
   };
 
@@ -475,86 +515,102 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
 
   return (
     <div className="mx-auto max-w-5xl space-y-5 p-4 lg:p-5">
-      <section className="rounded-xl border border-slate-200 bg-white p-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-          <div className="min-w-0 flex-1 sm:max-w-xs">
-            <label
-              htmlFor="settings-active-branch-select"
-              className="block text-xs font-bold text-slate-900"
-            >
-              Sucursal activa
-            </label>
-            <div className="relative mt-1.5 flex items-center">
-              {isBranchLocked ? (
-                <Lock className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-slate-400" />
-              ) : (
-                <Building2 className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-slate-400" />
-              )}
-              <select
-                id="settings-active-branch-select"
-                aria-label="Seleccionar sucursal"
-                value={activeBranchId}
-                disabled={isBranchLocked}
-                title={
-                  isBranchLocked
-                    ? 'Sucursal fija asignada a este cajero'
-                    : 'Seleccionar sucursal activa'
-                }
-                onChange={(e) => onSelectBranch(e.target.value)}
-                className={`w-full truncate rounded-lg border border-slate-200 py-1.5 pl-8 pr-3 text-xs font-medium focus:border-[#76B900] focus:bg-white focus:outline-none ${
-                  isBranchLocked
-                    ? 'bg-slate-100 text-slate-600 cursor-not-allowed'
-                    : 'bg-slate-50 text-slate-900 cursor-pointer'
-                }`}
+      <section className="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+          <div className="grid flex-1 grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="min-w-0">
+              <label
+                htmlFor="settings-active-branch-select"
+                className="block text-xs font-bold text-slate-900"
               >
-                {visibleBranches.map((branch) => (
-                  <option key={branch.id} value={branch.id}>
-                    {branch.name} ({branch.code})
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={onOpenSyncQueue}
-              title={
-                cloudUser
-                  ? `Cuenta nube: ${cloudUser.email} · Clic para ver cola de sincronización`
-                  : 'Clic para ver cola de sincronización local'
-              }
-              className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
-                cloudSyncState === 'offline'
-                  ? 'border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100/70'
-                  : cloudSyncState === 'synced'
-                  ? 'border-[#84CC16]/40 bg-[#F7FEE7] text-[#3F6212] hover:bg-[#ECFCCB]'
-                  : cloudSyncState === 'error'
-                  ? 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100/70'
-                  : 'border-slate-200 bg-slate-50 text-slate-800 hover:bg-slate-100'
-              }`}
-            >
-              {cloudSyncState === 'offline' ? (
-                <WifiOff className="h-3.5 w-3.5 text-amber-600" />
-              ) : cloudSyncState === 'syncing' ? (
-                <RefreshCw className="h-3.5 w-3.5 animate-spin text-[#76B900]" />
-              ) : cloudSyncState === 'local' ? (
-                <CloudOff className="h-3.5 w-3.5 text-slate-400" />
-              ) : (
-                <Cloud
-                  className={`h-3.5 w-3.5 ${
-                    cloudSyncState === 'error' ? 'text-red-500' : 'text-[#76B900]'
+                Sucursal activa
+              </label>
+              <div className="relative mt-1.5 flex items-center">
+                {isBranchLocked ? (
+                  <Lock className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-slate-400" />
+                ) : (
+                  <Building2 className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-slate-400" />
+                )}
+                <select
+                  id="settings-active-branch-select"
+                  aria-label="Seleccionar sucursal"
+                  value={activeBranchId}
+                  disabled={isBranchLocked}
+                  title={
+                    isBranchLocked
+                      ? 'Sucursal fija asignada a este cajero'
+                      : 'Seleccionar sucursal activa'
+                  }
+                  onChange={(e) => onSelectBranch(e.target.value)}
+                  className={`w-full truncate rounded-lg border border-slate-200 py-1.5 pl-8 pr-3 text-xs font-medium focus:border-[#76B900] focus:bg-white focus:outline-none ${
+                    isBranchLocked
+                      ? 'bg-slate-100 text-slate-600 cursor-not-allowed'
+                      : 'bg-slate-50 text-slate-900 cursor-pointer'
                   }`}
-                />
-              )}
-              <span>Cola de sincronización</span>
-              <span className="font-mono font-bold tabular-nums">
-                ({pendingSyncSummary.total})
-              </span>
-            </button>
+                >
+                  {visibleBranches.map((branch) => (
+                    <option key={branch.id} value={branch.id}>
+                      {branch.name} ({branch.code})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <form onSubmit={handleSaveQuickRate} className="min-w-0">
+              <label
+                htmlFor="settings-quick-exchange-rate"
+                className="block text-xs font-bold text-slate-900"
+              >
+                Tasa de cambio (Bs/$)
+              </label>
+              <div className="mt-1.5 flex items-center gap-1.5">
+                <div className="flex flex-1 items-center rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 focus-within:border-[#76B900] focus-within:bg-white">
+                  <span className="mr-1.5 text-xs font-medium text-slate-500 whitespace-nowrap">
+                    Bs/$
+                  </span>
+                  <input
+                    id="settings-quick-exchange-rate"
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    required
+                    aria-label="Tasa de cambio en Bolívares por Dólar"
+                    value={quickRateInput}
+                    onChange={(e) => {
+                      setQuickRateInput(e.target.value);
+                      setQuickRateFeedback(null);
+                    }}
+                    className="w-full bg-transparent text-right text-xs font-semibold tabular-nums text-[#558B00] focus:outline-none"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={savingQuickRate}
+                  className="inline-flex items-center gap-1 rounded-lg bg-[#84CC16] px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-[#76B900] disabled:bg-slate-200 disabled:text-slate-400 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                >
+                  <Save className="h-3.5 w-3.5" />
+                  {savingQuickRate ? 'Guardando...' : 'Guardar tasa'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
+
+        {quickRateFeedback && (
+          <div
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium ${
+              quickRateFeedback.type === 'ok'
+                ? 'border-[#84CC16]/40 bg-[#F7FEE7] text-[#3F6212]'
+                : 'border-red-200 bg-red-50 text-red-700'
+            }`}
+          >
+            {quickRateFeedback.type === 'ok' && (
+              <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-[#76B900]" />
+            )}
+            <span>{quickRateFeedback.text}</span>
+          </div>
+        )}
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 space-y-4">

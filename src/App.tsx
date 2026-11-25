@@ -8,6 +8,8 @@ import {
   CheckCircle2,
   ChevronDown,
   Clock,
+  Cloud,
+  CloudOff,
   Copy,
   CreditCard,
   Download,
@@ -28,6 +30,7 @@ import {
   UserPlus,
   Users,
   Wallet,
+  WifiOff,
   X,
 } from 'lucide-react';
 import type { User } from '@supabase/supabase-js';
@@ -812,36 +815,42 @@ export default function App() {
     void db.settings.put({ key, value });
   };
 
-  const handleExchangeRateChange = (val: string) => {
+  const handleSaveExchangeRate = async (nextRate: number) => {
     if (!isAdminUser(activeCashier)) return;
-    setExchangeRateInput(val);
-    const parsed = parseFloat(val.replace(',', '.'));
-    if (Number.isFinite(parsed) && parsed > 0) {
-      const rounded = round2(parsed);
-      const normalized = rounded.toFixed(2);
-      const nowIso = new Date().toISOString();
-      const updatedSettings: BusinessSettings = {
-        ...businessSettings,
-        exchangeRate: rounded,
-        updatedAt: nowIso,
-        syncStatus: 'pending',
-      };
-      setBusinessSettings(updatedSettings);
-      void saveLocalBusinessSettings(updatedSettings);
-      try {
-        localStorage.setItem(RATE_STORAGE_KEY, normalized);
-      } catch {
-        // Ignore storage quota errors
-      }
+    if (!Number.isFinite(nextRate) || nextRate <= 0) return;
 
-      if (rateSyncTimerRef.current !== null) {
-        window.clearTimeout(rateSyncTimerRef.current);
-      }
-      if (cloudUserIdRef.current && navigator.onLine) {
-        rateSyncTimerRef.current = window.setTimeout(() => {
-          void triggerSyncQueue('auto');
-        }, 900);
-      }
+    const rounded = round2(nextRate);
+    const normalized = rounded.toFixed(2);
+    const nowIso = new Date().toISOString();
+    const updatedSettings: BusinessSettings = {
+      ...businessSettings,
+      exchangeRate: rounded,
+      updatedAt: nowIso,
+      syncStatus: 'pending',
+    };
+
+    const queueItem = buildSyncQueueItem({
+      entityType: 'businessSettings',
+      entityId: 'business_settings',
+      operation: 'update',
+      summary: `Tasa de cambio actualizada: Bs ${normalized}/$`,
+      timestamp: nowIso,
+    });
+
+    setExchangeRateInput(normalized);
+    setBusinessSettings(updatedSettings);
+    await saveLocalBusinessSettings(updatedSettings);
+    await db.syncQueue.put(queueItem);
+
+    try {
+      localStorage.setItem(RATE_STORAGE_KEY, normalized);
+    } catch {
+      // Ignore storage quota errors
+    }
+
+    await reloadAllData();
+    if (cloudUserIdRef.current && navigator.onLine) {
+      await triggerSyncQueue('auto');
     }
   };
 
@@ -3244,27 +3253,16 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
-            <label
-              title={
-                isAdmin
-                  ? 'Tasa diaria de cambio en Bolívares por Dólar'
-                  : 'Tasa diaria de cambio (solo el administrador puede modificarla)'
-              }
-              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs focus-within:border-[#76B900] focus-within:bg-white shrink-0"
+            <div
+              title="Tasa diaria de cambio (editable en Configuración)"
+              aria-label={`Tasa diaria de cambio: ${exchangeRate.toFixed(2)} Bolívares por Dólar`}
+              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs select-none shrink-0"
             >
               <span className="font-medium text-slate-500 whitespace-nowrap">Bs/$</span>
-              <input
-                type="number"
-                step="0.01"
-                min="0.01"
-                aria-label="Tasa diaria de cambio en Bolívares por Dólar"
-                value={exchangeRateInput}
-                readOnly={!isAdmin}
-                disabled={!isAdmin}
-                onChange={(e) => handleExchangeRateChange(e.target.value)}
-                className="w-14 bg-transparent text-right text-xs font-semibold tabular-nums text-[#558B00] focus:outline-none disabled:cursor-default disabled:opacity-90"
-              />
-            </label>
+              <span className="font-semibold tabular-nums text-[#558B00] whitespace-nowrap">
+                {exchangeRate.toFixed(2)}
+              </span>
+            </div>
 
             <div
               role="group"
@@ -3333,8 +3331,8 @@ export default function App() {
           </div>
         </div>
 
-        <div className="border-t border-slate-200 bg-slate-50 px-3 py-1.5 lg:px-5">
-          <div className="flex flex-wrap items-center gap-2">
+        <div className="border-t border-slate-200 bg-slate-50 px-2.5 py-1.5 sm:px-3 lg:px-5">
+          <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto no-scrollbar">
             <nav
               aria-label="Módulos"
               className="inline-flex items-center gap-0.5 rounded-md border border-slate-200 bg-white p-0.5 shrink-0"
@@ -3345,7 +3343,7 @@ export default function App() {
                   setActiveTab('pos');
                   setNavMenuOpen(false);
                 }}
-                className={`rounded px-2 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                className={`rounded px-1.5 py-1 text-[11px] sm:px-2 sm:text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   activeTab === 'pos'
                     ? 'bg-[#84CC16] text-slate-950'
                     : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
@@ -3359,13 +3357,13 @@ export default function App() {
                   setActiveTab('shifts');
                   setNavMenuOpen(false);
                 }}
-                className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                className={`inline-flex items-center gap-1 rounded px-1.5 py-1 text-[11px] sm:px-2 sm:text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   activeTab === 'shifts'
                     ? 'bg-[#84CC16] text-slate-950'
                     : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
                 }`}
               >
-                <Lock className="h-3 w-3" />
+                <Lock className="h-3 w-3 shrink-0" />
                 Turnos
               </button>
               {(() => {
@@ -3387,21 +3385,62 @@ export default function App() {
                       }
                       setNavMenuOpen((prev) => !prev);
                     }}
-                    className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                    className={`inline-flex items-center gap-1 rounded px-1.5 py-1 text-[11px] sm:px-2 sm:text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                       isGroupedTabActive || navMenuOpen
                         ? 'bg-[#84CC16] text-slate-950'
                         : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
                     }`}
                   >
-                    <Menu className="h-3 w-3" />
+                    <Menu className="h-3 w-3 shrink-0" />
                     <span>Menú</span>
                     <ChevronDown
-                      className={`h-3 w-3 transition-transform ${navMenuOpen ? 'rotate-180' : ''}`}
+                      className={`h-3 w-3 shrink-0 transition-transform ${navMenuOpen ? 'rotate-180' : ''}`}
                     />
                   </button>
                 );
               })()}
             </nav>
+
+            <button
+              type="button"
+              onClick={() => {
+                setNavMenuOpen(false);
+                setHistoryTab('queue');
+                setHistoryOpen(true);
+              }}
+              title={
+                cloudUser
+                  ? `Cuenta nube: ${cloudUser.email} · Clic para ver cola de sincronización`
+                  : 'Clic para ver cola de sincronización local'
+              }
+              className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] sm:gap-1.5 sm:px-2.5 sm:text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                cloudSyncState === 'offline'
+                  ? 'border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100/70'
+                  : cloudSyncState === 'synced'
+                  ? 'border-[#84CC16]/40 bg-[#F7FEE7] text-[#3F6212] hover:bg-[#ECFCCB]'
+                  : cloudSyncState === 'error'
+                  ? 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100/70'
+                  : 'border-slate-200 bg-white text-slate-800 hover:bg-slate-50'
+              }`}
+            >
+              {cloudSyncState === 'offline' ? (
+                <WifiOff className="h-3.5 w-3.5 shrink-0 text-amber-600" />
+              ) : cloudSyncState === 'syncing' ? (
+                <RefreshCw className="h-3.5 w-3.5 shrink-0 animate-spin text-[#76B900]" />
+              ) : cloudSyncState === 'local' ? (
+                <CloudOff className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+              ) : (
+                <Cloud
+                  className={`h-3.5 w-3.5 shrink-0 ${
+                    cloudSyncState === 'error' ? 'text-red-500' : 'text-[#76B900]'
+                  }`}
+                />
+              )}
+              <span>Cola de sincronización</span>
+              <span className="font-semibold tabular-nums">
+                ({pendingSyncSummary.total})
+              </span>
+            </button>
           </div>
         </div>
 
@@ -3948,6 +3987,7 @@ export default function App() {
               expenses: expenses.length,
             }}
             onSaveBusinessSettings={handleSaveBusinessSettings}
+            onSaveExchangeRate={handleSaveExchangeRate}
             onManualSync={async () => {
               const result = await triggerSyncQueue('manual');
               if (!result || !result.ok) {
