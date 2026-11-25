@@ -7,6 +7,8 @@ import {
   Cloud,
   CloudOff,
   Database,
+  Eye,
+  EyeOff,
   KeyRound,
   Lock,
   LogOut,
@@ -89,6 +91,11 @@ interface SettingsManagerProps {
   }) => Promise<Cashier>;
   onUpdateCashier: (cashier: Cashier) => Promise<void>;
   onDeleteCashier: (cashierId: string) => Promise<void>;
+  onChangeAdminPin: (params: {
+    currentPin: string;
+    newPin: string;
+    confirmPin: string;
+  }) => Promise<{ ok: boolean; error?: string }>;
   onCreateBranch: (params: {
     name: string;
     code: string;
@@ -131,6 +138,7 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
   onCreateCashier,
   onUpdateCashier,
   onDeleteCashier,
+  onChangeAdminPin,
   onCreateBranch,
   onUpdateBranch,
   onToggleBranchActive,
@@ -178,6 +186,20 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
     ...DEFAULT_CASHIER_PERMISSIONS,
   });
   const [savingCashierEdit, setSavingCashierEdit] = useState<boolean>(false);
+
+  // Admin PIN configuration state
+  const [showChangeAdminPinForm, setShowChangeAdminPinForm] = useState<boolean>(false);
+  const [currentAdminPin, setCurrentAdminPin] = useState<string>('');
+  const [newAdminPin, setNewAdminPin] = useState<string>('');
+  const [confirmAdminPin, setConfirmAdminPin] = useState<string>('');
+  const [showAdminPins, setShowAdminPins] = useState<boolean>(false);
+  const [savingAdminPin, setSavingAdminPin] = useState<boolean>(false);
+  const [adminPinAttempts, setAdminPinAttempts] = useState<number>(0);
+  const [adminPinLockoutUntil, setAdminPinLockoutUntil] = useState<number>(0);
+  const [adminPinFeedback, setAdminPinFeedback] = useState<{
+    type: 'ok' | 'err';
+    text: string;
+  } | null>(null);
 
   // Branch CRUD state
   const [showAddBranchForm, setShowAddBranchForm] = useState<boolean>(false);
@@ -335,6 +357,106 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
       setShowAddCashierForm(false);
     } finally {
       setCreatingCashier(false);
+    }
+  };
+
+  const resetAdminPinFields = () => {
+    setCurrentAdminPin('');
+    setNewAdminPin('');
+    setConfirmAdminPin('');
+    setShowAdminPins(false);
+  };
+
+  const handleChangeAdminPinSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAdminPinFeedback(null);
+
+    const now = Date.now();
+    if (adminPinLockoutUntil > now) {
+      const waitSec = Math.ceil((adminPinLockoutUntil - now) / 1000);
+      setAdminPinFeedback({
+        type: 'err',
+        text: `Demasiados intentos fallidos. Espera ${waitSec}s antes de reintentar.`,
+      });
+      return;
+    }
+
+    const cleanCurrent = currentAdminPin.trim();
+    const cleanNew = newAdminPin.trim();
+    const cleanConfirm = confirmAdminPin.trim();
+
+    if (!cleanCurrent) {
+      setAdminPinFeedback({ type: 'err', text: 'Ingresa tu PIN actual de Administrador.' });
+      return;
+    }
+    if (!/^\d{6,12}$/.test(cleanNew)) {
+      setAdminPinFeedback({
+        type: 'err',
+        text: 'El nuevo PIN de Administrador debe tener entre 6 y 12 dígitos numéricos.',
+      });
+      return;
+    }
+    if (cleanNew !== cleanConfirm) {
+      setAdminPinFeedback({
+        type: 'err',
+        text: 'La confirmación del nuevo PIN no coincide.',
+      });
+      return;
+    }
+    const isTrivial =
+      cleanNew === '1234' ||
+      /^(.)\1+$/.test(cleanNew) ||
+      '01234567890123456789'.includes(cleanNew) ||
+      '98765432109876543210'.includes(cleanNew);
+    if (isTrivial) {
+      setAdminPinFeedback({
+        type: 'err',
+        text: 'Elige un PIN más seguro (evita secuencias como 123456 o dígitos repetidos).',
+      });
+      return;
+    }
+
+    setSavingAdminPin(true);
+    try {
+      const result = await onChangeAdminPin({
+        currentPin: cleanCurrent,
+        newPin: cleanNew,
+        confirmPin: cleanConfirm,
+      });
+      if (!result.ok) {
+        if (result.error?.toLowerCase().includes('actual')) {
+          const nextAttempts = adminPinAttempts + 1;
+          setAdminPinAttempts(nextAttempts);
+          setCurrentAdminPin('');
+          if (nextAttempts >= 5) {
+            setAdminPinLockoutUntil(Date.now() + 30_000);
+            setAdminPinFeedback({
+              type: 'err',
+              text: 'Demasiados intentos incorrectos. Intenta nuevamente en 30 segundos.',
+            });
+            return;
+          }
+        }
+        setAdminPinFeedback({
+          type: 'err',
+          text: result.error || 'No se pudo actualizar el PIN de Administrador.',
+        });
+        return;
+      }
+
+      setAdminPinAttempts(0);
+      setAdminPinLockoutUntil(0);
+      resetAdminPinFields();
+      setShowChangeAdminPinForm(false);
+      setAdminPinFeedback({
+        type: 'ok',
+        text:
+          cloudUser && isOnline
+            ? 'PIN de Administrador actualizado y sincronizado con la nube.'
+            : 'PIN de Administrador actualizado localmente (se sincronizará al conectar).',
+      });
+    } finally {
+      setSavingAdminPin(false);
     }
   };
 
@@ -1032,24 +1154,203 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
                 Usuarios internos (Administrador y Cajeros)
               </h2>
               <p className="text-xs text-slate-500">
-                Administra los perfiles con acceso a caja. Los PIN de 4 dígitos permanecen siempre ocultos.
+                Administra los perfiles con acceso a caja y el PIN de Administrador. Los PIN permanecen siempre ocultos.
               </p>
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={() => {
-              setShowAddCashierForm((prev) => !prev);
-              setCashierFormError('');
-              setCashierFormSuccess('');
-            }}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-[#84CC16] px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-[#76B900] transition-colors cursor-pointer whitespace-nowrap"
-          >
-            <UserPlus className="h-3.5 w-3.5" />
-            {showAddCashierForm ? 'Cerrar formulario' : 'Agregar Cajero'}
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setShowChangeAdminPinForm((prev) => {
+                  const next = !prev;
+                  if (!next) resetAdminPinFields();
+                  return next;
+                });
+                setShowAddCashierForm(false);
+                setAdminPinFeedback(null);
+              }}
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                showChangeAdminPinForm
+                  ? 'border-[#76B900] bg-[#F7FEE7] text-[#3F6212]'
+                  : 'border-slate-200 bg-white text-slate-700 hover:border-[#76B900] hover:text-slate-900'
+              }`}
+            >
+              <KeyRound className="h-3.5 w-3.5" />
+              {showChangeAdminPinForm ? 'Cerrar cambio de PIN' : 'Cambiar PIN de Administrador'}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setShowAddCashierForm((prev) => !prev);
+                setShowChangeAdminPinForm(false);
+                setCashierFormError('');
+                setCashierFormSuccess('');
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[#84CC16] px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-[#76B900] transition-colors cursor-pointer whitespace-nowrap"
+            >
+              <UserPlus className="h-3.5 w-3.5" />
+              {showAddCashierForm ? 'Cerrar formulario' : 'Agregar Cajero'}
+            </button>
+          </div>
         </div>
+
+        {showChangeAdminPinForm && (
+          <form
+            onSubmit={handleChangeAdminPinSubmit}
+            className="space-y-3 rounded-lg border border-slate-200 bg-slate-50/70 p-3.5"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-xs font-bold text-slate-900">Cambiar PIN de Administrador</p>
+                <p className="text-[11px] text-slate-500">
+                  Usa entre 6 y 12 dígitos numéricos (sin secuencias simples ni dígitos repetidos).
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAdminPins((prev) => !prev)}
+                className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:text-slate-900 cursor-pointer"
+              >
+                {showAdminPins ? (
+                  <>
+                    <EyeOff className="h-3.5 w-3.5" />
+                    Ocultar
+                  </>
+                ) : (
+                  <>
+                    <Eye className="h-3.5 w-3.5" />
+                    Mostrar
+                  </>
+                )}
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div>
+                <label
+                  htmlFor="settings-admin-current-pin"
+                  className="block text-xs font-semibold text-slate-700"
+                >
+                  PIN actual *
+                </label>
+                <div className="relative mt-1">
+                  <Lock className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                  <input
+                    id="settings-admin-current-pin"
+                    type={showAdminPins ? 'text' : 'password'}
+                    inputMode="numeric"
+                    maxLength={12}
+                    autoComplete="current-password"
+                    required
+                    placeholder="••••••"
+                    value={currentAdminPin}
+                    onChange={(e) => {
+                      setCurrentAdminPin(e.target.value.replace(/\D/g, '').slice(0, 12));
+                      setAdminPinFeedback(null);
+                    }}
+                    className="w-full rounded-lg border border-slate-200 bg-white py-1.5 pl-8 pr-3 font-mono text-xs tracking-[0.2em] text-slate-900 focus:border-[#76B900] focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="settings-admin-new-pin"
+                  className="block text-xs font-semibold text-slate-700"
+                >
+                  Nuevo PIN (6–12 dígitos) *
+                </label>
+                <div className="relative mt-1">
+                  <KeyRound className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                  <input
+                    id="settings-admin-new-pin"
+                    type={showAdminPins ? 'text' : 'password'}
+                    inputMode="numeric"
+                    pattern="[0-9]{6,12}"
+                    minLength={6}
+                    maxLength={12}
+                    autoComplete="new-password"
+                    required
+                    placeholder="6 a 12 dígitos"
+                    value={newAdminPin}
+                    onChange={(e) => {
+                      setNewAdminPin(e.target.value.replace(/\D/g, '').slice(0, 12));
+                      setAdminPinFeedback(null);
+                    }}
+                    className="w-full rounded-lg border border-slate-200 bg-white py-1.5 pl-8 pr-3 font-mono text-xs tracking-[0.2em] text-slate-900 focus:border-[#76B900] focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="settings-admin-confirm-pin"
+                  className="block text-xs font-semibold text-slate-700"
+                >
+                  Confirmar nuevo PIN *
+                </label>
+                <div className="relative mt-1">
+                  <KeyRound className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                  <input
+                    id="settings-admin-confirm-pin"
+                    type={showAdminPins ? 'text' : 'password'}
+                    inputMode="numeric"
+                    pattern="[0-9]{6,12}"
+                    minLength={6}
+                    maxLength={12}
+                    autoComplete="new-password"
+                    required
+                    placeholder="Repite el nuevo PIN"
+                    value={confirmAdminPin}
+                    onChange={(e) => {
+                      setConfirmAdminPin(e.target.value.replace(/\D/g, '').slice(0, 12));
+                      setAdminPinFeedback(null);
+                    }}
+                    className="w-full rounded-lg border border-slate-200 bg-white py-1.5 pl-8 pr-3 font-mono text-xs tracking-[0.2em] text-slate-900 focus:border-[#76B900] focus:outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {adminPinFeedback?.type === 'err' && (
+              <p className="rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700">
+                {adminPinFeedback.text}
+              </p>
+            )}
+
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  resetAdminPinFields();
+                  setShowChangeAdminPinForm(false);
+                  setAdminPinFeedback(null);
+                }}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={savingAdminPin}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-[#84CC16] px-3.5 py-1.5 text-xs font-bold text-slate-950 hover:bg-[#76B900] disabled:bg-slate-200 disabled:text-slate-400 transition-colors cursor-pointer"
+              >
+                <Save className="h-3.5 w-3.5" />
+                {savingAdminPin ? 'Guardando...' : 'Guardar nuevo PIN'}
+              </button>
+            </div>
+          </form>
+        )}
+
+        {adminPinFeedback?.type === 'ok' && (
+          <div className="flex items-center gap-1.5 rounded-lg border border-[#84CC16]/40 bg-[#F7FEE7] px-3 py-2 text-xs font-medium text-[#3F6212]">
+            <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-[#76B900]" />
+            <span>{adminPinFeedback.text}</span>
+          </div>
+        )}
 
         {showAddCashierForm && (
           <form

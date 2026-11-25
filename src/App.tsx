@@ -1206,6 +1206,90 @@ export default function App() {
     }
   };
 
+  const handleChangeAdminPin = async (params: {
+    currentPin: string;
+    newPin: string;
+    confirmPin: string;
+  }): Promise<{ ok: boolean; error?: string }> => {
+    if (!isAdmin) {
+      return { ok: false, error: 'Solo el administrador autenticado puede cambiar este PIN.' };
+    }
+    const adminUser =
+      activeCashier?.role === 'admin'
+        ? activeCashier
+        : cashiers.find((c) => c.role === 'admin');
+    if (!adminUser) {
+      return { ok: false, error: 'No se encontró un perfil de Administrador en esta cuenta.' };
+    }
+
+    const currentPin = params.currentPin.trim();
+    const newPin = params.newPin.trim();
+    const confirmPin = params.confirmPin.trim();
+
+    if (!currentPin || currentPin !== adminUser.pin) {
+      return { ok: false, error: 'El PIN actual es incorrecto.' };
+    }
+    if (!/^\d{6,12}$/.test(newPin)) {
+      return {
+        ok: false,
+        error: 'El nuevo PIN de Administrador debe tener entre 6 y 12 dígitos numéricos.',
+      };
+    }
+    if (newPin !== confirmPin) {
+      return { ok: false, error: 'La confirmación del nuevo PIN no coincide.' };
+    }
+    const isTrivialPin =
+      newPin === '1234' ||
+      /^(.)\1+$/.test(newPin) ||
+      '01234567890123456789'.includes(newPin) ||
+      '98765432109876543210'.includes(newPin);
+    if (isTrivialPin) {
+      return {
+        ok: false,
+        error: 'Elige un PIN más seguro (evita secuencias como 123456 o dígitos repetidos).',
+      };
+    }
+    if (newPin === adminUser.pin) {
+      return { ok: false, error: 'El nuevo PIN debe ser diferente al PIN actual.' };
+    }
+
+    const nowIso = new Date().toISOString();
+    const queueItem = buildSyncQueueItem({
+      entityType: 'cashier',
+      entityId: adminUser.id,
+      operation: 'update',
+      summary: 'Actualización de PIN de Administrador',
+      timestamp: nowIso,
+    });
+
+    await db.transaction('rw', db.cashiers, db.syncQueue, async () => {
+      await db.cashiers.update(adminUser.id, {
+        pin: newPin,
+        updatedAt: nowIso,
+        syncStatus: 'pending',
+        syncedAt: undefined,
+      });
+      await db.syncQueue.put(queueItem);
+    });
+
+    if (activeCashier?.id === adminUser.id) {
+      setActiveCashier({
+        ...adminUser,
+        pin: newPin,
+        updatedAt: nowIso,
+        syncStatus: 'pending',
+        syncedAt: undefined,
+      });
+    }
+
+    await reloadAllData();
+    if (navigator.onLine && cloudUserIdRef.current && subscriptionActiveRef.current) {
+      void triggerSyncQueue('auto');
+    }
+
+    return { ok: true };
+  };
+
   const handleDeleteInternalUser = async (cashierId: string) => {
     if (!isAdmin) return;
     const target = cashiers.find((c) => c.id === cashierId);
@@ -4082,6 +4166,7 @@ export default function App() {
             }
             onUpdateCashier={handleUpdateInternalUser}
             onDeleteCashier={handleDeleteInternalUser}
+            onChangeAdminPin={handleChangeAdminPin}
             onCreateBranch={handleCreateBranch}
             onUpdateBranch={handleUpdateBranch}
             onToggleBranchActive={handleToggleBranchActive}

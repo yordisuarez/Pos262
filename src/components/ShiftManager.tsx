@@ -171,7 +171,7 @@ export const CashierLoginModal: React.FC<CashierLoginModalProps> = ({
 
           <div>
             <label htmlFor="cashier-pin" className="block text-xs font-semibold text-slate-600">
-              PIN de acceso (4 dígitos)
+              PIN de acceso
             </label>
             <div className="relative mt-1">
               <KeyRound className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
@@ -179,18 +179,19 @@ export const CashierLoginModal: React.FC<CashierLoginModalProps> = ({
                 id="cashier-pin"
                 type="password"
                 inputMode="numeric"
-                pattern="[0-9]{4}"
-                maxLength={4}
+                pattern="[0-9]{4,12}"
+                minLength={4}
+                maxLength={12}
                 autoComplete="current-password"
                 required
                 autoFocus
-                placeholder="••••"
+                placeholder="••••••"
                 value={pinInput}
                 onChange={(e) => {
-                  setPinInput(e.target.value.replace(/\D/g, '').slice(0, 4));
+                  setPinInput(e.target.value.replace(/\D/g, '').slice(0, 12));
                   setError('');
                 }}
-                className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-8 pr-3 font-mono text-sm tracking-[0.35em] text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
+                className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-8 pr-3 font-mono text-sm tracking-[0.25em] text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
               />
             </div>
           </div>
