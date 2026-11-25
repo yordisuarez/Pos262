@@ -2979,9 +2979,12 @@ export default function App() {
                 <li key={item.productId} className="py-2.5">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-xs font-semibold text-slate-900">{item.name}</p>
-                      <p className="mt-0.5 text-[11px] text-slate-500 font-mono tabular-nums">
-                        {formatPrimary(item.priceUsd)} c/u · {item.sku}
+                      <p className="truncate text-[13px] font-semibold leading-snug text-slate-900">
+                        {item.name}
+                      </p>
+                      <p className="mt-0.5 text-[11px] text-slate-400 tabular-nums">
+                        <span className="text-slate-500">{formatPrimary(item.priceUsd)} c/u</span>
+                        {item.sku ? ` · ${item.sku}` : ''}
                       </p>
                     </div>
                     <button
@@ -3004,7 +3007,7 @@ export default function App() {
                       >
                         <Minus className="h-3 w-3" />
                       </button>
-                      <span className="w-7 text-center font-mono text-xs font-semibold tabular-nums text-slate-900">
+                      <span className="w-7 text-center text-xs font-semibold tabular-nums text-slate-900">
                         {item.quantity}
                       </span>
                       <button
@@ -3018,9 +3021,9 @@ export default function App() {
                       </button>
                     </div>
 
-                    <div className="text-right font-mono tabular-nums">
+                    <div className="text-right tabular-nums">
                       <p
-                        className={`text-xs font-bold ${
+                        className={`text-xs font-semibold ${
                           currency === 'VES' ? 'text-[#558B00]' : 'text-slate-900'
                         }`}
                       >
@@ -3028,7 +3031,7 @@ export default function App() {
                       </p>
                       <p
                         className={`text-[11px] ${
-                          currency === 'USD' ? 'text-[#558B00] font-medium' : 'text-slate-500'
+                          currency === 'USD' ? 'text-[#558B00] font-medium' : 'text-slate-400'
                         }`}
                       >
                         {formatSecondary(lineUsd)}
@@ -3072,30 +3075,30 @@ export default function App() {
           className="w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-[#76B900] focus:outline-none"
         />
 
-        <div className="space-y-1 text-xs text-slate-600 font-mono tabular-nums">
+        <div className="space-y-1 text-xs text-slate-500 tabular-nums">
           <div className="flex items-center justify-between">
             <span>Subtotal ({cartTotals.itemCount} und)</span>
-            <span>{formatPrimary(cartTotals.subtotalUsd)}</span>
+            <span className="font-medium text-slate-700">{formatPrimary(cartTotals.subtotalUsd)}</span>
           </div>
           {applyTax && (
             <div className="flex items-center justify-between">
               <span>IVA (16%)</span>
-              <span>{formatPrimary(cartTotals.taxUsd)}</span>
+              <span className="font-medium text-slate-700">{formatPrimary(cartTotals.taxUsd)}</span>
             </div>
           )}
           <div className="flex items-baseline justify-between border-t border-slate-200 pt-2">
-            <span className="font-sans text-xs font-bold text-slate-900">Total a pagar</span>
-            <div className="text-right">
+            <span className="text-xs font-semibold text-slate-900">Total a pagar</span>
+            <div className="text-right tabular-nums">
               <p
-                className={`text-base font-bold ${
+                className={`text-base font-bold tracking-tight ${
                   currency === 'VES' ? 'text-[#558B00]' : 'text-slate-900'
                 }`}
               >
                 {formatPrimary(cartTotals.totalUsd)}
               </p>
               <p
-                className={`text-xs font-semibold ${
-                  currency === 'USD' ? 'text-[#558B00]' : 'text-slate-500'
+                className={`text-xs font-medium ${
+                  currency === 'USD' ? 'text-[#558B00]' : 'text-slate-400'
                 }`}
               >
                 {formatSecondary(cartTotals.totalUsd)}
@@ -3259,7 +3262,7 @@ export default function App() {
                 readOnly={!isAdmin}
                 disabled={!isAdmin}
                 onChange={(e) => handleExchangeRateChange(e.target.value)}
-                className="w-12 bg-transparent text-right font-mono text-xs font-bold tabular-nums text-[#558B00] focus:outline-none disabled:cursor-default disabled:opacity-90"
+                className="w-14 bg-transparent text-right text-xs font-semibold tabular-nums text-[#558B00] focus:outline-none disabled:cursor-default disabled:opacity-90"
               />
             </label>
 
@@ -3699,7 +3702,7 @@ export default function App() {
                           type="button"
                           disabled={outOfStock}
                           onClick={() => addToCart(product)}
-                          className={`group flex flex-col justify-between rounded-lg border p-2 text-left transition-all cursor-pointer ${
+                          className={`group flex flex-col justify-between rounded-xl border p-2.5 text-left transition-all cursor-pointer ${
                             outOfStock
                               ? 'border-slate-200 bg-slate-100/70 opacity-60 cursor-not-allowed'
                               : inCartQty > 0
@@ -3712,22 +3715,22 @@ export default function App() {
                               <ProductImageBox
                                 src={product.imageUrl || product.image_url}
                                 name={product.name}
-                                className="mb-1.5 h-14 w-full rounded bg-slate-100"
+                                className="mb-2 h-14 w-full rounded-lg bg-slate-100"
                               />
                             )}
                             <div className="flex items-start justify-between gap-1.5">
-                              <h2 className="text-xs font-semibold leading-tight text-slate-900 line-clamp-2 group-hover:text-[#3F6212] transition-colors">
+                              <h2 className="text-[13px] font-semibold leading-snug tracking-[-0.01em] text-slate-900 line-clamp-2 group-hover:text-[#3F6212] transition-colors">
                                 {product.name}
                               </h2>
                               {inCartQty > 0 && (
-                                <span className="shrink-0 font-mono text-xs font-bold tabular-nums text-[#558B00]">
+                                <span className="shrink-0 rounded-full border border-[#84CC16]/40 bg-[#F7FEE7] px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-[#3F6212]">
                                   ×{inCartQty}
                                 </span>
                               )}
                             </div>
                             {(showSku || showCategory || product.taxExempt) && (
-                              <p className="mt-0.5 text-[10px] text-slate-500 truncate">
-                                {showSku && <span className="font-mono">{product.sku}</span>}
+                              <p className="mt-0.5 text-[11px] text-slate-400 truncate">
+                                {showSku && <span className="tabular-nums">{product.sku}</span>}
                                 {showSku && (showCategory || product.taxExempt) && <span> · </span>}
                                 {showCategory && <span>{product.category}</span>}
                                 {product.taxExempt && (
@@ -3740,19 +3743,23 @@ export default function App() {
                             )}
                           </div>
 
-                          <div className="mt-2 flex items-end justify-between gap-1.5 border-t border-slate-100 pt-1.5 font-mono tabular-nums">
-                            <div>
-                              <p
-                                className={`text-xs font-bold ${
-                                  currency === 'VES' ? 'text-[#558B00]' : 'text-slate-900'
+                          <div className="mt-2.5 flex items-end justify-between gap-1.5 border-t border-slate-100 pt-2 tabular-nums">
+                            <div className="min-w-0">
+                              <span
+                                className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold tabular-nums ${
+                                  currency === 'VES'
+                                    ? 'border-[#84CC16]/35 bg-[#F7FEE7] text-[#3F6212]'
+                                    : 'border-slate-200 bg-slate-50 text-slate-900'
                                 }`}
                               >
                                 {formatPrimary(product.priceUsd)}
-                              </p>
+                              </span>
                               {showDualCurrency && (
                                 <p
-                                  className={`text-[10px] ${
-                                    currency === 'USD' ? 'text-[#558B00] font-medium' : 'text-slate-500'
+                                  className={`mt-1 pl-1 text-[11px] tabular-nums ${
+                                    currency === 'USD'
+                                      ? 'font-medium text-[#558B00]'
+                                      : 'text-slate-400'
                                   }`}
                                 >
                                   {formatSecondary(product.priceUsd)}
@@ -3760,13 +3767,15 @@ export default function App() {
                               )}
                             </div>
 
-                            <div className="text-right text-[10px] font-semibold tabular-nums">
+                            <div className="text-right text-[11px] font-medium tabular-nums shrink-0">
                               {outOfStock ? (
-                                <span className="text-red-600">Agotado</span>
+                                <span className="font-semibold text-red-600">Agotado</span>
                               ) : lowStock ? (
-                                <span className="text-amber-700">Bajo: {stock}</span>
+                                <span className="font-semibold text-amber-600">Bajo: {stock}</span>
                               ) : (
-                                <span className="text-slate-500">{stock} {product.unit}</span>
+                                <span className="text-slate-400">
+                                  {stock} {product.unit}
+                                </span>
                               )}
                             </div>
                           </div>
@@ -3794,7 +3803,7 @@ export default function App() {
                   <ShoppingCart className="h-3.5 w-3.5" />
                   Carrito ({cartTotals.itemCount})
                 </span>
-                <span className="font-mono tabular-nums">
+                <span className="font-semibold tabular-nums">
                   {formatPrimary(cartTotals.totalUsd)}
                 </span>
               </button>

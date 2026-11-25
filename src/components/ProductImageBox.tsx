@@ -9,6 +9,7 @@ interface ProductImageBoxProps {
   allowBlobPreview?: boolean;
   className?: string;
   showInitials?: boolean;
+  fit?: 'cover' | 'contain';
 }
 
 function getProductInitials(name?: string): string {
@@ -31,6 +32,7 @@ export const ProductImageBox: React.FC<ProductImageBoxProps> = ({
   allowBlobPreview = false,
   className = 'h-14 w-full rounded',
   showInitials = true,
+  fit = 'cover',
 }) => {
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
 
@@ -55,7 +57,7 @@ export const ProductImageBox: React.FC<ProductImageBoxProps> = ({
           decoding="async"
           referrerPolicy="no-referrer"
           onError={() => setFailedSrc(safeSrc)}
-          className="h-full w-full object-cover"
+          className={fit === 'contain' ? 'h-full w-full object-contain p-1' : 'h-full w-full object-cover'}
         />
       ) : (
         <div
