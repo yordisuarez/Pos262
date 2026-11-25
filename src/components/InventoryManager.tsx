@@ -5,6 +5,7 @@ import {
   Building2,
   Camera,
   CheckCircle2,
+  ImagePlus,
   Lock,
   PackagePlus,
   Pencil,
@@ -117,6 +118,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
 }) => {
   const loadSectionRef = useRef<HTMLElement | null>(null);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
   const operationalBranches = useMemo(() => {
     const active = branches.filter((b) => b.isActive);
     const pool = active.length > 0 ? active : branches;
@@ -268,6 +270,9 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
     setUploadingPhoto(false);
     if (photoInputRef.current) {
       photoInputRef.current.value = '';
+    }
+    if (cameraInputRef.current) {
+      cameraInputRef.current.value = '';
     }
   };
 
@@ -1187,22 +1192,39 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-1.5 shrink-0">
+                        <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                          <input
+                            ref={cameraInputRef}
+                            type="file"
+                            accept="image/*"
+                            capture="environment"
+                            onChange={(e) => void handleSelectProductPhoto(e)}
+                            className="hidden"
+                          />
                           <input
                             ref={photoInputRef}
                             type="file"
-                            accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/*"
+                            accept="image/*"
                             onChange={(e) => void handleSelectProductPhoto(e)}
                             className="hidden"
                           />
                           <button
                             type="button"
                             disabled={compressingPhoto || savingProduct}
-                            onClick={() => photoInputRef.current?.click()}
+                            onClick={() => cameraInputRef.current?.click()}
                             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:border-[#76B900] hover:text-slate-900 disabled:opacity-50 transition-colors cursor-pointer whitespace-nowrap"
                           >
                             <Camera className="h-3.5 w-3.5 text-[#558B00]" />
-                            {activePreview ? 'Cambiar' : 'Agregar foto'}
+                            Abrir cámara
+                          </button>
+                          <button
+                            type="button"
+                            disabled={compressingPhoto || savingProduct}
+                            onClick={() => photoInputRef.current?.click()}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:border-[#76B900] hover:text-slate-900 disabled:opacity-50 transition-colors cursor-pointer whitespace-nowrap"
+                          >
+                            <ImagePlus className="h-3.5 w-3.5 text-slate-500" />
+                            {activePreview ? 'Galería' : 'Elegir archivo'}
                           </button>
                           {activePreview && (
                             <button
