@@ -5,7 +5,7 @@ import {
   saveLocalBusinessSettings,
   writeFullWipeLocalMarker,
 } from '../db/posDb';
-import { isSupabaseConfigured, supabase } from '../lib/supabase';
+import { getSafeSession, isSupabaseConfigured, supabase } from '../lib/supabase';
 import type {
   Branch,
   BusinessSettings,
@@ -189,7 +189,7 @@ export function computePendingSyncSummary(params: {
 }
 
 /**
- * Deduplicates rows by composite primary key `(user_id, entity_type, record_id)`
+ * Deduplicates rows by composite conflict key `(user_id, record_id)`
  * keeping the most recent state (`updated_at`, or later entry on tie).
  * Prevents PostgreSQL `ON CONFLICT DO UPDATE command cannot affect row a second time`.
  */
@@ -197,7 +197,7 @@ function deduplicateSyncRows(rows: CloudSyncRecordRow[]): CloudSyncRecordRow[] {
   const map = new Map<string, CloudSyncRecordRow>();
   for (const row of rows) {
     if (!row.user_id || !row.entity_type || !row.record_id) continue;
-    const key = `${row.user_id}::${row.entity_type}::${row.record_id}`;
+    const key = `${row.user_id}::${row.record_id}`;
     const existing = map.get(key);
     if (!existing) {
       map.set(key, row);
@@ -212,13 +212,32 @@ function deduplicateSyncRows(rows: CloudSyncRecordRow[]): CloudSyncRecordRow[] {
   return Array.from(map.values());
 }
 
-async function upsertSyncRecordsInBatches(rows: CloudSyncRecordRow[]): Promise<number> {
-  const uniqueRows = deduplicateSyncRows(rows);
+async function upsertSyncRecordsInBatches(
+  rows: CloudSyncRecordRow[],
+  authenticatedUserId: string
+): Promise<number> {
+  if (!authenticatedUserId) {
+    throw new Error('Usuario no autenticado para sincronizar registros.');
+  }
+  const scopedRows = rows.map((row) => ({
+    ...row,
+    user_id: authenticatedUserId,
+  }));
+  const uniqueRows = deduplicateSyncRows(scopedRows);
   for (let i = 0; i < uniqueRows.length; i += SYNC_BATCH_SIZE) {
     const batch = uniqueRows.slice(i, i + SYNC_BATCH_SIZE);
-    const { error } = await supabase
+    let { error } = await supabase
       .from('sync_records')
-      .upsert(batch, { onConflict: 'user_id,entity_type,record_id' });
+      .upsert(batch, { onConflict: 'user_id,record_id' });
+
+    // Compatibility fallback if a database still uses a 3-column composite constraint
+    if (error && error.code === '42P10') {
+      const retry = await supabase
+        .from('sync_records')
+        .upsert(batch, { onConflict: 'user_id,entity_type,record_id' });
+      error = retry.error;
+    }
+
     if (error) {
       throw new Error(error.message);
     }
@@ -305,6 +324,7 @@ async function mergePulledRecordsIntoIndexedDB(
     async () => {
       for (const row of cloudRows) {
         if (!row.record_id || !row.entity_type) continue;
+        if (row.user_id && row.user_id !== userId) continue;
 
         const cloudUpdatedAt = row.updated_at || syncedAt;
 
@@ -528,7 +548,8 @@ async function executeSyncQueue(options?: {
     };
   }
 
-  const userId = options?.userId ?? null;
+  const { user: sessionUser } = await getSafeSession();
+  const userId = sessionUser?.id ?? options?.userId ?? null;
   if (!userId) {
     return {
       ok: false,
@@ -648,7 +669,7 @@ async function executeSyncQueue(options?: {
     // 1. Push deduplicated pending sync_records to Supabase via upsert
     let confirmedRowsPushed = 0;
     if (deduplicatedRowsToPush.length > 0) {
-      confirmedRowsPushed = await upsertSyncRecordsInBatches(deduplicatedRowsToPush);
+      confirmedRowsPushed = await upsertSyncRecordsInBatches(deduplicatedRowsToPush, userId);
     }
 
     // 2. Sync business_settings (upsert local changes or pull newer cloud settings)
@@ -787,7 +808,7 @@ async function executeSyncQueue(options?: {
         // First sync for a brand-new cloud account: upload full deduplicated local dataset
         const seedRows = deduplicateSyncRows(await buildAllLocalSyncRows(userId, now));
         if (seedRows.length > 0) {
-          reconciledPushed = await upsertSyncRecordsInBatches(seedRows);
+          reconciledPushed = await upsertSyncRecordsInBatches(seedRows, userId);
         }
       } else {
         pulledCount += await mergePulledRecordsIntoIndexedDB(cloudRows, now, userId, fullWipeAt);
@@ -800,7 +821,7 @@ async function executeSyncQueue(options?: {
             (row) => !cloudKeySet.has(`${row.entity_type}:${row.record_id}`)
           );
           if (missingOnCloud.length > 0) {
-            reconciledPushed = await upsertSyncRecordsInBatches(missingOnCloud);
+            reconciledPushed = await upsertSyncRecordsInBatches(missingOnCloud, userId);
           }
         }
       }
@@ -929,21 +950,24 @@ export async function resetAllUserData(userId: string | null): Promise<{
   errorMessage?: string;
 }> {
   const now = new Date().toISOString();
+  const { user: sessionUser } = await getSafeSession();
+  const effectiveUserId = sessionUser?.id ?? userId;
+
   const cleanBranch: Branch = {
     ...CLEAN_PRIMARY_BRANCH,
     updatedAt: now,
-    syncStatus: userId ? 'pending' : 'synced',
+    syncStatus: effectiveUserId ? 'pending' : 'synced',
   };
 
   let cloudCleared = false;
   let errorMessage: string | undefined;
 
-  if (userId && typeof navigator !== 'undefined' && navigator.onLine) {
+  if (effectiveUserId && typeof navigator !== 'undefined' && navigator.onLine) {
     try {
       const { error: deleteError } = await supabase
         .from('sync_records')
         .delete()
-        .eq('user_id', userId)
+        .eq('user_id', effectiveUserId)
         .in('entity_type', FULL_WIPE_ENTITY_TYPES);
 
       if (deleteError) {
@@ -951,7 +975,7 @@ export async function resetAllUserData(userId: string | null): Promise<{
       } else {
         // Persist ONLY the 1 clean principal branch in Supabase so future syncs know the cloud is intentionally blank
         const cleanBranchRow: CloudSyncRecordRow = {
-          user_id: userId,
+          user_id: effectiveUserId,
           entity_type: 'branch',
           record_id: cleanBranch.id,
           payload: { ...cleanBranch, syncStatus: 'synced', syncedAt: now } as unknown as Record<
@@ -961,7 +985,7 @@ export async function resetAllUserData(userId: string | null): Promise<{
           deleted: false,
           updated_at: now,
         };
-        await upsertSyncRecordsInBatches([cleanBranchRow]);
+        await upsertSyncRecordsInBatches([cleanBranchRow], effectiveUserId);
         cleanBranch.syncStatus = 'synced';
         cleanBranch.syncedAt = now;
         cloudCleared = true;
@@ -979,7 +1003,7 @@ export async function resetAllUserData(userId: string | null): Promise<{
     ...cashier,
     branchId: cleanBranch.id,
     updatedAt: now,
-    syncStatus: userId ? ('pending' as const) : ('synced' as const),
+    syncStatus: effectiveUserId ? ('pending' as const) : ('synced' as const),
   }));
 
   await db.transaction(
@@ -1021,12 +1045,12 @@ export async function resetAllUserData(userId: string | null): Promise<{
         { key: 'operationalResetCompleted', value: now },
         { key: 'activeBranchId', value: cleanBranch.id },
       ];
-      if (userId && !cloudCleared) {
+      if (effectiveUserId && !cloudCleared) {
         settingEntries.push({ key: 'pendingFullCloudWipe', value: 'true' });
       }
       await db.settings.bulkPut(settingEntries);
 
-      if (!userId || cloudCleared) {
+      if (!effectiveUserId || cloudCleared) {
         await db.settings.delete('pendingFullCloudWipe');
       }
       await db.settings.delete('lastSyncedAt');
@@ -1034,24 +1058,24 @@ export async function resetAllUserData(userId: string | null): Promise<{
   );
 
   // Sync updated cashier branch pointers cleanly if online
-  if (userId && cloudCleared && updatedCashiers.length > 0) {
+  if (effectiveUserId && cloudCleared && updatedCashiers.length > 0) {
     try {
       const cashierRows: CloudSyncRecordRow[] = updatedCashiers.map((c) => ({
-        user_id: userId,
+        user_id: effectiveUserId,
         entity_type: 'cashier',
         record_id: c.id,
-        payload: { ...c, userId, syncStatus: 'synced', syncedAt: now } as unknown as Record<
+        payload: { ...c, userId: effectiveUserId, syncStatus: 'synced', syncedAt: now } as unknown as Record<
           string,
           unknown
         >,
         deleted: false,
         updated_at: now,
       }));
-      await upsertSyncRecordsInBatches(cashierRows);
+      await upsertSyncRecordsInBatches(cashierRows, effectiveUserId);
       await db.transaction('rw', db.cashiers, async () => {
         await Promise.all(
           updatedCashiers.map((c) =>
-            db.cashiers.update(c.id, { userId, syncStatus: 'synced', syncedAt: now })
+            db.cashiers.update(c.id, { userId: effectiveUserId, syncStatus: 'synced', syncedAt: now })
           )
         );
       });
@@ -1060,7 +1084,7 @@ export async function resetAllUserData(userId: string | null): Promise<{
     }
   }
 
-  writeFullWipeLocalMarker(userId, now);
+  writeFullWipeLocalMarker(effectiveUserId, now);
 
   return {
     ok: !errorMessage,

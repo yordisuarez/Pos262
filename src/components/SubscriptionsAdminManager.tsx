@@ -68,6 +68,7 @@ export const SubscriptionsAdminManager: React.FC<SubscriptionsAdminManagerProps>
   const [error, setError] = useState<string>('');
   const [feedback, setFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const [usedFallback, setUsedFallback] = useState<boolean>(false);
+  const [rpcWarning, setRpcWarning] = useState<string>('');
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -85,10 +86,14 @@ export const SubscriptionsAdminManager: React.FC<SubscriptionsAdminManagerProps>
   const loadSubscriptions = useCallback(async () => {
     setLoading(true);
     setError('');
+    setRpcWarning('');
     try {
       const result = await fetchAllClientSubscriptions();
       setItems(result.items);
       setUsedFallback(result.usedFallbackQuery);
+      if (result.rpcWarning) {
+        setRpcWarning(result.rpcWarning);
+      }
       if (result.errorMessage) {
         setError(result.errorMessage);
       }
@@ -121,12 +126,12 @@ export const SubscriptionsAdminManager: React.FC<SubscriptionsAdminManagerProps>
       }
       if (!q) return true;
       return (
-        item.businessName.toLowerCase().includes(q) ||
         item.email.toLowerCase().includes(q) ||
+        item.businessName.toLowerCase().includes(q) ||
         item.plan.toLowerCase().includes(q) ||
         item.planLabel.toLowerCase().includes(q) ||
         item.phone.toLowerCase().includes(q) ||
-        item.userId.toLowerCase().includes(q) ||
+        item.rif.toLowerCase().includes(q) ||
         item.notes.toLowerCase().includes(q)
       );
     });
@@ -141,7 +146,8 @@ export const SubscriptionsAdminManager: React.FC<SubscriptionsAdminManagerProps>
       return;
     }
 
-    const opKey = `${item.userId}:${days}`;
+    const rowKey = item.id ?? item.userId;
+    const opKey = `${rowKey}:${days}`;
     setBusyKey(opKey);
     setFeedback(null);
 
@@ -155,7 +161,7 @@ export const SubscriptionsAdminManager: React.FC<SubscriptionsAdminManagerProps>
         return;
       }
 
-      const clientLabel = item.businessName || item.email || item.userId.slice(0, 8);
+      const clientLabel = item.email || item.businessName || 'el cliente';
       setFeedback({
         type: 'ok',
         text: `+${days} días aplicados a ${clientLabel}. Nuevo vencimiento: ${formatShortDate(
@@ -205,6 +211,7 @@ export const SubscriptionsAdminManager: React.FC<SubscriptionsAdminManagerProps>
     try {
       const nextExpiresAt = dateInputToEndOfDayIso(editExpiryDate);
       const res = await updateClientSubscription({
+        id: editingItem.id,
         userId: editingItem.userId,
         plan: editPlan,
         status: editStatus,
@@ -217,8 +224,7 @@ export const SubscriptionsAdminManager: React.FC<SubscriptionsAdminManagerProps>
         return;
       }
 
-      const clientLabel =
-        editingItem.businessName || editingItem.email || editingItem.userId.slice(0, 8);
+      const clientLabel = editingItem.email || editingItem.businessName || 'el cliente';
       setFeedback({
         type: 'ok',
         text: `Suscripción de ${clientLabel} actualizada correctamente.`,
@@ -364,12 +370,12 @@ export const SubscriptionsAdminManager: React.FC<SubscriptionsAdminManagerProps>
         </div>
       )}
 
-      {usedFallback && !loading && !error && items.length <= 1 && (
-        <div className="rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2 text-[11px] text-slate-600">
-          Si solo ves tu propia cuenta, ejecuta las políticas y función{' '}
-          <span className="font-mono font-semibold text-slate-800">admin_list_subscriptions</span>{' '}
-          de <span className="font-mono">supabase/schema.sql</span> en tu SQL Editor de Supabase
-          para listar y gestionar todos los clientes.
+      {usedFallback && !loading && !error && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-2 text-[11px] text-amber-800">
+          No se pudieron cargar los correos mediante{' '}
+          <span className="font-mono font-semibold">get_admin_subscriptions</span>
+          {rpcWarning ? ` (${rpcWarning})` : ''}. Mostrando registros directos de{' '}
+          <span className="font-mono">subscriptions</span>.
         </div>
       )}
 
@@ -394,20 +400,24 @@ export const SubscriptionsAdminManager: React.FC<SubscriptionsAdminManagerProps>
       ) : (
         <div className="space-y-3">
           {filteredItems.map((item) => {
+            const rowKey = item.id ?? item.userId;
             const whatsappUrl = buildClientSubscriptionWhatsAppUrl(item);
-            const displayTitle = item.businessName || item.email || `Cliente ${item.userId.slice(0, 8)}`;
-            const isRowBusy = busyKey !== null && busyKey.startsWith(`${item.userId}:`);
+            const displayEmail = item.email || 'Correo no disponible';
+            const secondaryDetails = [item.businessName, item.phone, item.rif]
+              .filter(Boolean)
+              .join(' · ');
+            const isRowBusy = busyKey !== null && busyKey.startsWith(`${rowKey}:`);
 
             return (
               <article
-                key={item.userId}
+                key={rowKey}
                 className="rounded-xl border border-slate-200 bg-white p-3.5 sm:p-4 space-y-3"
               >
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-1.5">
                       <h3 className="text-[13px] font-semibold text-slate-900 truncate">
-                        {displayTitle}
+                        {displayEmail}
                       </h3>
                       {item.userId === currentUserId && (
                         <span className="rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
@@ -415,11 +425,11 @@ export const SubscriptionsAdminManager: React.FC<SubscriptionsAdminManagerProps>
                         </span>
                       )}
                     </div>
-                    <p className="mt-0.5 text-xs text-slate-500 truncate">
-                      {item.email ? item.email : `ID: ${item.userId.slice(0, 12)}…`}
-                      {item.phone ? ` · ${item.phone}` : ''}
-                      {item.rif ? ` · ${item.rif}` : ''}
-                    </p>
+                    {secondaryDetails && (
+                      <p className="mt-0.5 text-xs text-slate-600 truncate">
+                        {secondaryDetails}
+                      </p>
+                    )}
                   </div>
 
                   <div className="flex flex-wrap items-center gap-1.5 shrink-0">
@@ -486,7 +496,7 @@ export const SubscriptionsAdminManager: React.FC<SubscriptionsAdminManagerProps>
                 <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-2.5">
                   <div className="flex flex-wrap items-center gap-1.5">
                     {[7, 15, 30].map((days) => {
-                      const isThisBusy = busyKey === `${item.userId}:${days}`;
+                      const isThisBusy = busyKey === `${rowKey}:${days}`;
                       return (
                         <button
                           key={days}
@@ -538,7 +548,8 @@ export const SubscriptionsAdminManager: React.FC<SubscriptionsAdminManagerProps>
               <div className="min-w-0">
                 <h3 className="text-sm font-bold text-slate-900">Editar suscripción</h3>
                 <p className="truncate text-xs text-slate-500">
-                  {editingItem.businessName || editingItem.email || editingItem.userId}
+                  {editingItem.email || 'Correo no disponible'}
+                  {editingItem.businessName ? ` · ${editingItem.businessName}` : ''}
                 </p>
               </div>
               <button
