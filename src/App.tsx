@@ -3,14 +3,11 @@ import {
   ArrowLeftRight,
   Banknote,
   BarChart3,
-  Building2,
   Calculator,
   Check,
   CheckCircle2,
   ChevronDown,
   Clock,
-  Cloud,
-  CloudOff,
   Copy,
   CreditCard,
   Download,
@@ -31,7 +28,6 @@ import {
   UserPlus,
   Users,
   Wallet,
-  WifiOff,
   X,
 } from 'lucide-react';
 import type { User } from '@supabase/supabase-js';
@@ -3242,36 +3238,6 @@ export default function App() {
             <span className="text-sm font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0">
               Pos <span className="text-[#558B00]">262</span>
             </span>
-
-            <div className="relative flex items-center shrink-0">
-              {isBranchLocked ? (
-                <Lock className="pointer-events-none absolute left-2 h-3 w-3 text-slate-400" />
-              ) : (
-                <Building2 className="pointer-events-none absolute left-2 h-3.5 w-3.5 text-slate-400" />
-              )}
-              <select
-                aria-label="Seleccionar sucursal"
-                value={activeBranchId}
-                disabled={isBranchLocked}
-                title={
-                  isBranchLocked
-                    ? 'Sucursal fija asignada a este cajero'
-                    : 'Seleccionar sucursal activa'
-                }
-                onChange={(e) => handleBranchChange(e.target.value)}
-                className={`max-w-[165px] truncate rounded-md border border-slate-200 py-1 pl-6 pr-2 text-xs font-medium focus:border-[#76B900] focus:bg-white focus:outline-none ${
-                  isBranchLocked
-                    ? 'bg-slate-100 text-slate-600 cursor-not-allowed'
-                    : 'bg-slate-50 text-slate-800 cursor-pointer'
-                }`}
-              >
-                {visibleBranches.map((branch) => (
-                  <option key={branch.id} value={branch.id}>
-                    {branch.name} ({branch.code})
-                  </option>
-                ))}
-              </select>
-            </div>
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
@@ -3325,64 +3291,6 @@ export default function App() {
                 Bs
               </button>
             </div>
-
-            <button
-              type="button"
-              onClick={() => {
-                if (!cloudUser && isAdmin) {
-                  setActiveTab('settings');
-                } else {
-                  setHistoryTab('queue');
-                  setHistoryOpen(true);
-                }
-              }}
-              title={
-                cloudUser
-                  ? `Cuenta nube: ${cloudUser.email} · Clic para ver cola`
-                  : 'Clic para ver estado local o vincular cuenta'
-              }
-              className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                cloudSyncState === 'offline'
-                  ? 'border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100/70'
-                  : cloudSyncState === 'synced'
-                  ? 'border-[#84CC16]/40 bg-[#F7FEE7] text-[#3F6212] hover:bg-[#ECFCCB]'
-                  : cloudSyncState === 'error'
-                  ? 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100/70'
-                  : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-              }`}
-            >
-              {cloudSyncState === 'offline' ? (
-                <WifiOff className="h-3.5 w-3.5 text-amber-600" />
-              ) : cloudSyncState === 'syncing' ? (
-                <RefreshCw className="h-3 w-3 animate-spin text-[#76B900]" />
-              ) : cloudSyncState === 'local' ? (
-                <CloudOff className="h-3.5 w-3.5 text-slate-400" />
-              ) : (
-                <Cloud
-                  className={`h-3.5 w-3.5 ${
-                    cloudSyncState === 'error' ? 'text-red-500' : 'text-[#76B900]'
-                  }`}
-                />
-              )}
-              <span>
-                {cloudSyncState === 'offline'
-                  ? 'Offline'
-                  : cloudSyncState === 'syncing'
-                  ? 'Sincronizando...'
-                  : cloudSyncState === 'synced'
-                  ? 'Sincronizado'
-                  : cloudSyncState === 'local'
-                  ? 'Solo local'
-                  : cloudSyncState === 'error'
-                  ? 'Reintentar sync'
-                  : 'Pendiente'}
-              </span>
-              {pendingSyncSummary.total > 0 && cloudSyncState !== 'syncing' && (
-                <span className="font-mono font-bold tabular-nums text-amber-700">
-                  · {pendingSyncSummary.total}
-                </span>
-              )}
-            </button>
 
             <button
               type="button"
@@ -4031,7 +3939,10 @@ export default function App() {
             cashiers={cashiers}
             activeCashier={activeCashier}
             branches={branches}
+            visibleBranches={visibleBranches}
             activeBranchId={activeBranchId}
+            isBranchLocked={isBranchLocked}
+            onSelectBranch={handleBranchChange}
             counts={{
               products: products.length,
               customers: customers.length,

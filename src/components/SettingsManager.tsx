@@ -8,6 +8,7 @@ import {
   CloudOff,
   Database,
   KeyRound,
+  Lock,
   LogOut,
   Pencil,
   Plus,
@@ -56,7 +57,10 @@ interface SettingsManagerProps {
   cashiers: Cashier[];
   activeCashier: Cashier | null;
   branches: Branch[];
+  visibleBranches: Branch[];
   activeBranchId: string;
+  isBranchLocked?: boolean;
+  onSelectBranch: (branchId: string) => void;
   counts: {
     products: number;
     customers: number;
@@ -113,7 +117,10 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
   cashiers,
   activeCashier,
   branches,
+  visibleBranches,
   activeBranchId,
+  isBranchLocked = false,
+  onSelectBranch,
   counts,
   onSaveBusinessSettings,
   onManualSync,
@@ -468,6 +475,88 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
 
   return (
     <div className="mx-auto max-w-5xl space-y-5 p-4 lg:p-5">
+      <section className="rounded-xl border border-slate-200 bg-white p-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div className="min-w-0 flex-1 sm:max-w-xs">
+            <label
+              htmlFor="settings-active-branch-select"
+              className="block text-xs font-bold text-slate-900"
+            >
+              Sucursal activa
+            </label>
+            <div className="relative mt-1.5 flex items-center">
+              {isBranchLocked ? (
+                <Lock className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-slate-400" />
+              ) : (
+                <Building2 className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-slate-400" />
+              )}
+              <select
+                id="settings-active-branch-select"
+                aria-label="Seleccionar sucursal"
+                value={activeBranchId}
+                disabled={isBranchLocked}
+                title={
+                  isBranchLocked
+                    ? 'Sucursal fija asignada a este cajero'
+                    : 'Seleccionar sucursal activa'
+                }
+                onChange={(e) => onSelectBranch(e.target.value)}
+                className={`w-full truncate rounded-lg border border-slate-200 py-1.5 pl-8 pr-3 text-xs font-medium focus:border-[#76B900] focus:bg-white focus:outline-none ${
+                  isBranchLocked
+                    ? 'bg-slate-100 text-slate-600 cursor-not-allowed'
+                    : 'bg-slate-50 text-slate-900 cursor-pointer'
+                }`}
+              >
+                {visibleBranches.map((branch) => (
+                  <option key={branch.id} value={branch.id}>
+                    {branch.name} ({branch.code})
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={onOpenSyncQueue}
+              title={
+                cloudUser
+                  ? `Cuenta nube: ${cloudUser.email} · Clic para ver cola de sincronización`
+                  : 'Clic para ver cola de sincronización local'
+              }
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+                cloudSyncState === 'offline'
+                  ? 'border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100/70'
+                  : cloudSyncState === 'synced'
+                  ? 'border-[#84CC16]/40 bg-[#F7FEE7] text-[#3F6212] hover:bg-[#ECFCCB]'
+                  : cloudSyncState === 'error'
+                  ? 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100/70'
+                  : 'border-slate-200 bg-slate-50 text-slate-800 hover:bg-slate-100'
+              }`}
+            >
+              {cloudSyncState === 'offline' ? (
+                <WifiOff className="h-3.5 w-3.5 text-amber-600" />
+              ) : cloudSyncState === 'syncing' ? (
+                <RefreshCw className="h-3.5 w-3.5 animate-spin text-[#76B900]" />
+              ) : cloudSyncState === 'local' ? (
+                <CloudOff className="h-3.5 w-3.5 text-slate-400" />
+              ) : (
+                <Cloud
+                  className={`h-3.5 w-3.5 ${
+                    cloudSyncState === 'error' ? 'text-red-500' : 'text-[#76B900]'
+                  }`}
+                />
+              )}
+              <span>Cola de sincronización</span>
+              <span className="font-mono font-bold tabular-nums">
+                ({pendingSyncSummary.total})
+              </span>
+            </button>
+          </div>
+        </div>
+      </section>
+
       <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3.5">
           <div className="flex items-center gap-2">
@@ -834,6 +923,15 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
                     </>
                   ) : (
                     <>
+                      {!isSelected && branch.isActive && !isBranchLocked && (
+                        <button
+                          type="button"
+                          onClick={() => onSelectBranch(branch.id)}
+                          className="inline-flex items-center gap-1 rounded-md border border-[#84CC16]/50 bg-[#F7FEE7] px-2 py-1 text-[11px] font-semibold text-[#3F6212] hover:bg-[#ECFCCB] cursor-pointer"
+                        >
+                          Usar en caja
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => startEditBranch(branch)}
