@@ -61,6 +61,11 @@ import { CloudAuthScreen } from './components/CloudAuthScreen';
 import { SettingsManager } from './components/SettingsManager';
 import { SubscriptionLockScreen } from './components/SubscriptionLockScreen';
 import { SubscriptionsAdminManager } from './components/SubscriptionsAdminManager';
+import {
+  clearPasswordRecoveryUrl,
+  hasPasswordRecoveryUrlParams,
+  PasswordRecoveryModal,
+} from './components/PasswordRecoveryModal';
 import { CustomersModule } from './components/CustomersModule';
 import { ProductImageBox } from './components/ProductImageBox';
 import {
@@ -253,6 +258,9 @@ export default function App() {
   const [isReady, setIsReady] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
   const [cloudUser, setCloudUser] = useState<User | null>(null);
+  const [passwordRecoveryOpen, setPasswordRecoveryOpen] = useState<boolean>(() =>
+    hasPasswordRecoveryUrlParams()
+  );
   const [lastSyncError, setLastSyncError] = useState<string | null>(null);
   const [subscription, setSubscription] = useState<SubscriptionState>(() =>
     createInitialSubscriptionState('idle')
@@ -667,6 +675,11 @@ export default function App() {
       const { user } = await getSafeSession();
       if (!active) return;
 
+      if (hasPasswordRecoveryUrlParams()) {
+        setPasswordRecoveryOpen(true);
+        clearPasswordRecoveryUrl();
+      }
+
       cloudUserIdRef.current = user?.id ?? null;
       setCloudUser(user);
       setAuthChecked(true);
@@ -701,6 +714,11 @@ export default function App() {
       cloudUserIdRef.current = nextUser?.id ?? null;
       setCloudUser(nextUser);
       setAuthChecked(true);
+
+      if (event === 'PASSWORD_RECOVERY') {
+        setPasswordRecoveryOpen(true);
+        clearPasswordRecoveryUrl();
+      }
 
       if (!nextUser) {
         subscriptionActiveRef.current = false;
@@ -3153,6 +3171,24 @@ export default function App() {
           <span>Verificando sesión...</span>
         </div>
       </div>
+    );
+  }
+
+  if (passwordRecoveryOpen) {
+    return (
+      <PasswordRecoveryModal
+        userEmail={cloudUser?.email}
+        isOnline={isOnline}
+        hasSession={Boolean(cloudUser)}
+        onCompleted={() => {
+          clearPasswordRecoveryUrl();
+          setPasswordRecoveryOpen(false);
+        }}
+        onCancel={() => {
+          clearPasswordRecoveryUrl();
+          setPasswordRecoveryOpen(false);
+        }}
+      />
     );
   }
 
