@@ -219,24 +219,19 @@ async function upsertSyncRecordsInBatches(
   if (!authenticatedUserId) {
     throw new Error('Usuario no autenticado para sincronizar registros.');
   }
-  const scopedRows = rows.map((row) => ({
-    ...row,
-    user_id: authenticatedUserId,
-  }));
+  const scopedRows = rows
+    .filter((row) => Boolean(row.record_id))
+    .map((row) => ({
+      ...row,
+      user_id: authenticatedUserId,
+      record_id: row.record_id,
+    }));
   const uniqueRows = deduplicateSyncRows(scopedRows);
   for (let i = 0; i < uniqueRows.length; i += SYNC_BATCH_SIZE) {
     const batch = uniqueRows.slice(i, i + SYNC_BATCH_SIZE);
-    let { error } = await supabase
+    const { error } = await supabase
       .from('sync_records')
       .upsert(batch, { onConflict: 'user_id,record_id' });
-
-    // Compatibility fallback if a database still uses a 3-column composite constraint
-    if (error && error.code === '42P10') {
-      const retry = await supabase
-        .from('sync_records')
-        .upsert(batch, { onConflict: 'user_id,entity_type,record_id' });
-      error = retry.error;
-    }
 
     if (error) {
       throw new Error(error.message);
