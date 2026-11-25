@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AlertTriangle,
   ArrowLeftRight,
   Banknote,
   BarChart3,
@@ -3273,74 +3272,6 @@ export default function App() {
                 ))}
               </select>
             </div>
-
-            <nav
-              aria-label="Módulos"
-              className="flex items-center gap-0.5 rounded-md border border-slate-200 bg-slate-50 p-0.5 shrink-0"
-            >
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveTab('pos');
-                  setNavMenuOpen(false);
-                }}
-                className={`rounded px-2 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                  activeTab === 'pos'
-                    ? 'bg-[#84CC16] text-slate-950'
-                    : 'text-slate-600 hover:bg-white hover:text-slate-900'
-                }`}
-              >
-                POS
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveTab('shifts');
-                  setNavMenuOpen(false);
-                }}
-                className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                  activeTab === 'shifts'
-                    ? 'bg-[#84CC16] text-slate-950'
-                    : 'text-slate-600 hover:bg-white hover:text-slate-900'
-                }`}
-              >
-                <Lock className="h-3 w-3" />
-                Turnos
-              </button>
-              {(() => {
-                const isGroupedTabActive =
-                  activeTab === 'customers' ||
-                  activeTab === 'inventory' ||
-                  activeTab === 'reports' ||
-                  activeTab === 'costing' ||
-                  activeTab === 'settings';
-                return (
-                  <button
-                    ref={navMenuTriggerRef}
-                    type="button"
-                    aria-haspopup="menu"
-                    aria-expanded={navMenuOpen}
-                    onClick={() => {
-                      if (!navMenuOpen) {
-                        updateNavMenuPosition();
-                      }
-                      setNavMenuOpen((prev) => !prev);
-                    }}
-                    className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                      isGroupedTabActive || navMenuOpen
-                        ? 'bg-[#84CC16] text-slate-950'
-                        : 'text-slate-600 hover:bg-white hover:text-slate-900'
-                    }`}
-                  >
-                    <Menu className="h-3 w-3" />
-                    <span>Menú</span>
-                    <ChevronDown
-                      className={`h-3 w-3 transition-transform ${navMenuOpen ? 'rotate-180' : ''}`}
-                    />
-                  </button>
-                );
-              })()}
-            </nav>
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
@@ -3490,6 +3421,93 @@ export default function App() {
             )}
           </div>
         </div>
+
+        <div className="border-t border-slate-200 bg-slate-50 px-3 py-1.5 lg:px-5">
+          <div className="flex flex-wrap items-center gap-2">
+            <nav
+              aria-label="Módulos"
+              className="inline-flex items-center gap-0.5 rounded-md border border-slate-200 bg-white p-0.5 shrink-0"
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('pos');
+                  setNavMenuOpen(false);
+                }}
+                className={`rounded px-2 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                  activeTab === 'pos'
+                    ? 'bg-[#84CC16] text-slate-950'
+                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                }`}
+              >
+                POS
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('shifts');
+                  setNavMenuOpen(false);
+                }}
+                className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                  activeTab === 'shifts'
+                    ? 'bg-[#84CC16] text-slate-950'
+                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                }`}
+              >
+                <Lock className="h-3 w-3" />
+                Turnos
+              </button>
+              {(() => {
+                const isGroupedTabActive =
+                  activeTab === 'customers' ||
+                  activeTab === 'inventory' ||
+                  activeTab === 'reports' ||
+                  activeTab === 'costing' ||
+                  activeTab === 'settings';
+                return (
+                  <button
+                    ref={navMenuTriggerRef}
+                    type="button"
+                    aria-haspopup="menu"
+                    aria-expanded={navMenuOpen}
+                    onClick={() => {
+                      if (!navMenuOpen) {
+                        updateNavMenuPosition();
+                      }
+                      setNavMenuOpen((prev) => !prev);
+                    }}
+                    className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                      isGroupedTabActive || navMenuOpen
+                        ? 'bg-[#84CC16] text-slate-950'
+                        : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                    }`}
+                  >
+                    <Menu className="h-3 w-3" />
+                    <span>Menú</span>
+                    <ChevronDown
+                      className={`h-3 w-3 transition-transform ${navMenuOpen ? 'rotate-180' : ''}`}
+                    />
+                  </button>
+                );
+              })()}
+            </nav>
+
+            {activeTab === 'pos' && !activeShift && activeCashier && (
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('shifts');
+                  setNavMenuOpen(false);
+                }}
+                className="inline-flex items-center gap-1.5 rounded-md bg-[#84CC16] px-2.5 py-1 text-xs font-bold text-slate-950 hover:bg-[#76B900] transition-colors cursor-pointer whitespace-nowrap"
+              >
+                <Lock className="h-3 w-3" />
+                Abrir turno opcional
+              </button>
+            )}
+          </div>
+        </div>
+
         {syncNotice && (
           <div className="border-t border-[#84CC16]/30 bg-[#F7FEE7] px-3 py-1 text-xs font-medium text-[#3F6212] lg:px-5">
             {syncNotice}
@@ -3619,24 +3637,6 @@ export default function App() {
 
       {activeTab === 'pos' && (
         <>
-          {!activeShift && activeCashier && (
-            <div className="border-b border-slate-200 bg-slate-50/90 px-3 py-1.5 text-xs text-slate-600 lg:px-5">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="inline-flex items-center gap-1.5 font-medium">
-                  <AlertTriangle className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-                  Apertura de caja opcional en {activeBranch?.name}: puedes operar normalmente o abrir un turno si deseas llevar arqueo.
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('shifts')}
-                  className="font-semibold text-[#558B00] underline underline-offset-2 hover:text-[#3F6212] cursor-pointer whitespace-nowrap"
-                >
-                  Abrir turno (opcional)
-                </button>
-              </div>
-            </div>
-          )}
-
           <main className="flex flex-1 overflow-hidden">
             <section className="flex flex-1 flex-col overflow-hidden">
               <div className="border-b border-slate-200 bg-white px-3.5 py-2.5 lg:px-5">
