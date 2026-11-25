@@ -11,6 +11,7 @@ import {
   Minus,
   Package,
   PackagePlus,
+  Plus,
   Search,
   TrendingUp,
   Wallet,
@@ -69,6 +70,7 @@ interface InventoryValuationPanelProps {
   canEditInventory?: boolean;
   refreshKey?: string | number;
   onQuickRestock?: (productId: string, branchId: string, suggestedQty: number) => void;
+  onCreateProduct?: () => void;
 }
 
 export const InventoryValuationPanel: React.FC<InventoryValuationPanelProps> = ({
@@ -79,6 +81,7 @@ export const InventoryValuationPanel: React.FC<InventoryValuationPanelProps> = (
   canEditInventory = true,
   refreshKey,
   onQuickRestock,
+  onCreateProduct,
 }) => {
   const operationalBranches = useMemo(() => {
     const active = branches.filter((b) => b.isActive);
@@ -436,24 +439,37 @@ export const InventoryValuationPanel: React.FC<InventoryValuationPanelProps> = (
           </p>
         </div>
 
-        {!isBranchLocked && operationalBranches.length > 1 && (
-          <div className="flex items-center gap-2 shrink-0">
-            <Building2 className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-            <select
-              aria-label="Filtrar valorización por sucursal"
-              value={selectedBranchScope}
-              onChange={(e) => setSelectedBranchScope(e.target.value)}
-              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 focus:border-[#76B900] focus:outline-none cursor-pointer"
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          {!isBranchLocked && operationalBranches.length > 1 && (
+            <div className="flex items-center gap-2 shrink-0">
+              <Building2 className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+              <select
+                aria-label="Filtrar valorización por sucursal"
+                value={selectedBranchScope}
+                onChange={(e) => setSelectedBranchScope(e.target.value)}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 focus:border-[#76B900] focus:outline-none cursor-pointer"
+              >
+                <option value="all">Todas las sucursales</option>
+                {operationalBranches.map((branch) => (
+                  <option key={branch.id} value={branch.id}>
+                    {branch.name} ({branch.code})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {canEditInventory && onCreateProduct && (
+            <button
+              type="button"
+              onClick={onCreateProduct}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[#84CC16] px-3.5 py-2 text-xs font-bold text-slate-950 shadow-xs hover:bg-[#76B900] transition-colors whitespace-nowrap cursor-pointer"
             >
-              <option value="all">Todas las sucursales</option>
-              {operationalBranches.map((branch) => (
-                <option key={branch.id} value={branch.id}>
-                  {branch.name} ({branch.code})
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
+              <Plus className="h-3.5 w-3.5" />
+              Nuevo producto
+            </button>
+          )}
+        </div>
       </div>
 
       {/* 1. TARJETAS KPI SUPERIORES */}

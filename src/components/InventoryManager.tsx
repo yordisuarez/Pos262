@@ -497,6 +497,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
         canEditInventory={canEditInventory}
         refreshKey={valuationRefreshKey}
         onQuickRestock={canEditInventory ? handleQuickRestock : undefined}
+        onCreateProduct={canEditInventory ? openCreateProductModal : undefined}
       />
 
       {canEditInventory && (

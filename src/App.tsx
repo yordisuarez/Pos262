@@ -8,6 +8,7 @@ import {
   Calculator,
   Check,
   CheckCircle2,
+  ChevronDown,
   Clock,
   Cloud,
   CloudOff,
@@ -17,6 +18,7 @@ import {
   History,
   Image as ImageIcon,
   Lock,
+  Menu,
   MessageCircle,
   Minus,
   Plus,
@@ -261,6 +263,10 @@ export default function App() {
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('pos');
+  const [navMenuOpen, setNavMenuOpen] = useState<boolean>(false);
+  const [navMenuPos, setNavMenuPos] = useState<{ top: number; left: number } | null>(null);
+  const navMenuTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const navMenuPanelRef = useRef<HTMLDivElement | null>(null);
 
   // Persisted IndexedDB collections
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -1002,6 +1008,56 @@ export default function App() {
       setActiveTab('pos');
     }
   }, [activeCashier, activeTab, isAdmin, permissions]);
+
+  const updateNavMenuPosition = useCallback(() => {
+    const trigger = navMenuTriggerRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const menuWidth = Math.min(208, window.innerWidth - 16);
+    const margin = 8;
+    const maxLeft = Math.max(margin, window.innerWidth - menuWidth - margin);
+    const left = Math.min(Math.max(margin, rect.left), maxLeft);
+    const top = Math.min(rect.bottom + 6, Math.max(margin, window.innerHeight - 260));
+    setNavMenuPos({ top, left });
+  }, []);
+
+  useEffect(() => {
+    if (!navMenuOpen) return;
+    updateNavMenuPosition();
+
+    const handlePointerDown = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (
+        navMenuTriggerRef.current?.contains(target) ||
+        navMenuPanelRef.current?.contains(target)
+      ) {
+        return;
+      }
+      setNavMenuOpen(false);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setNavMenuOpen(false);
+      }
+    };
+
+    const handleResize = () => {
+      updateNavMenuPosition();
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('touchstart', handlePointerDown, { passive: true });
+    document.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('resize', handleResize);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('touchstart', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [navMenuOpen, updateNavMenuPosition]);
 
   useEffect(() => {
     if (saleType === 'credit' && !permissions.allowCreditSales) {
@@ -3217,7 +3273,10 @@ export default function App() {
             >
               <button
                 type="button"
-                onClick={() => setActiveTab('pos')}
+                onClick={() => {
+                  setActiveTab('pos');
+                  setNavMenuOpen(false);
+                }}
                 className={`rounded px-2 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   activeTab === 'pos'
                     ? 'bg-[#84CC16] text-slate-950'
@@ -3228,7 +3287,10 @@ export default function App() {
               </button>
               <button
                 type="button"
-                onClick={() => setActiveTab('shifts')}
+                onClick={() => {
+                  setActiveTab('shifts');
+                  setNavMenuOpen(false);
+                }}
                 className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   activeTab === 'shifts'
                     ? 'bg-[#84CC16] text-slate-950'
@@ -3238,74 +3300,39 @@ export default function App() {
                 <Lock className="h-3 w-3" />
                 Turnos
               </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab('customers')}
-                className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                  activeTab === 'customers'
-                    ? 'bg-[#84CC16] text-slate-950'
-                    : 'text-slate-600 hover:bg-white hover:text-slate-900'
-                }`}
-              >
-                <Users className="h-3 w-3" />
-                Clientes
-              </button>
-              {(isAdmin || permissions.viewInventory) && (
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('inventory')}
-                  className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                    activeTab === 'inventory'
-                      ? 'bg-[#84CC16] text-slate-950'
-                      : 'text-slate-600 hover:bg-white hover:text-slate-900'
-                  }`}
-                >
-                  <ArrowLeftRight className="h-3 w-3" />
-                  Stock
-                </button>
-              )}
-              {(isAdmin || permissions.viewReports) && (
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('reports')}
-                  className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                    activeTab === 'reports'
-                      ? 'bg-[#84CC16] text-slate-950'
-                      : 'text-slate-600 hover:bg-white hover:text-slate-900'
-                  }`}
-                >
-                  <BarChart3 className="h-3 w-3" />
-                  Reportes
-                </button>
-              )}
-              {(isAdmin || permissions.manageCosting) && (
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('costing')}
-                  className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                    activeTab === 'costing'
-                      ? 'bg-[#84CC16] text-slate-950'
-                      : 'text-slate-600 hover:bg-white hover:text-slate-900'
-                  }`}
-                >
-                  <Calculator className="h-3 w-3" />
-                  Costos
-                </button>
-              )}
-              {isAdmin && (
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('settings')}
-                  className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                    activeTab === 'settings'
-                      ? 'bg-[#84CC16] text-slate-950'
-                      : 'text-slate-600 hover:bg-white hover:text-slate-900'
-                  }`}
-                >
-                  <Settings className="h-3 w-3" />
-                  Config
-                </button>
-              )}
+              {(() => {
+                const isGroupedTabActive =
+                  activeTab === 'customers' ||
+                  activeTab === 'inventory' ||
+                  activeTab === 'reports' ||
+                  activeTab === 'costing' ||
+                  activeTab === 'settings';
+                return (
+                  <button
+                    ref={navMenuTriggerRef}
+                    type="button"
+                    aria-haspopup="menu"
+                    aria-expanded={navMenuOpen}
+                    onClick={() => {
+                      if (!navMenuOpen) {
+                        updateNavMenuPosition();
+                      }
+                      setNavMenuOpen((prev) => !prev);
+                    }}
+                    className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                      isGroupedTabActive || navMenuOpen
+                        ? 'bg-[#84CC16] text-slate-950'
+                        : 'text-slate-600 hover:bg-white hover:text-slate-900'
+                    }`}
+                  >
+                    <Menu className="h-3 w-3" />
+                    <span>Menú</span>
+                    <ChevronDown
+                      className={`h-3 w-3 transition-transform ${navMenuOpen ? 'rotate-180' : ''}`}
+                    />
+                  </button>
+                );
+              })()}
             </nav>
           </div>
 
@@ -3462,6 +3489,126 @@ export default function App() {
           </div>
         )}
       </header>
+
+      {navMenuOpen && navMenuPos && (
+        <div
+          ref={navMenuPanelRef}
+          role="menu"
+          aria-label="Menú de módulos"
+          style={{ top: navMenuPos.top, left: navMenuPos.left }}
+          className="fixed z-50 w-52 max-w-[calc(100vw-16px)] rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg"
+        >
+          <div className="space-y-0.5">
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setActiveTab('customers');
+                setNavMenuOpen(false);
+              }}
+              className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold transition-colors cursor-pointer ${
+                activeTab === 'customers'
+                  ? 'bg-[#F7FEE7] text-[#3F6212]'
+                  : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
+              }`}
+            >
+              <span className="inline-flex items-center gap-2">
+                <Users className="h-3.5 w-3.5 shrink-0" />
+                <span>Clientes</span>
+              </span>
+              {activeTab === 'customers' && <Check className="h-3.5 w-3.5 shrink-0 text-[#558B00]" />}
+            </button>
+
+            {(isAdmin || permissions.viewInventory) && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setActiveTab('inventory');
+                  setNavMenuOpen(false);
+                }}
+                className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold transition-colors cursor-pointer ${
+                  activeTab === 'inventory'
+                    ? 'bg-[#F7FEE7] text-[#3F6212]'
+                    : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
+                }`}
+              >
+                <span className="inline-flex items-center gap-2">
+                  <ArrowLeftRight className="h-3.5 w-3.5 shrink-0" />
+                  <span>Stock</span>
+                </span>
+                {activeTab === 'inventory' && <Check className="h-3.5 w-3.5 shrink-0 text-[#558B00]" />}
+              </button>
+            )}
+
+            {(isAdmin || permissions.viewReports) && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setActiveTab('reports');
+                  setNavMenuOpen(false);
+                }}
+                className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold transition-colors cursor-pointer ${
+                  activeTab === 'reports'
+                    ? 'bg-[#F7FEE7] text-[#3F6212]'
+                    : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
+                }`}
+              >
+                <span className="inline-flex items-center gap-2">
+                  <BarChart3 className="h-3.5 w-3.5 shrink-0" />
+                  <span>Reportes</span>
+                </span>
+                {activeTab === 'reports' && <Check className="h-3.5 w-3.5 shrink-0 text-[#558B00]" />}
+              </button>
+            )}
+
+            {(isAdmin || permissions.manageCosting) && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setActiveTab('costing');
+                  setNavMenuOpen(false);
+                }}
+                className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold transition-colors cursor-pointer ${
+                  activeTab === 'costing'
+                    ? 'bg-[#F7FEE7] text-[#3F6212]'
+                    : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
+                }`}
+              >
+                <span className="inline-flex items-center gap-2">
+                  <Calculator className="h-3.5 w-3.5 shrink-0" />
+                  <span>Costos</span>
+                </span>
+                {activeTab === 'costing' && <Check className="h-3.5 w-3.5 shrink-0 text-[#558B00]" />}
+              </button>
+            )}
+
+            {isAdmin && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setActiveTab('settings');
+                  setNavMenuOpen(false);
+                }}
+                className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold transition-colors cursor-pointer ${
+                  activeTab === 'settings'
+                    ? 'bg-[#F7FEE7] text-[#3F6212]'
+                    : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
+                }`}
+              >
+                <span className="inline-flex items-center gap-2">
+                  <Settings className="h-3.5 w-3.5 shrink-0" />
+                  <span>Configuración</span>
+                </span>
+                {activeTab === 'settings' && <Check className="h-3.5 w-3.5 shrink-0 text-[#558B00]" />}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {activeTab === 'pos' && (
         <>
