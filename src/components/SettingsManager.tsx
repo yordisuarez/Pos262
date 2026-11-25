@@ -462,6 +462,10 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
       ? 'Error de sincronización'
       : 'Solo local (sin nube)';
 
+  if (activeCashier?.role !== 'admin') {
+    return null;
+  }
+
   return (
     <div className="mx-auto max-w-5xl space-y-5 p-4 lg:p-5">
       <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 space-y-4">

@@ -1,25 +1,40 @@
 import { createClient, type Session, type SupabaseClient, type User } from '@supabase/supabase-js';
 
-const DEFAULT_SUPABASE_URL = 'https://mmgbcwxowlajrrihgrkw.supabase.co';
-const DEFAULT_SUPABASE_ANON_KEY = 'sb_publishable_5qER2lYsXtKgIEUCRkxoIg_iDMQiDvW';
+const RAW_SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.trim() || '';
+const RAW_SUPABASE_ANON_KEY =
+  (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim() || '';
 
-export const SUPABASE_URL: string =
-  (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.trim() || DEFAULT_SUPABASE_URL;
+const isValidSupabaseUrl = (url: string): boolean => {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    return (
+      parsed.protocol === 'https:' ||
+      (parsed.protocol === 'http:' &&
+        (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1'))
+    );
+  } catch {
+    return false;
+  }
+};
 
-export const SUPABASE_ANON_KEY: string =
-  (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim() ||
-  DEFAULT_SUPABASE_ANON_KEY;
+export const SUPABASE_URL: string = isValidSupabaseUrl(RAW_SUPABASE_URL) ? RAW_SUPABASE_URL : '';
+export const SUPABASE_ANON_KEY: string = RAW_SUPABASE_ANON_KEY;
 
 export const isSupabaseConfigured = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 
-export const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  auth: {
-    persistSession: true,
-    autoRefreshToken: true,
-    detectSessionInUrl: true,
-    storageKey: 'pos_262_supabase_auth',
-  },
-});
+export const supabase: SupabaseClient = createClient(
+  isSupabaseConfigured ? SUPABASE_URL : 'https://placeholder.supabase.co',
+  isSupabaseConfigured ? SUPABASE_ANON_KEY : 'unconfigured-public-key',
+  {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+      storageKey: 'pos_262_supabase_auth',
+    },
+  }
+);
 
 /**
  * Safely retrieves the persisted Supabase session without throwing or hanging
@@ -30,6 +45,9 @@ export async function getSafeSession(timeoutMs = 3500): Promise<{
   user: User | null;
   offlineFallback: boolean;
 }> {
+  if (!isSupabaseConfigured) {
+    return { session: null, user: null, offlineFallback: false };
+  }
   try {
     const sessionPromise = supabase.auth.getSession();
     const timeoutPromise = new Promise<null>((resolve) => {

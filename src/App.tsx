@@ -209,11 +209,32 @@ function buildWhatsAppReceiptText(sale: Sale, business?: BusinessSettings): stri
   return lines.join('\n');
 }
 
+const SAFE_DATA_IMAGE_REGEX = /^data:image\/(png|jpe?g|webp|gif);base64,[a-z0-9+/=\s]+$/i;
+
+function getSafeImageUrl(rawUrl?: string): string | null {
+  if (!rawUrl) return null;
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return null;
+  if (SAFE_DATA_IMAGE_REGEX.test(trimmed)) {
+    return trimmed;
+  }
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+      return parsed.toString();
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 function buildWhatsAppUrl(sale: Sale, business?: BusinessSettings): string {
   const cleanPhone = (sale.customerPhone || '').replace(/\D/g, '');
+  const validPhone = cleanPhone.length >= 7 && cleanPhone.length <= 15 ? cleanPhone : '';
   const encodedText = encodeURIComponent(buildWhatsAppReceiptText(sale, business));
-  return cleanPhone
-    ? `https://wa.me/${cleanPhone}?text=${encodedText}`
+  return validPhone
+    ? `https://wa.me/${validPhone}?text=${encodedText}`
     : `https://wa.me/?text=${encodedText}`;
 }
 
@@ -791,6 +812,7 @@ export default function App() {
   };
 
   const handleExchangeRateChange = (val: string) => {
+    if (!isAdminUser(activeCashier)) return;
     setExchangeRateInput(val);
     const parsed = parseFloat(val.replace(',', '.'));
     if (Number.isFinite(parsed) && parsed > 0) {
@@ -829,12 +851,17 @@ export default function App() {
     address: string;
     exchangeRate: number;
   }) => {
+    if (!isAdminUser(activeCashier)) return;
+    const cleanBusinessName = next.businessName.trim().slice(0, 120);
+    if (!cleanBusinessName || !Number.isFinite(next.exchangeRate) || next.exchangeRate <= 0) {
+      return;
+    }
     const nowIso = new Date().toISOString();
     const updated: BusinessSettings = {
-      businessName: next.businessName,
-      rif: next.rif,
-      phone: next.phone,
-      address: next.address,
+      businessName: cleanBusinessName,
+      rif: next.rif.trim().slice(0, 40),
+      phone: next.phone.trim().slice(0, 30),
+      address: next.address.trim().slice(0, 240),
       exchangeRate: round2(next.exchangeRate),
       updatedAt: nowIso,
       syncStatus: 'pending',
@@ -996,13 +1023,22 @@ export default function App() {
     branchId: string;
     permissions?: CashierPermissions;
   }): Promise<Cashier> => {
+    const isInitialAdminSetup = cashiers.length === 0 && params.role === 'admin';
+    if (!isInitialAdminSetup && !isAdmin) {
+      throw new Error('Solo el administrador puede crear usuarios internos.');
+    }
+    const cleanName = params.name.trim().slice(0, 80);
+    const cleanPin = params.pin.trim();
+    if (!cleanName || !/^\d{4}$/.test(cleanPin)) {
+      throw new Error('Ingresa un nombre válido y un PIN numérico de 4 dígitos.');
+    }
     const nowIso = new Date().toISOString();
     const ownerId = cloudUserIdRef.current ?? 'local';
     const newUser: Cashier = {
       id: `user-${params.role}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       userId: ownerId,
-      name: params.name.trim(),
-      pin: params.pin.trim(),
+      name: cleanName,
+      pin: cleanPin,
       role: params.role,
       branchId: params.branchId || activeBranchId || branches[0]?.id || CLEAN_PRIMARY_BRANCH.id,
       permissions: normalizeCashierPermissions(params.permissions, params.role),
@@ -1281,6 +1317,7 @@ export default function App() {
     if (!isAdmin && !permissions.deleteShifts) return;
     const targetShift = shifts.find((s) => s.id === shiftId);
     if (!targetShift) return;
+    if (isBranchLocked && lockedBranchId && targetShift.branchId !== lockedBranchId) return;
 
     const now = new Date().toISOString();
     const queueItem = buildSyncQueueItem({
@@ -1310,6 +1347,7 @@ export default function App() {
     notes?: string;
   }) => {
     if (!activeCashier || (!isAdmin && !permissions.editInventory)) return;
+    if (!Number.isInteger(params.quantity) || params.quantity <= 0) return;
     const effectiveBranchId =
       isBranchLocked && lockedBranchId ? lockedBranchId : params.branchId;
     const targetBranch = branches.find((b) => b.id === effectiveBranchId);
@@ -1374,6 +1412,13 @@ export default function App() {
     notes?: string;
   }) => {
     if (!activeCashier || (!isAdmin && (!permissions.editInventory || isBranchLocked))) return;
+    if (
+      params.fromBranchId === params.toBranchId ||
+      !Number.isInteger(params.quantity) ||
+      params.quantity <= 0
+    ) {
+      return;
+    }
     const fromBranch = branches.find((b) => b.id === params.fromBranchId);
     const toBranch = branches.find((b) => b.id === params.toBranchId);
     const targetProduct = products.find((p) => p.id === params.productId);
@@ -1437,8 +1482,11 @@ export default function App() {
 
   // Receivable settlement handler
   const handleSettleReceivable = async (saleId: string, amountUsd: number) => {
+    if (!activeCashier || (!isAdmin && !permissions.viewReports)) return;
+    if (!Number.isFinite(amountUsd) || amountUsd <= 0) return;
     const sale = await db.sales.get(saleId);
     if (!sale || sale.pendingUsd <= 0) return;
+    if (isBranchLocked && lockedBranchId && sale.branchId !== lockedBranchId) return;
 
     const now = new Date().toISOString();
     const appliedUsd = round2(Math.min(sale.pendingUsd, amountUsd));
@@ -1496,14 +1544,19 @@ export default function App() {
     costUsd: number,
     priceUsd: number
   ) => {
+    if (!activeCashier || (!isAdmin && !permissions.manageCosting)) return;
+    if (!Number.isFinite(costUsd) || costUsd < 0 || !Number.isFinite(priceUsd) || priceUsd <= 0) {
+      return;
+    }
     const now = new Date().toISOString();
     const product = products.find((p) => p.id === productId);
+    if (!product) return;
 
     const queueItem = buildSyncQueueItem({
       entityType: 'product',
       entityId: productId,
       operation: 'update',
-      summary: `Precio ${product?.sku ?? productId}: ${formatUsd(priceUsd)}`,
+      summary: `Precio ${product.sku}: ${formatUsd(priceUsd)}`,
       timestamp: now,
     });
 
@@ -1532,21 +1585,32 @@ export default function App() {
     unitsPerBulk: number;
     notes?: string;
   }) => {
+    if (!activeCashier || (!isAdmin && !permissions.manageCosting)) return;
+    const cleanSupplier = params.supplierName.trim().slice(0, 120);
+    if (
+      !cleanSupplier ||
+      !Number.isFinite(params.bulkCostUsd) ||
+      params.bulkCostUsd <= 0 ||
+      !Number.isInteger(params.unitsPerBulk) ||
+      params.unitsPerBulk <= 0
+    ) {
+      return;
+    }
     const product = products.find((p) => p.id === params.productId);
     if (!product) return;
 
     const now = new Date().toISOString();
     const quote: SupplierQuote = {
       id: `quote-${Date.now()}`,
-      supplierName: params.supplierName,
-      supplierPhone: params.supplierPhone,
+      supplierName: cleanSupplier,
+      supplierPhone: params.supplierPhone?.trim().slice(0, 30),
       productId: product.id,
       productName: product.name,
       productSku: product.sku,
       bulkCostUsd: round2(params.bulkCostUsd),
       unitsPerBulk: params.unitsPerBulk,
       unitCostUsd: round2(params.bulkCostUsd / params.unitsPerBulk),
-      notes: params.notes,
+      notes: params.notes?.trim().slice(0, 500),
       updatedAt: now,
       syncStatus: 'pending',
     };
@@ -1571,6 +1635,7 @@ export default function App() {
   };
 
   const handleDeleteSupplierQuote = async (quoteId: string) => {
+    if (!activeCashier || (!isAdmin && !permissions.manageCosting)) return;
     const existing = supplierQuotes.find((q) => q.id === quoteId);
     const now = new Date().toISOString();
     const queueItem = buildSyncQueueItem({
@@ -1602,6 +1667,8 @@ export default function App() {
     notes?: string;
   }) => {
     if (!activeCashier || (!isAdmin && !permissions.manageCosting)) return;
+    const cleanDescription = params.description.trim().slice(0, 200);
+    if (!cleanDescription || !Number.isFinite(params.amountUsd) || params.amountUsd <= 0) return;
     const effectiveBranchId =
       isBranchLocked && lockedBranchId ? lockedBranchId : params.branchId;
     const branch = branches.find((b) => b.id === effectiveBranchId) || activeBranch;
@@ -1613,15 +1680,15 @@ export default function App() {
       branchId: branch.id,
       branchName: branch.name,
       type: params.type,
-      category: params.category,
-      description: params.description,
+      category: params.category.trim().slice(0, 80) || 'General',
+      description: cleanDescription,
       amountUsd: round2(params.amountUsd),
       amountVes: round2(params.amountUsd * exchangeRate),
       exchangeRate,
       expenseDate: params.expenseDate,
       cashierId: activeCashier.id,
       cashierName: activeCashier.name,
-      notes: params.notes,
+      notes: params.notes?.trim().slice(0, 500),
       createdAt: now,
       updatedAt: now,
       syncStatus: 'pending',
@@ -1649,6 +1716,9 @@ export default function App() {
   const handleDeleteExpense = async (expenseId: string) => {
     if (!isAdmin && !permissions.manageCosting) return;
     const existing = expenses.find((e) => e.id === expenseId);
+    if (isBranchLocked && lockedBranchId && existing && existing.branchId !== lockedBranchId) {
+      return;
+    }
     const now = new Date().toISOString();
     const queueItem = buildSyncQueueItem({
       entityType: 'expense',
@@ -1679,6 +1749,12 @@ export default function App() {
     expenseDate: string;
   }) => {
     if (!isAdmin && !permissions.manageCosting) return;
+    const cleanDescription = params.description.trim().slice(0, 200);
+    if (!cleanDescription || !Number.isFinite(params.amountUsd) || params.amountUsd <= 0) return;
+    const existing = expenses.find((e) => e.id === params.id);
+    if (isBranchLocked && lockedBranchId && existing && existing.branchId !== lockedBranchId) {
+      return;
+    }
     const effectiveBranchId =
       isBranchLocked && lockedBranchId ? lockedBranchId : params.branchId;
     const branch = branches.find((b) => b.id === effectiveBranchId) || activeBranch;
@@ -1690,7 +1766,7 @@ export default function App() {
       entityType: 'expense',
       entityId: params.id,
       operation: 'update',
-      summary: `Editar gasto: ${params.description} (${formatUsd(roundedUsd)})`,
+      summary: `Editar gasto: ${cleanDescription} (${formatUsd(roundedUsd)})`,
       timestamp: now,
     });
 
@@ -1725,13 +1801,21 @@ export default function App() {
     address: string;
     phone: string;
   }): Promise<Branch> => {
+    if (!isAdmin) {
+      throw new Error('Solo el administrador puede crear sucursales.');
+    }
+    const cleanName = params.name.trim().slice(0, 100);
+    const cleanCode = params.code.trim().toUpperCase().slice(0, 20);
+    if (!cleanName || !cleanCode) {
+      throw new Error('Nombre y código de sucursal son obligatorios.');
+    }
     const now = new Date().toISOString();
     const newBranch: Branch = {
       id: `branch-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
-      name: params.name.trim(),
-      code: params.code.trim().toUpperCase(),
-      address: params.address.trim(),
-      phone: params.phone.trim(),
+      name: cleanName,
+      code: cleanCode,
+      address: params.address.trim().slice(0, 240),
+      phone: params.phone.trim().slice(0, 30),
       isActive: true,
       updatedAt: now,
       syncStatus: 'pending',
@@ -1758,21 +1842,25 @@ export default function App() {
   };
 
   const handleUpdateBranch = async (updatedBranch: Branch) => {
+    if (!isAdmin) return;
+    const cleanName = updatedBranch.name.trim().slice(0, 100);
+    const cleanCode = updatedBranch.code.trim().toUpperCase().slice(0, 20);
+    if (!cleanName || !cleanCode) return;
     const now = new Date().toISOString();
     const queueItem = buildSyncQueueItem({
       entityType: 'branch',
       entityId: updatedBranch.id,
       operation: 'update',
-      summary: `Editar sucursal: ${updatedBranch.name} (${updatedBranch.code})`,
+      summary: `Editar sucursal: ${cleanName} (${cleanCode})`,
       timestamp: now,
     });
 
     await db.transaction('rw', [db.branches, db.syncQueue], async () => {
       await db.branches.update(updatedBranch.id, {
-        name: updatedBranch.name.trim(),
-        code: updatedBranch.code.trim().toUpperCase(),
-        address: updatedBranch.address.trim(),
-        phone: updatedBranch.phone.trim(),
+        name: cleanName,
+        code: cleanCode,
+        address: updatedBranch.address.trim().slice(0, 240),
+        phone: updatedBranch.phone.trim().slice(0, 30),
         isActive: updatedBranch.isActive,
         updatedAt: now,
         syncStatus: 'pending',
@@ -1790,6 +1878,9 @@ export default function App() {
   const handleToggleBranchActive = async (
     branchId: string
   ): Promise<{ ok: boolean; error?: string }> => {
+    if (!isAdmin) {
+      return { ok: false, error: 'Solo el administrador puede gestionar sucursales.' };
+    }
     const target = branches.find((b) => b.id === branchId);
     if (!target) return { ok: false, error: 'Sucursal no encontrada.' };
 
@@ -1840,6 +1931,9 @@ export default function App() {
   const handleDeleteBranch = async (
     branchId: string
   ): Promise<{ ok: boolean; error?: string }> => {
+    if (!isAdmin) {
+      return { ok: false, error: 'Solo el administrador puede eliminar sucursales.' };
+    }
     const target = branches.find((b) => b.id === branchId);
     if (!target) return { ok: false, error: 'Sucursal no encontrada.' };
     if (branches.length <= 1) {
@@ -1901,19 +1995,35 @@ export default function App() {
     stockByBranch: Record<string, number>;
   }) => {
     if (!isAdmin && !permissions.editInventory) return;
+    const cleanName = params.name.trim().slice(0, 140);
+    const cleanSku = params.sku.trim().toUpperCase().slice(0, 60);
+    if (
+      !cleanName ||
+      !cleanSku ||
+      !Number.isFinite(params.costUsd) ||
+      params.costUsd < 0 ||
+      !Number.isFinite(params.priceUsd) ||
+      params.priceUsd <= 0
+    ) {
+      return;
+    }
+    const sanitizedStockByBranch: Record<string, number> = {};
+    for (const [bId, qty] of Object.entries(params.stockByBranch)) {
+      sanitizedStockByBranch[bId] = Number.isFinite(qty) ? Math.max(0, Math.floor(qty)) : 0;
+    }
     const now = new Date().toISOString();
     const newProduct: Product = {
       id: `prod-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
-      name: params.name.trim(),
-      sku: params.sku.trim().toUpperCase(),
-      barcode: params.barcode?.trim() || undefined,
-      category: params.category.trim() || 'General',
-      unit: params.unit.trim() || 'und',
-      minStock: Math.max(0, params.minStock),
+      name: cleanName,
+      sku: cleanSku,
+      barcode: params.barcode?.trim().slice(0, 60) || undefined,
+      category: params.category.trim().slice(0, 80) || 'General',
+      unit: params.unit.trim().slice(0, 20) || 'und',
+      minStock: Number.isFinite(params.minStock) ? Math.max(0, Math.floor(params.minStock)) : 0,
       costUsd: round2(params.costUsd),
       priceUsd: round2(params.priceUsd),
       taxExempt: params.taxExempt,
-      stockByBranch: params.stockByBranch,
+      stockByBranch: sanitizedStockByBranch,
       updatedAt: now,
       syncStatus: 'pending',
     };
@@ -1939,18 +2049,49 @@ export default function App() {
 
   const handleUpdateProduct = async (updatedProduct: Product) => {
     if (!isAdmin && !permissions.editInventory) return;
+    const cleanName = updatedProduct.name.trim().slice(0, 140);
+    const cleanSku = updatedProduct.sku.trim().toUpperCase().slice(0, 60);
+    if (
+      !cleanName ||
+      !cleanSku ||
+      !Number.isFinite(updatedProduct.costUsd) ||
+      updatedProduct.costUsd < 0 ||
+      !Number.isFinite(updatedProduct.priceUsd) ||
+      updatedProduct.priceUsd <= 0
+    ) {
+      return;
+    }
+    const sanitizedStockByBranch: Record<string, number> = {};
+    for (const [bId, qty] of Object.entries(updatedProduct.stockByBranch)) {
+      sanitizedStockByBranch[bId] = Number.isFinite(qty) ? Math.max(0, Math.floor(qty)) : 0;
+    }
+    const safeProduct: Product = {
+      ...updatedProduct,
+      name: cleanName,
+      sku: cleanSku,
+      barcode: updatedProduct.barcode?.trim().slice(0, 60) || undefined,
+      category: updatedProduct.category.trim().slice(0, 80) || 'General',
+      unit: updatedProduct.unit.trim().slice(0, 20) || 'und',
+      minStock: Number.isFinite(updatedProduct.minStock)
+        ? Math.max(0, Math.floor(updatedProduct.minStock))
+        : 0,
+      costUsd: round2(updatedProduct.costUsd),
+      priceUsd: round2(updatedProduct.priceUsd),
+      imageUrl: getSafeImageUrl(updatedProduct.imageUrl) ?? undefined,
+      stockByBranch: sanitizedStockByBranch,
+    };
     const now = new Date().toISOString();
     const queueItem = buildSyncQueueItem({
       entityType: 'product',
-      entityId: updatedProduct.id,
+      entityId: safeProduct.id,
       operation: 'update',
-      summary: `Editar stock/producto: ${updatedProduct.sku} — ${updatedProduct.name}`,
+      summary: `Editar stock/producto: ${safeProduct.sku} — ${safeProduct.name}`,
       timestamp: now,
     });
 
     await db.transaction('rw', [db.products, db.syncQueue], async () => {
       await db.products.put({
-        ...updatedProduct,
+        ...safeProduct,
         updatedAt: now,
         syncStatus: 'pending',
         syncedAt: undefined,
@@ -2013,6 +2154,7 @@ export default function App() {
     await db.transaction('rw', [db.sales, db.products, db.customers, db.syncQueue], async () => {
       const oldSale = await db.sales.get(updatedSale.id);
       if (!oldSale) return;
+      if (isBranchLocked && lockedBranchId && oldSale.branchId !== lockedBranchId) return;
 
       // Adjust stock deltas in the sale's branch
       const oldQtyByProd = new Map<string, number>();
@@ -2109,6 +2251,7 @@ export default function App() {
     await db.transaction('rw', [db.sales, db.products, db.customers, db.syncQueue], async () => {
       const oldSale = await db.sales.get(saleId);
       if (!oldSale) return;
+      if (isBranchLocked && lockedBranchId && oldSale.branchId !== lockedBranchId) return;
 
       // Restore sold quantities back to the branch's stock
       for (const item of oldSale.items) {
@@ -2178,6 +2321,13 @@ export default function App() {
 
   // Full Blank-Slate Data Wipe (clears all catalog, contacts & operational data locally & in Supabase; preserves account, subscription & internal users)
   const handleResetOperationalData = async () => {
+    if (!isAdmin) {
+      return {
+        ok: false,
+        cloudCleared: false,
+        errorMessage: 'Solo el administrador puede ejecutar el borrado total.',
+      };
+    }
     const result = await resetAllUserData(cloudUserIdRef.current);
     setProducts([]);
     setCustomers([]);
@@ -2396,13 +2546,19 @@ export default function App() {
   };
 
   const handleDeleteCustomer = async (customerId: string): Promise<void> => {
+    if (!activeCashier) return;
     const customer = customers.find((c) => c.id === customerId);
+    if (!customer) return;
+    const hasPendingDebt =
+      (customer.balanceUsd || 0) > 0 ||
+      sales.some((s) => s.customerId === customerId && (Number(s.pendingUsd) || 0) > 0);
+    if (hasPendingDebt) return;
     const now = new Date().toISOString();
     const queueItem = buildSyncQueueItem({
       entityType: 'customer',
       entityId: customerId,
       operation: 'delete',
-      summary: `Eliminar cliente: ${customer?.name ?? customerId}`,
+      summary: `Eliminar cliente: ${customer.name}`,
       timestamp: now,
     });
 
@@ -3154,7 +3310,14 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
-            <label className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs focus-within:border-[#76B900] focus-within:bg-white shrink-0">
+            <label
+              title={
+                isAdmin
+                  ? 'Tasa diaria de cambio en Bolívares por Dólar'
+                  : 'Tasa diaria de cambio (solo el administrador puede modificarla)'
+              }
+              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs focus-within:border-[#76B900] focus-within:bg-white shrink-0"
+            >
               <span className="font-medium text-slate-500 whitespace-nowrap">Bs/$</span>
               <input
                 type="number"
@@ -3162,8 +3325,10 @@ export default function App() {
                 min="0.01"
                 aria-label="Tasa diaria de cambio en Bolívares por Dólar"
                 value={exchangeRateInput}
+                readOnly={!isAdmin}
+                disabled={!isAdmin}
                 onChange={(e) => handleExchangeRateChange(e.target.value)}
-                className="w-12 bg-transparent text-right font-mono text-xs font-bold tabular-nums text-[#558B00] focus:outline-none"
+                className="w-12 bg-transparent text-right font-mono text-xs font-bold tabular-nums text-[#558B00] focus:outline-none disabled:cursor-default disabled:opacity-90"
               />
             </label>
 
@@ -3497,11 +3662,19 @@ export default function App() {
                           <div>
                             {showPhoto && (
                               <div className="mb-1.5 flex h-14 w-full items-center justify-center overflow-hidden rounded bg-slate-100 text-slate-400">
-                                {product.imageUrl ? (
-                                  <img src={product.imageUrl} alt={product.name} className="h-full w-full object-cover" />
-                                ) : (
-                                  <ImageIcon className="h-5 w-5 text-slate-400" />
-                                )}
+                                {(() => {
+                                  const safeImg = getSafeImageUrl(product.imageUrl);
+                                  return safeImg ? (
+                                    <img
+                                      src={safeImg}
+                                      alt={product.name}
+                                      referrerPolicy="no-referrer"
+                                      className="h-full w-full object-cover"
+                                    />
+                                  ) : (
+                                    <ImageIcon className="h-5 w-5 text-slate-400" />
+                                  );
+                                })()}
                               </div>
                             )}
                             <div className="flex items-start justify-between gap-1.5">
@@ -3620,7 +3793,7 @@ export default function App() {
         </div>
       )}
 
-      {activeTab === 'customers' && (
+      {activeTab === 'customers' && activeCashier && (
         <div className="flex-1 overflow-y-auto">
           <CustomersModule
             customers={customers}
@@ -3657,7 +3830,7 @@ export default function App() {
         </div>
       )}
 
-      {activeTab === 'reports' && (isAdmin || permissions.viewReports) && (
+      {activeTab === 'reports' && activeCashier && (isAdmin || permissions.viewReports) && (
         <div className="flex-1 overflow-y-auto">
           <ReportsManager
             sales={visibleSales}

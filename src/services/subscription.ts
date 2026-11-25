@@ -1,6 +1,8 @@
 import { db } from '../db/posDb';
-import { supabase } from '../lib/supabase';
+import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import type { SubscriptionRecord, SubscriptionState } from '../types/pos';
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export const RENEWAL_WHATSAPP_NUMBER = '584264225879';
 const SUBSCRIPTION_CACHE_PREFIX = 'subscription_cache_';
@@ -414,6 +416,9 @@ export function subscribeToSubscriptionChanges(
   userId: string,
   onChange: () => void
 ): () => void {
+  if (!isSupabaseConfigured || !UUID_REGEX.test(userId)) {
+    return () => {};
+  }
   try {
     const channel = supabase
       .channel(`pos_262_subscription_${userId}`)

@@ -14,7 +14,7 @@ import {
   X,
 } from 'lucide-react';
 import type { User } from '@supabase/supabase-js';
-import { mapAuthErrorMessage, supabase } from '../lib/supabase';
+import { isSupabaseConfigured, mapAuthErrorMessage, supabase } from '../lib/supabase';
 import { ensureTrialSubscription } from '../services/subscription';
 
 interface CloudAuthScreenProps {
@@ -53,6 +53,12 @@ export const CloudAuthScreen: React.FC<CloudAuthScreenProps> = ({
     }
     if (password.length < 6) {
       setErrorMessage('La contraseña debe tener al menos 6 caracteres.');
+      return;
+    }
+    if (!isSupabaseConfigured) {
+      setErrorMessage(
+        'Falta configurar VITE_SUPABASE_URL y VITE_SUPABASE_ANON_KEY en el entorno de la aplicación.'
+      );
       return;
     }
     if (!isOnline) {
@@ -148,6 +154,15 @@ export const CloudAuthScreen: React.FC<CloudAuthScreenProps> = ({
           </button>
         )}
       </div>
+
+      {!isSupabaseConfigured && (
+        <div className="mt-4 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <Lock className="h-4 w-4 shrink-0 text-amber-600" />
+          <span>
+            Configuración pendiente: define VITE_SUPABASE_URL y VITE_SUPABASE_ANON_KEY para habilitar la nube.
+          </span>
+        </div>
+      )}
 
       {!isOnline && (
         <div className="mt-4 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">

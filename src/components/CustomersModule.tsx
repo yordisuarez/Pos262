@@ -71,6 +71,7 @@ export const CustomersModule: React.FC<CustomersModuleProps> = ({
   const [newDocumentId, setNewDocumentId] = useState<string>('');
   const [newPhone, setNewPhone] = useState<string>('');
   const [newNotes, setNewNotes] = useState<string>('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const safeRate = Number.isFinite(exchangeRate) && exchangeRate > 0 ? exchangeRate : 1;
 
@@ -144,7 +145,8 @@ export const CustomersModule: React.FC<CustomersModuleProps> = ({
   const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedCustomer) return;
-    if (!editName.trim()) {
+    const trimmedName = editName.trim().slice(0, 120);
+    if (!trimmedName) {
       setErrorMsg('El nombre del cliente es obligatorio.');
       return;
     }
@@ -152,10 +154,10 @@ export const CustomersModule: React.FC<CustomersModuleProps> = ({
     setErrorMsg('');
     try {
       await updateCustomer(selectedCustomer.id, {
-        name: editName.trim(),
-        documentId: editDocumentId.trim(),
-        phone: editPhone.trim(),
-        notes: editNotes.trim(),
+        name: trimmedName,
+        documentId: editDocumentId.trim().slice(0, 40),
+        phone: editPhone.trim().slice(0, 30),
+        notes: editNotes.trim().slice(0, 500),
       });
       if (onRefreshData) await onRefreshData();
       setIsEditing(false);
@@ -166,28 +168,41 @@ export const CustomersModule: React.FC<CustomersModuleProps> = ({
     }
   };
 
-  const handleDeleteClick = async (c: Customer) => {
+  const handleRequestDelete = (c: Customer) => {
     setErrorMsg('');
     if (customerMetrics.totalPendingUsd > 0 || c.balanceUsd > 0) {
       setErrorMsg('No se puede eliminar este cliente porque tiene deuda pendiente. Debe saldar su cuenta primero.');
       return;
     }
-    if (window.confirm(`¿Seguro que deseas eliminar al cliente "${c.name}"?`)) {
-      if (onDeleteCustomer) {
-        await onDeleteCustomer(c.id);
-      }
+    setConfirmDeleteId(c.id);
+  };
+
+  const handleConfirmDelete = async (c: Customer) => {
+    setErrorMsg('');
+    if (customerMetrics.totalPendingUsd > 0 || c.balanceUsd > 0) {
+      setConfirmDeleteId(null);
+      setErrorMsg('No se puede eliminar este cliente porque tiene deuda pendiente. Debe saldar su cuenta primero.');
+      return;
+    }
+    setConfirmDeleteId(null);
+    if (onDeleteCustomer) {
+      await onDeleteCustomer(c.id);
     }
   };
 
   const handleCreateCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newName.trim()) return;
+    const trimmedName = newName.trim().slice(0, 120);
+    if (!trimmedName) {
+      setErrorMsg('El nombre del cliente es obligatorio.');
+      return;
+    }
     const newCust: Customer = {
       id: `cust-${Date.now()}`,
-      name: newName.trim(),
-      documentId: newDocumentId.trim() || 'V-00000000',
-      phone: newPhone.trim(),
-      notes: newNotes.trim(),
+      name: trimmedName,
+      documentId: newDocumentId.trim().slice(0, 40) || 'V-00000000',
+      phone: newPhone.trim().slice(0, 30),
+      notes: newNotes.trim().slice(0, 500),
       creditLimitUsd: 500,
       balanceUsd: 0,
       createdAt: new Date().toISOString(),
@@ -253,6 +268,7 @@ export const CustomersModule: React.FC<CustomersModuleProps> = ({
                   type="button"
                   onClick={() => {
                     setSelectedCustomerId(c.id);
+                    setConfirmDeleteId(null);
                     setErrorMsg('');
                   }}
                   className={`w-full text-left rounded-lg p-3 transition-all cursor-pointer border ${
@@ -335,14 +351,33 @@ export const CustomersModule: React.FC<CustomersModuleProps> = ({
                     <Pencil className="h-3.5 w-3.5 text-[#76B900]" />
                     Editar cliente
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteClick(selectedCustomer)}
-                    className="flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-bold text-red-600 transition-colors hover:border-red-300 hover:bg-red-50 cursor-pointer shadow-xs"
-                  >
-                    <Trash2 className="h-3.5 w-3.5 text-red-500" />
-                    Eliminar
-                  </button>
+                  {confirmDeleteId === selectedCustomer.id ? (
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => void handleConfirmDelete(selectedCustomer)}
+                        className="rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-red-700 cursor-pointer shadow-xs"
+                      >
+                        Confirmar eliminar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteId(null)}
+                        className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleRequestDelete(selectedCustomer)}
+                      className="flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-bold text-red-600 transition-colors hover:border-red-300 hover:bg-red-50 cursor-pointer shadow-xs"
+                    >
+                      <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                      Eliminar
+                    </button>
+                  )}
                 </div>
               </div>
 

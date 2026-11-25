@@ -47,6 +47,26 @@ export const CashierLoginModal: React.FC<CashierLoginModalProps> = ({
   );
   const [pinInput, setPinInput] = useState<string>('');
   const [error, setError] = useState<string>('');
+  const [failedAttempts, setFailedAttempts] = useState<number>(0);
+  const [lockoutUntil, setLockoutUntil] = useState<number>(0);
+  const [nowTs, setNowTs] = useState<number>(() => Date.now());
+
+  const remainingLockSeconds = Math.max(0, Math.ceil((lockoutUntil - nowTs) / 1000));
+  const isLockedOut = remainingLockSeconds > 0;
+
+  useEffect(() => {
+    if (!isLockedOut) return;
+    const timer = window.setInterval(() => {
+      const current = Date.now();
+      setNowTs(current);
+      if (current >= lockoutUntil) {
+        setFailedAttempts(0);
+        setLockoutUntil(0);
+        setError('');
+      }
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [isLockedOut, lockoutUntil]);
 
   const selectedCashier = useMemo(
     () => cashiers.find((c) => c.id === selectedCashierId) || cashiers[0],
@@ -56,10 +76,30 @@ export const CashierLoginModal: React.FC<CashierLoginModalProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedCashier) return;
-    if (pinInput.trim() !== selectedCashier.pin) {
-      setError('PIN incorrecto. Verifica las credenciales del usuario seleccionado.');
+    const current = Date.now();
+    if (lockoutUntil > current) {
+      const waitSec = Math.ceil((lockoutUntil - current) / 1000);
+      setError(`Demasiados intentos fallidos. Espera ${waitSec}s antes de reintentar.`);
       return;
     }
+    if (pinInput.trim() !== selectedCashier.pin) {
+      const nextAttempts = failedAttempts + 1;
+      setFailedAttempts(nextAttempts);
+      setPinInput('');
+      if (nextAttempts >= 5) {
+        const until = current + 30_000;
+        setLockoutUntil(until);
+        setNowTs(current);
+        setError('Demasiados intentos fallidos. Acceso bloqueado durante 30 segundos.');
+      } else {
+        setError(
+          `PIN incorrecto. Verifica las credenciales (${5 - nextAttempts} intentos restantes).`
+        );
+      }
+      return;
+    }
+    setFailedAttempts(0);
+    setLockoutUntil(0);
     setError('');
     setPinInput('');
     onLogin(selectedCashier);
@@ -163,10 +203,11 @@ export const CashierLoginModal: React.FC<CashierLoginModalProps> = ({
 
           <button
             type="submit"
-            className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-[#84CC16] px-3 py-2 text-xs font-bold text-slate-950 hover:bg-[#76B900] transition-colors cursor-pointer"
+            disabled={isLockedOut}
+            className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-[#84CC16] px-3 py-2 text-xs font-bold text-slate-950 hover:bg-[#76B900] disabled:bg-slate-200 disabled:text-slate-500 transition-colors cursor-pointer"
           >
             <UserCheck className="h-3.5 w-3.5" />
-            Ingresar a caja
+            {isLockedOut ? `Reintentar en ${remainingLockSeconds}s` : 'Ingresar a caja'}
           </button>
         </form>
       </div>

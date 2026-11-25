@@ -5,7 +5,7 @@ import {
   saveLocalBusinessSettings,
   writeFullWipeLocalMarker,
 } from '../db/posDb';
-import { supabase } from '../lib/supabase';
+import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import type {
   Branch,
   BusinessSettings,
@@ -21,6 +21,19 @@ import type {
   SyncOperationType,
   SyncQueueItem,
 } from '../types/pos';
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function sanitizeCloudPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  const clean: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(payload)) {
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+      continue;
+    }
+    clean[key] = value;
+  }
+  return clean;
+}
 
 export interface PendingSyncSummary {
   total: number;
@@ -378,7 +391,7 @@ async function mergePulledRecordsIntoIndexedDB(
         }
 
         const incoming = {
-          ...row.payload,
+          ...sanitizeCloudPayload(row.payload),
           id: row.record_id,
           updatedAt: cloudUpdatedAt,
           syncStatus: 'synced' as const,
@@ -852,6 +865,9 @@ export async function processSyncQueue(options?: {
  * automatically trigger a local IndexedDB refresh when online.
  */
 export function subscribeToCloudChanges(userId: string, onRemoteChange: () => void): () => void {
+  if (!isSupabaseConfigured || !UUID_REGEX.test(userId)) {
+    return () => {};
+  }
   try {
     const channel = supabase
       .channel(`pos_262_sync_${userId}`)
