@@ -3399,20 +3399,6 @@ export default function App() {
                 );
               })()}
             </nav>
-
-            {activeTab === 'pos' && !activeShift && activeCashier && (
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveTab('shifts');
-                  setNavMenuOpen(false);
-                }}
-                className="inline-flex items-center gap-1.5 rounded-md bg-[#84CC16] px-2.5 py-1 text-xs font-bold text-slate-950 hover:bg-[#76B900] transition-colors cursor-pointer whitespace-nowrap"
-              >
-                <Lock className="h-3 w-3" />
-                Abrir turno opcional
-              </button>
-            )}
           </div>
         </div>
 
