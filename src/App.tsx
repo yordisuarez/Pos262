@@ -16,7 +16,6 @@ import {
   CreditCard,
   Download,
   History,
-  Image as ImageIcon,
   Lock,
   Menu,
   MessageCircle,
@@ -63,6 +62,7 @@ import { CloudAuthScreen } from './components/CloudAuthScreen';
 import { SettingsManager } from './components/SettingsManager';
 import { SubscriptionLockScreen } from './components/SubscriptionLockScreen';
 import { CustomersModule } from './components/CustomersModule';
+import { ProductImageBox } from './components/ProductImageBox';
 import {
   buildSubscriptionRenewalWhatsAppUrl,
   createInitialSubscriptionState,
@@ -3815,25 +3815,11 @@ export default function App() {
                         >
                           <div>
                             {showPhoto && (
-                              <div className="mb-1.5 flex h-14 w-full items-center justify-center overflow-hidden rounded bg-slate-100 text-slate-400">
-                                {(() => {
-                                  const safeImg = getSafeImageUrl(
-                                    product.imageUrl || product.image_url
-                                  );
-                                  return safeImg ? (
-                                    <img
-                                      src={safeImg}
-                                      alt={product.name}
-                                      loading="lazy"
-                                      decoding="async"
-                                      referrerPolicy="no-referrer"
-                                      className="h-full w-full object-cover"
-                                    />
-                                  ) : (
-                                    <ImageIcon className="h-5 w-5 text-slate-400" />
-                                  );
-                                })()}
-                              </div>
+                              <ProductImageBox
+                                src={product.imageUrl || product.image_url}
+                                name={product.name}
+                                className="mb-1.5 h-14 w-full rounded bg-slate-100"
+                              />
                             )}
                             <div className="flex items-start justify-between gap-1.5">
                               <h2 className="text-xs font-semibold leading-tight text-slate-900 line-clamp-2 group-hover:text-[#3F6212] transition-colors">

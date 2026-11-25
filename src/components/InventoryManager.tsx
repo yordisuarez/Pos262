@@ -5,7 +5,6 @@ import {
   Building2,
   Camera,
   CheckCircle2,
-  Image as ImageIcon,
   Lock,
   PackagePlus,
   Pencil,
@@ -25,6 +24,7 @@ import {
   type CompressedProductImage,
 } from '../services/productImage';
 import { InventoryValuationPanel } from './InventoryValuationPanel';
+import { ProductImageBox } from './ProductImageBox';
 
 const round2 = (value: number): number => Math.round((value + Number.EPSILON) * 100) / 100;
 
@@ -1162,18 +1162,13 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                     return (
                       <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50/70 p-2.5">
                         <div className="flex min-w-0 items-center gap-2.5">
-                          <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-white text-slate-400">
-                            {activePreview ? (
-                              <img
-                                src={activePreview}
-                                alt="Vista previa del producto"
-                                referrerPolicy="no-referrer"
-                                className="h-full w-full object-cover"
-                              />
-                            ) : (
-                              <ImageIcon className="h-5 w-5 text-slate-300" />
-                            )}
-                          </div>
+                          <ProductImageBox
+                            src={activePreview}
+                            name={productForm.name}
+                            alt="Vista previa del producto"
+                            allowBlobPreview={Boolean(stagedPreviewUrl)}
+                            className="h-12 w-12 shrink-0 rounded-lg bg-slate-50"
+                          />
                           <div className="min-w-0">
                             <p className="text-xs font-semibold text-slate-800">
                               Foto del producto (opcional)
