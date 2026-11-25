@@ -2048,6 +2048,7 @@ export default function App() {
     costUsd: number;
     priceUsd: number;
     taxExempt: boolean;
+    imageUrl?: string;
     stockByBranch: Record<string, number>;
   }) => {
     if (!isAdmin && !permissions.editInventory) return;
@@ -2067,6 +2068,7 @@ export default function App() {
     for (const [bId, qty] of Object.entries(params.stockByBranch)) {
       sanitizedStockByBranch[bId] = Number.isFinite(qty) ? Math.max(0, Math.floor(qty)) : 0;
     }
+    const safeImageUrl = getSafeImageUrl(params.imageUrl) ?? undefined;
     const now = new Date().toISOString();
     const newProduct: Product = {
       id: `prod-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
@@ -2079,6 +2081,8 @@ export default function App() {
       costUsd: round2(params.costUsd),
       priceUsd: round2(params.priceUsd),
       taxExempt: params.taxExempt,
+      imageUrl: safeImageUrl,
+      image_url: safeImageUrl,
       stockByBranch: sanitizedStockByBranch,
       updatedAt: now,
       syncStatus: 'pending',
@@ -2121,6 +2125,8 @@ export default function App() {
     for (const [bId, qty] of Object.entries(updatedProduct.stockByBranch)) {
       sanitizedStockByBranch[bId] = Number.isFinite(qty) ? Math.max(0, Math.floor(qty)) : 0;
     }
+    const safeImageUrl =
+      getSafeImageUrl(updatedProduct.imageUrl ?? updatedProduct.image_url) ?? undefined;
     const safeProduct: Product = {
       ...updatedProduct,
       name: cleanName,
@@ -2133,7 +2139,8 @@ export default function App() {
         : 0,
       costUsd: round2(updatedProduct.costUsd),
       priceUsd: round2(updatedProduct.priceUsd),
-      imageUrl: getSafeImageUrl(updatedProduct.imageUrl) ?? undefined,
+      imageUrl: safeImageUrl,
+      image_url: safeImageUrl,
       stockByBranch: sanitizedStockByBranch,
     };
     const now = new Date().toISOString();
@@ -3810,11 +3817,15 @@ export default function App() {
                             {showPhoto && (
                               <div className="mb-1.5 flex h-14 w-full items-center justify-center overflow-hidden rounded bg-slate-100 text-slate-400">
                                 {(() => {
-                                  const safeImg = getSafeImageUrl(product.imageUrl);
+                                  const safeImg = getSafeImageUrl(
+                                    product.imageUrl || product.image_url
+                                  );
                                   return safeImg ? (
                                     <img
                                       src={safeImg}
                                       alt={product.name}
+                                      loading="lazy"
+                                      decoding="async"
                                       referrerPolicy="no-referrer"
                                       className="h-full w-full object-cover"
                                     />
@@ -3964,6 +3975,7 @@ export default function App() {
             transfers={transfers}
             sales={visibleSales}
             activeCashier={activeCashier}
+            cloudUserId={cloudUser?.id ?? null}
             exchangeRate={exchangeRate}
             canEditInventory={isAdmin || permissions.editInventory}
             isBranchLocked={isBranchLocked}

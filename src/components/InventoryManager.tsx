@@ -3,7 +3,9 @@ import {
   ArrowLeftRight,
   ArrowRight,
   Building2,
+  Camera,
   CheckCircle2,
+  Image as ImageIcon,
   Lock,
   PackagePlus,
   Pencil,
@@ -15,6 +17,13 @@ import {
   X,
 } from 'lucide-react';
 import type { Branch, Cashier, Product, Sale, StockTransfer } from '../types/pos';
+import {
+  compressProductImage,
+  formatImageSize,
+  getSafeProductImageUrl,
+  uploadProductImage,
+  type CompressedProductImage,
+} from '../services/productImage';
 import { InventoryValuationPanel } from './InventoryValuationPanel';
 
 const round2 = (value: number): number => Math.round((value + Number.EPSILON) * 100) / 100;
@@ -38,6 +47,7 @@ interface InventoryManagerProps {
   transfers: StockTransfer[];
   sales?: Sale[];
   activeCashier: Cashier;
+  cloudUserId?: string | null;
   exchangeRate: number;
   canEditInventory?: boolean;
   isBranchLocked?: boolean;
@@ -64,6 +74,7 @@ interface InventoryManagerProps {
     costUsd: number;
     priceUsd: number;
     taxExempt: boolean;
+    imageUrl?: string;
     stockByBranch: Record<string, number>;
   }) => Promise<void>;
   onUpdateProduct: (product: Product) => Promise<void>;
@@ -82,6 +93,7 @@ interface ProductFormState {
   costUsd: string;
   priceUsd: string;
   taxExempt: boolean;
+  imageUrl: string;
   stockByBranch: Record<string, string>;
 }
 
@@ -92,6 +104,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
   transfers,
   sales = [],
   activeCashier,
+  cloudUserId = null,
   exchangeRate,
   canEditInventory = true,
   isBranchLocked = false,
@@ -103,6 +116,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
   onOpenBranchSettings,
 }) => {
   const loadSectionRef = useRef<HTMLElement | null>(null);
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
   const operationalBranches = useMemo(() => {
     const active = branches.filter((b) => b.isActive);
     const pool = active.length > 0 ? active : branches;
@@ -153,6 +167,10 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
   } | null>(null);
   const [confirmDeleteProductId, setConfirmDeleteProductId] = useState<string | null>(null);
   const [savingProduct, setSavingProduct] = useState<boolean>(false);
+  const [compressingPhoto, setCompressingPhoto] = useState<boolean>(false);
+  const [uploadingPhoto, setUploadingPhoto] = useState<boolean>(false);
+  const [stagedImage, setStagedImage] = useState<CompressedProductImage | null>(null);
+  const [stagedPreviewUrl, setStagedPreviewUrl] = useState<string | null>(null);
 
   // Create / Edit product modal state
   const [productModalOpen, setProductModalOpen] = useState<boolean>(false);
@@ -168,8 +186,21 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
     costUsd: '0.00',
     priceUsd: '0.00',
     taxExempt: false,
+    imageUrl: '',
     stockByBranch: {},
   });
+
+  const revokeStagedPreview = (url: string | null) => {
+    if (url && url.startsWith('blob:')) {
+      URL.revokeObjectURL(url);
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      revokeStagedPreview(stagedPreviewUrl);
+    };
+  }, [stagedPreviewUrl]);
 
   useEffect(() => {
     if (isBranchLocked) {
@@ -229,8 +260,55 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
     );
   }, [products, inventorySearch]);
 
+  const resetStagedPhoto = () => {
+    revokeStagedPreview(stagedPreviewUrl);
+    setStagedPreviewUrl(null);
+    setStagedImage(null);
+    setCompressingPhoto(false);
+    setUploadingPhoto(false);
+    if (photoInputRef.current) {
+      photoInputRef.current.value = '';
+    }
+  };
+
+  const closeProductModal = () => {
+    resetStagedPhoto();
+    setProductModalOpen(false);
+  };
+
+  const handleSelectProductPhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    setProductFormError('');
+    setCompressingPhoto(true);
+    try {
+      const compressed = await compressProductImage(file, {
+        maxDimension: 600,
+        quality: 0.78,
+      });
+      const previewUrl = URL.createObjectURL(compressed.blob);
+      revokeStagedPreview(stagedPreviewUrl);
+      setStagedImage(compressed);
+      setStagedPreviewUrl(previewUrl);
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'No se pudo procesar la foto seleccionada.';
+      setProductFormError(message);
+    } finally {
+      setCompressingPhoto(false);
+    }
+  };
+
+  const handleClearProductPhoto = () => {
+    resetStagedPhoto();
+    setProductForm((prev) => ({ ...prev, imageUrl: '' }));
+  };
+
   const openCreateProductModal = () => {
     if (!canEditInventory) return;
+    resetStagedPhoto();
     const initialStocks: Record<string, string> = {};
     visibleBranches.forEach((b) => {
       initialStocks[b.id] = '0';
@@ -246,6 +324,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
       costUsd: '1.00',
       priceUsd: '1.50',
       taxExempt: false,
+      imageUrl: '',
       stockByBranch: initialStocks,
     });
     setProductFormError('');
@@ -254,6 +333,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
 
   const openEditProductModal = (product: Product) => {
     if (!canEditInventory) return;
+    resetStagedPhoto();
     const stocks: Record<string, string> = {};
     visibleBranches.forEach((b) => {
       stocks[b.id] = String(product.stockByBranch[b.id] ?? 0);
@@ -269,6 +349,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
       costUsd: product.costUsd.toFixed(2),
       priceUsd: product.priceUsd.toFixed(2),
       taxExempt: Boolean(product.taxExempt),
+      imageUrl: product.imageUrl || product.image_url || '',
       stockByBranch: stocks,
     });
     setProductFormError('');
@@ -319,6 +400,28 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
 
     setSavingProduct(true);
     try {
+      let resolvedImageUrl: string | undefined =
+        getSafeProductImageUrl(productForm.imageUrl) ?? undefined;
+
+      if (stagedImage) {
+        setUploadingPhoto(true);
+        try {
+          resolvedImageUrl = await uploadProductImage(stagedImage, {
+            userId: cloudUserId,
+            skuOrId: trimmedSku || productForm.id || trimmedName,
+          });
+        } catch (err) {
+          const message =
+            err instanceof Error
+              ? err.message
+              : 'No se pudo subir la foto del producto. Intenta nuevamente o quita la foto.';
+          setProductFormError(message);
+          return;
+        } finally {
+          setUploadingPhoto(false);
+        }
+      }
+
       if (productForm.id) {
         const original = products.find((p) => p.id === productForm.id);
         if (!original) return;
@@ -333,6 +436,8 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
           costUsd: round2(parsedCost),
           priceUsd: round2(parsedPrice),
           taxExempt: productForm.taxExempt,
+          imageUrl: resolvedImageUrl,
+          image_url: resolvedImageUrl,
           stockByBranch: {
             ...original.stockByBranch,
             ...parsedStockByBranch,
@@ -353,6 +458,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
           costUsd: round2(parsedCost),
           priceUsd: round2(parsedPrice),
           taxExempt: productForm.taxExempt,
+          imageUrl: resolvedImageUrl,
           stockByBranch: parsedStockByBranch,
         });
         setCatalogFeedback({
@@ -360,7 +466,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
           text: `Producto "${trimmedName}" creado y guardado en inventario.`,
         });
       }
-      setProductModalOpen(false);
+      closeProductModal();
     } finally {
       setSavingProduct(false);
     }
@@ -1022,7 +1128,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
               </div>
               <button
                 type="button"
-                onClick={() => setProductModalOpen(false)}
+                onClick={closeProductModal}
                 aria-label="Cerrar editor de producto"
                 className="rounded-md p-1 text-slate-500 hover:bg-slate-100 cursor-pointer"
               >
@@ -1047,6 +1153,78 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                     placeholder="Ej: Harina de Maíz Precocida 1 kg"
                     className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
                   />
+                </div>
+
+                <div className="sm:col-span-2">
+                  {(() => {
+                    const activePreview =
+                      stagedPreviewUrl || getSafeProductImageUrl(productForm.imageUrl);
+                    return (
+                      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50/70 p-2.5">
+                        <div className="flex min-w-0 items-center gap-2.5">
+                          <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-white text-slate-400">
+                            {activePreview ? (
+                              <img
+                                src={activePreview}
+                                alt="Vista previa del producto"
+                                referrerPolicy="no-referrer"
+                                className="h-full w-full object-cover"
+                              />
+                            ) : (
+                              <ImageIcon className="h-5 w-5 text-slate-300" />
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-xs font-semibold text-slate-800">
+                              Foto del producto (opcional)
+                            </p>
+                            <p className="truncate text-[11px] text-slate-500">
+                              {compressingPhoto
+                                ? 'Optimizando imagen...'
+                                : stagedImage
+                                ? `Lista · ${stagedImage.width}×${stagedImage.height}px · ${formatImageSize(
+                                    stagedImage.sizeBytes
+                                  )} (${stagedImage.extension.toUpperCase()})`
+                                : activePreview
+                                ? 'Foto guardada en la nube'
+                                : 'Se comprime automáticamente (máx. 600px)'}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <input
+                            ref={photoInputRef}
+                            type="file"
+                            accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/*"
+                            onChange={(e) => void handleSelectProductPhoto(e)}
+                            className="hidden"
+                          />
+                          <button
+                            type="button"
+                            disabled={compressingPhoto || savingProduct}
+                            onClick={() => photoInputRef.current?.click()}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:border-[#76B900] hover:text-slate-900 disabled:opacity-50 transition-colors cursor-pointer whitespace-nowrap"
+                          >
+                            <Camera className="h-3.5 w-3.5 text-[#558B00]" />
+                            {activePreview ? 'Cambiar' : 'Agregar foto'}
+                          </button>
+                          {activePreview && (
+                            <button
+                              type="button"
+                              disabled={compressingPhoto || savingProduct}
+                              onClick={handleClearProductPhoto}
+                              aria-label="Quitar foto del producto"
+                              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-600 hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:opacity-50 transition-colors cursor-pointer"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                              Quitar
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 <div>
@@ -1208,18 +1386,20 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
               <div className="flex items-center justify-end gap-2 border-t border-slate-200 pt-3">
                 <button
                   type="button"
-                  onClick={() => setProductModalOpen(false)}
+                  onClick={closeProductModal}
                   className="rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  disabled={savingProduct}
+                  disabled={savingProduct || compressingPhoto}
                   className="inline-flex items-center gap-1.5 rounded-lg bg-[#84CC16] px-4 py-1.5 text-xs font-bold text-slate-950 hover:bg-[#76B900] disabled:bg-slate-200 disabled:text-slate-400 transition-colors cursor-pointer"
                 >
                   <Save className="h-3.5 w-3.5" />
-                  {savingProduct
+                  {uploadingPhoto
+                    ? 'Subiendo foto...'
+                    : savingProduct
                     ? 'Guardando...'
                     : productForm.id
                     ? 'Guardar cambios'

@@ -437,7 +437,16 @@ async function mergePulledRecordsIntoIndexedDB(
           case 'product': {
             const local = await db.products.get(row.record_id);
             if (shouldApply(local)) {
-              await db.products.put(incoming as unknown as Product);
+              const incomingProduct = incoming as unknown as Product;
+              const resolvedImageUrl =
+                (typeof incomingProduct.imageUrl === 'string' && incomingProduct.imageUrl.trim()) ||
+                (typeof incomingProduct.image_url === 'string' && incomingProduct.image_url.trim()) ||
+                undefined;
+              await db.products.put({
+                ...incomingProduct,
+                imageUrl: resolvedImageUrl,
+                image_url: resolvedImageUrl,
+              });
               mergedCount += 1;
             }
             break;

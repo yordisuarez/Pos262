@@ -145,6 +145,7 @@ export interface Product {
   minStock: number;
   stockByBranch: Record<string, number>;
   imageUrl?: string;
+  image_url?: string;
   updatedAt?: string;
   syncStatus: SyncStatus;
   syncedAt?: string;
