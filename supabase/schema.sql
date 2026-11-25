@@ -70,6 +70,96 @@ create policy "subscriptions_owner_insert_trial"
     and expires_at <= now() + interval '7 days 5 minutes'
   );
 
+-- Super Admin subscription management (server-side enforcement via JWT email)
+alter table public.subscriptions
+  add column if not exists notes text not null default '';
+
+create or replace function public.is_pos262_super_admin()
+returns boolean
+language sql
+stable
+as $$
+  select
+    auth.role() = 'authenticated'
+    and lower(coalesce(auth.jwt() ->> 'email', '')) = 'yordisuarez@gmail.com';
+$$;
+
+drop policy if exists "subscriptions_super_admin_select" on public.subscriptions;
+create policy "subscriptions_super_admin_select"
+  on public.subscriptions
+  for select
+  to authenticated
+  using (public.is_pos262_super_admin());
+
+drop policy if exists "subscriptions_super_admin_update" on public.subscriptions;
+create policy "subscriptions_super_admin_update"
+  on public.subscriptions
+  for update
+  to authenticated
+  using (public.is_pos262_super_admin())
+  with check (public.is_pos262_super_admin());
+
+drop policy if exists "subscriptions_super_admin_insert" on public.subscriptions;
+create policy "subscriptions_super_admin_insert"
+  on public.subscriptions
+  for insert
+  to authenticated
+  with check (public.is_pos262_super_admin());
+
+drop policy if exists "business_settings_super_admin_select" on public.business_settings;
+create policy "business_settings_super_admin_select"
+  on public.business_settings
+  for select
+  to authenticated
+  using (public.is_pos262_super_admin());
+
+create or replace function public.admin_list_subscriptions()
+returns table (
+  user_id uuid,
+  email text,
+  business_name text,
+  phone text,
+  rif text,
+  plan text,
+  status text,
+  created_at timestamptz,
+  expires_at timestamptz,
+  updated_at timestamptz,
+  notes text
+)
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+begin
+  if not public.is_pos262_super_admin() then
+    raise exception 'Forbidden' using errcode = '42501';
+  end if;
+
+  return query
+  select
+    s.user_id,
+    coalesce(u.email::text, '') as email,
+    coalesce(b.business_name, '') as business_name,
+    coalesce(b.phone, '') as phone,
+    coalesce(b.rif, '') as rif,
+    s.plan,
+    s.status,
+    s.created_at,
+    s.expires_at,
+    s.updated_at,
+    coalesce(s.notes, '') as notes
+  from public.subscriptions s
+  left join auth.users u on u.id = s.user_id
+  left join public.business_settings b on b.user_id = s.user_id
+  order by s.expires_at asc;
+end;
+$$;
+
+revoke all on function public.admin_list_subscriptions() from public;
+grant execute on function public.admin_list_subscriptions() to authenticated;
+
+
 -- Product images bucket (lightweight compressed product photos stored as public URLs)
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values (

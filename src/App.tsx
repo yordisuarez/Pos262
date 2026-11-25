@@ -22,6 +22,7 @@ import {
   RefreshCw,
   Search,
   Settings,
+  ShieldCheck,
   ShoppingCart,
   SlidersHorizontal,
   Smartphone,
@@ -59,6 +60,7 @@ import { CostingManager } from './components/CostingManager';
 import { CloudAuthScreen } from './components/CloudAuthScreen';
 import { SettingsManager } from './components/SettingsManager';
 import { SubscriptionLockScreen } from './components/SubscriptionLockScreen';
+import { SubscriptionsAdminManager } from './components/SubscriptionsAdminManager';
 import { CustomersModule } from './components/CustomersModule';
 import { ProductImageBox } from './components/ProductImageBox';
 import {
@@ -68,6 +70,7 @@ import {
   fetchAndEvaluateSubscription,
   subscribeToSubscriptionChanges,
 } from './services/subscription';
+import { isSuperAdminEmail } from './services/subscriptionAdmin';
 import {
   getEffectivePermissions,
   isAdminUser,
@@ -96,7 +99,15 @@ import type {
   SyncQueueItem,
 } from './types/pos';
 
-type WorkspaceTab = 'pos' | 'shifts' | 'inventory' | 'customers' | 'reports' | 'costing' | 'settings';
+type WorkspaceTab =
+  | 'pos'
+  | 'shifts'
+  | 'inventory'
+  | 'customers'
+  | 'reports'
+  | 'costing'
+  | 'settings'
+  | 'subscriptions';
 
 const RATE_STORAGE_KEY = 'pos_262_exchange_rate';
 
@@ -952,6 +963,7 @@ export default function App() {
   }, [branches]);
 
   const isAdmin = isAdminUser(activeCashier);
+  const isSuperAdmin = Boolean(isAdmin && isSuperAdminEmail(cloudUser?.email));
   const permissions = useMemo(() => getEffectivePermissions(activeCashier), [activeCashier]);
   const isBranchLocked = Boolean(activeCashier && !isAdmin);
 
@@ -1005,13 +1017,14 @@ export default function App() {
     if (!activeCashier) return;
     if (
       (activeTab === 'settings' && !isAdmin) ||
+      (activeTab === 'subscriptions' && !isSuperAdmin) ||
       (activeTab === 'inventory' && !isAdmin && !permissions.viewInventory) ||
       (activeTab === 'reports' && !isAdmin && !permissions.viewReports) ||
       (activeTab === 'costing' && !isAdmin && !permissions.manageCosting)
     ) {
       setActiveTab('pos');
     }
-  }, [activeCashier, activeTab, isAdmin, permissions]);
+  }, [activeCashier, activeTab, isAdmin, isSuperAdmin, permissions]);
 
   const updateNavMenuPosition = useCallback(() => {
     const trigger = navMenuTriggerRef.current;
@@ -1021,7 +1034,7 @@ export default function App() {
     const margin = 8;
     const maxLeft = Math.max(margin, window.innerWidth - menuWidth - margin);
     const left = Math.min(Math.max(margin, rect.left), maxLeft);
-    const top = Math.min(rect.bottom + 6, Math.max(margin, window.innerHeight - 260));
+    const top = Math.min(rect.bottom + 6, Math.max(margin, window.innerHeight - 295));
     setNavMenuPos({ top, left });
   }, []);
 
@@ -3372,7 +3385,8 @@ export default function App() {
                   activeTab === 'inventory' ||
                   activeTab === 'reports' ||
                   activeTab === 'costing' ||
-                  activeTab === 'settings';
+                  activeTab === 'settings' ||
+                  activeTab === 'subscriptions';
                 return (
                   <button
                     ref={navMenuTriggerRef}
@@ -3565,6 +3579,30 @@ export default function App() {
                   <span>Configuración</span>
                 </span>
                 {activeTab === 'settings' && <Check className="h-3.5 w-3.5 shrink-0 text-[#558B00]" />}
+              </button>
+            )}
+
+            {isSuperAdmin && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setActiveTab('subscriptions');
+                  setNavMenuOpen(false);
+                }}
+                className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold transition-colors cursor-pointer ${
+                  activeTab === 'subscriptions'
+                    ? 'bg-[#F7FEE7] text-[#3F6212]'
+                    : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
+                }`}
+              >
+                <span className="inline-flex items-center gap-2">
+                  <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
+                  <span>Suscripciones</span>
+                </span>
+                {activeTab === 'subscriptions' && (
+                  <Check className="h-3.5 w-3.5 shrink-0 text-[#558B00]" />
+                )}
               </button>
             )}
           </div>
@@ -4013,6 +4051,19 @@ export default function App() {
             onToggleBranchActive={handleToggleBranchActive}
             onDeleteBranch={handleDeleteBranch}
             onResetOperationalData={handleResetOperationalData}
+          />
+        </div>
+      )}
+
+      {activeTab === 'subscriptions' && isSuperAdmin && cloudUser && (
+        <div className="flex-1 overflow-y-auto">
+          <SubscriptionsAdminManager
+            adminEmail={cloudUser.email || ''}
+            currentUserId={cloudUser.id}
+            isOnline={isOnline}
+            onOwnSubscriptionUpdated={async () => {
+              await verifyUserSubscription(cloudUser.id);
+            }}
           />
         </div>
       )}
