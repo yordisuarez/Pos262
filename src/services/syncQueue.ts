@@ -216,16 +216,17 @@ async function upsertSyncRecordsInBatches(
   rows: CloudSyncRecordRow[],
   authenticatedUserId: string
 ): Promise<number> {
-  if (!authenticatedUserId) {
+  const cleanUserId = authenticatedUserId.trim();
+  if (!cleanUserId) {
     throw new Error('Usuario no autenticado para sincronizar registros.');
   }
   const scopedRows = rows
-    .filter((row) => Boolean(row.record_id))
     .map((row) => ({
       ...row,
-      user_id: authenticatedUserId,
-      record_id: row.record_id,
-    }));
+      user_id: cleanUserId,
+      record_id: String(row.record_id ?? '').trim(),
+    }))
+    .filter((row) => Boolean(row.user_id && row.record_id));
   const uniqueRows = deduplicateSyncRows(scopedRows);
   for (let i = 0; i < uniqueRows.length; i += SYNC_BATCH_SIZE) {
     const batch = uniqueRows.slice(i, i + SYNC_BATCH_SIZE);
@@ -810,10 +811,10 @@ async function executeSyncQueue(options?: {
 
         // On manual sync or reconciliation, also upload any pre-existing local records absent from cloud
         if (options?.reconcileMissingLocal) {
-          const cloudKeySet = new Set(cloudRows.map((r) => `${r.entity_type}:${r.record_id}`));
+          const cloudKeySet = new Set(cloudRows.map((r) => `${r.user_id || userId}:${r.record_id}`));
           const allLocalRows = deduplicateSyncRows(await buildAllLocalSyncRows(userId, now));
           const missingOnCloud = allLocalRows.filter(
-            (row) => !cloudKeySet.has(`${row.entity_type}:${row.record_id}`)
+            (row) => !cloudKeySet.has(`${userId}:${row.record_id}`)
           );
           if (missingOnCloud.length > 0) {
             reconciledPushed = await upsertSyncRecordsInBatches(missingOnCloud, userId);
