@@ -28,12 +28,14 @@ import {
   SlidersHorizontal,
   Smartphone,
   Store,
+  TrendingUp,
   Trash2,
   UserCheck,
   UserPlus,
   Users,
   Volume2,
   VolumeX,
+  Warehouse,
   Wallet,
   WifiOff,
   X,
@@ -59,6 +61,7 @@ import {
 import { CashierLoginModal, ShiftManager } from './components/ShiftManager';
 import { InternalUserOnboarding } from './components/InternalUserOnboarding';
 import { InventoryManager } from './components/InventoryManager';
+import { InventoryValuationPanel } from './components/InventoryValuationPanel';
 import { ReportsManager } from './components/ReportsManager';
 import { CostingManager } from './components/CostingManager';
 import { CloudAuthScreen } from './components/CloudAuthScreen';
@@ -128,6 +131,7 @@ import type {
 type WorkspaceTab =
   | 'pos'
   | 'shifts'
+  | 'valuation'
   | 'inventory'
   | 'customers'
   | 'priceChecker'
@@ -1178,6 +1182,20 @@ export default function App() {
       setSaleType('cash');
     }
   }, [saleType, permissions.allowCreditSales]);
+
+  const valuationRefreshKey = useMemo(() => {
+    const prodSig = products
+      .map(
+        (p) =>
+          `${p.id}:${p.costUsd}:${p.priceUsd}:${p.minStock}:${p.category}:${Object.entries(
+            p.stockByBranch
+          )
+            .map(([k, v]) => `${k}=${v}`)
+            .join(',')}`
+      )
+      .join('|');
+    return `${products.length}-${transfers.length}-${sales.length}-${branches.length}-${prodSig}`;
+  }, [products, transfers.length, sales.length, branches.length]);
 
   const activeBranch = useMemo(() => {
     if (isBranchLocked && lockedBranchId) {
@@ -3767,6 +3785,7 @@ export default function App() {
                   activeTab === 'customers' ||
                   activeTab === 'priceChecker' ||
                   activeTab === 'webCatalog' ||
+                  activeTab === 'valuation' ||
                   activeTab === 'inventory' ||
                   activeTab === 'reports' ||
                   activeTab === 'costing' ||
@@ -3924,25 +3943,47 @@ export default function App() {
             </button>
 
             {(isAdmin || permissions.viewInventory) && (
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  setActiveTab('inventory');
-                  setNavMenuOpen(false);
-                }}
-                className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold transition-colors cursor-pointer ${
-                  activeTab === 'inventory'
-                    ? 'bg-[#F7FEE7] text-[#3F6212]'
-                    : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
-                }`}
-              >
-                <span className="inline-flex items-center gap-2">
-                  <ArrowLeftRight className="h-3.5 w-3.5 shrink-0" />
-                  <span>Stock</span>
-                </span>
-                {activeTab === 'inventory' && <Check className="h-3.5 w-3.5 shrink-0 text-[#558B00]" />}
-              </button>
+              <>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setActiveTab('valuation');
+                    setNavMenuOpen(false);
+                  }}
+                  className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold transition-colors cursor-pointer ${
+                    activeTab === 'valuation'
+                      ? 'bg-[#F7FEE7] text-[#3F6212]'
+                      : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
+                  }`}
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <TrendingUp className="h-3.5 w-3.5 shrink-0" />
+                    <span>Resumen financiero</span>
+                  </span>
+                  {activeTab === 'valuation' && <Check className="h-3.5 w-3.5 shrink-0 text-[#558B00]" />}
+                </button>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setActiveTab('inventory');
+                    setNavMenuOpen(false);
+                  }}
+                  className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold transition-colors cursor-pointer ${
+                    activeTab === 'inventory'
+                      ? 'bg-[#F7FEE7] text-[#3F6212]'
+                      : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
+                  }`}
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <Warehouse className="h-3.5 w-3.5 shrink-0" />
+                    <span>Inventario</span>
+                  </span>
+                  {activeTab === 'inventory' && <Check className="h-3.5 w-3.5 shrink-0 text-[#558B00]" />}
+                </button>
+              </>
             )}
 
             {(isAdmin || permissions.viewReports) && (
@@ -4375,6 +4416,31 @@ export default function App() {
             }}
             onAddCustomer={handleRegisterCustomerFromModule}
             onDeleteCustomer={handleDeleteCustomer}
+          />
+        </div>
+      )}
+
+      {activeTab === 'valuation' && activeCashier && (isAdmin || permissions.viewInventory) && (
+        <div className="flex-1 overflow-y-auto">
+          <InventoryValuationPanel
+            branches={branches}
+            activeBranchId={activeBranchId}
+            exchangeRate={exchangeRate}
+            isBranchLocked={isBranchLocked}
+            canEditInventory={isAdmin || permissions.editInventory}
+            refreshKey={valuationRefreshKey}
+            onQuickRestock={() => {
+              setActiveTab('inventory');
+            }}
+            onCreateProduct={() => {
+              setActiveTab('inventory');
+            }}
+            onOpenLoadStock={() => {
+              setActiveTab('inventory');
+            }}
+            onOpenTransferStock={() => {
+              setActiveTab('inventory');
+            }}
           />
         </div>
       )}

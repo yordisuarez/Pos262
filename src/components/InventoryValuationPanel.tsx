@@ -107,7 +107,6 @@ export const InventoryValuationPanel: React.FC<InventoryValuationPanelProps> = (
   const [hoveredHistoryIdx, setHoveredHistoryIdx] = useState<number | null>(null);
   const [stockFilter, setStockFilter] = useState<StockFilter>('all');
   const [showAllAlerts, setShowAllAlerts] = useState<boolean>(false);
-  const [stockMovementMenuOpen, setStockMovementMenuOpen] = useState<boolean>(false);
 
   const [detailModalOpen, setDetailModalOpen] = useState<boolean>(false);
   const [detailSearch, setDetailSearch] = useState<string>('');
@@ -466,63 +465,6 @@ export const InventoryValuationPanel: React.FC<InventoryValuationPanelProps> = (
             </div>
           )}
 
-          {canEditInventory && (
-            <div className="flex items-center gap-2">
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setStockMovementMenuOpen((prev) => !prev)}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors whitespace-nowrap cursor-pointer"
-                >
-                  <ArrowLeftRight className="h-3.5 w-3.5 text-slate-500" />
-                  Movimientos de stock
-                  <ChevronDown
-                    className={`h-3 w-3 transition-transform ${stockMovementMenuOpen ? 'rotate-180' : ''}`}
-                  />
-                </button>
-
-                {stockMovementMenuOpen && (
-                  <div className="absolute right-0 top-full z-35 mt-1.5 w-56 rounded-xl border border-slate-200 bg-white p-1 shadow-xl">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setStockMovementMenuOpen(false);
-                        onOpenLoadStock?.();
-                      }}
-                      className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-slate-800 hover:bg-slate-50 transition-colors cursor-pointer"
-                    >
-                      <PackagePlus className="h-4 w-4 text-[#76B900]" />
-                      Cargar stock a sucursal
-                    </button>
-                    {!isBranchLocked && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setStockMovementMenuOpen(false);
-                          onOpenTransferStock?.();
-                        }}
-                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-slate-800 hover:bg-slate-50 transition-colors cursor-pointer"
-                      >
-                        <ArrowLeftRight className="h-4 w-4 text-slate-700" />
-                        Traslado entre sucursales
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {onCreateProduct && (
-                <button
-                  type="button"
-                  onClick={onCreateProduct}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-[#84CC16] px-3.5 py-2 text-xs font-bold text-slate-950 shadow-xs hover:bg-[#76B900] transition-colors whitespace-nowrap cursor-pointer"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  Nuevo producto
-                </button>
-              )}
-            </div>
-          )}
         </div>
       </div>
 

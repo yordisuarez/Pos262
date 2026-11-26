@@ -660,19 +660,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
       ? round2(previewPriceUsd * exchangeRate)
       : 0;
 
-  const valuationRefreshKey = useMemo(() => {
-    const prodSig = products
-      .map(
-        (p) =>
-          `${p.id}:${p.costUsd}:${p.priceUsd}:${p.minStock}:${p.category}:${Object.entries(
-            p.stockByBranch
-          )
-            .map(([k, v]) => `${k}=${v}`)
-            .join(',')}`
-      )
-      .join('|');
-    return `${products.length}-${transfers.length}-${sales.length}-${branches.length}-${prodSig}`;
-  }, [products, transfers.length, sales.length, branches.length]);
+  const [stockMovementMenuOpen, setStockMovementMenuOpen] = useState<boolean>(false);
 
   const handleQuickRestock = (productId: string, branchId: string, suggestedQty: number) => {
     if (!canEditInventory) return;
@@ -695,34 +683,6 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
           </span>
         </div>
       )}
-
-      <InventoryValuationPanel
-        branches={branches}
-        activeBranchId={activeBranchId}
-        exchangeRate={exchangeRate}
-        isBranchLocked={isBranchLocked}
-        canEditInventory={canEditInventory}
-        refreshKey={valuationRefreshKey}
-        onQuickRestock={(productId, branchId, suggestedQty) => {
-          if (!canEditInventory) return;
-          if (!isBranchLocked && branchId) {
-            setLoadBranchId(branchId);
-          }
-          setLoadProductId(productId);
-          setLoadQtyInput(String(Math.max(1, suggestedQty)));
-          setLoadFeedback(null);
-          setLoadStockModalOpen(true);
-        }}
-        onCreateProduct={canEditInventory ? openCreateProductModal : undefined}
-        onOpenLoadStock={() => {
-          setLoadFeedback(null);
-          setLoadStockModalOpen(true);
-        }}
-        onOpenTransferStock={() => {
-          setTransferFeedback(null);
-          setTransferStockModalOpen(true);
-        }}
-      />
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 space-y-3.5">
         <div className="flex flex-col gap-3 border-b border-slate-200 pb-3 lg:flex-row lg:items-center lg:justify-between">
@@ -750,26 +710,62 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
               />
             </div>
 
-            {onOpenBranchSettings && !isBranchLocked && (
-              <button
-                type="button"
-                onClick={onOpenBranchSettings}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors whitespace-nowrap cursor-pointer"
-              >
-                <Building2 className="h-3.5 w-3.5 text-slate-500" />
-                Sucursales
-              </button>
-            )}
-
             {canEditInventory && (
-              <button
-                type="button"
-                onClick={openCreateProductModal}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-[#84CC16] px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-[#76B900] transition-colors whitespace-nowrap cursor-pointer"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                Nuevo producto
-              </button>
+              <div className="flex items-center gap-2">
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setStockMovementMenuOpen((prev) => !prev)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors whitespace-nowrap cursor-pointer"
+                  >
+                    <ArrowLeftRight className="h-3.5 w-3.5 text-slate-500" />
+                    Movimientos de stock
+                    <ChevronDown
+                      className={`h-3 w-3 transition-transform ${stockMovementMenuOpen ? 'rotate-180' : ''}`}
+                    />
+                  </button>
+
+                  {stockMovementMenuOpen && (
+                    <div className="absolute right-0 top-full z-35 mt-1.5 w-56 rounded-xl border border-slate-200 bg-white p-1 shadow-xl">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setStockMovementMenuOpen(false);
+                          setLoadFeedback(null);
+                          setLoadStockModalOpen(true);
+                        }}
+                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-slate-800 hover:bg-slate-50 transition-colors cursor-pointer"
+                      >
+                        <PackagePlus className="h-4 w-4 text-[#76B900]" />
+                        Cargar stock a sucursal
+                      </button>
+                      {!isBranchLocked && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setStockMovementMenuOpen(false);
+                            setTransferFeedback(null);
+                            setTransferStockModalOpen(true);
+                          }}
+                          className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-slate-800 hover:bg-slate-50 transition-colors cursor-pointer"
+                        >
+                          <ArrowLeftRight className="h-4 w-4 text-slate-700" />
+                          Traslado entre sucursales
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={openCreateProductModal}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-[#84CC16] px-3.5 py-1.5 text-xs font-bold text-slate-950 hover:bg-[#76B900] transition-colors whitespace-nowrap cursor-pointer"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Nuevo producto
+                </button>
+              </div>
             )}
           </div>
         </div>
