@@ -88,9 +88,25 @@
   }
 }
 
+.pos-bottom-sheet {
+  animation: pos-bottom-sheet-up 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes pos-bottom-sheet-up {
+  0% {
+    transform: translate3d(0, 100%, 0);
+    opacity: 0.9;
+  }
+  100% {
+    transform: translate3d(0, 0, 0);
+    opacity: 1;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .pos-fly-clone,
-  .pos-cart-arrive {
+  .pos-cart-arrive,
+  .pos-bottom-sheet {
     animation: none !important;
   }
 }

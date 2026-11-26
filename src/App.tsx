@@ -333,6 +333,21 @@ export default function App() {
   const desktopCartTargetRef = useRef<HTMLDivElement | null>(null);
   const mobileCartTargetRef = useRef<HTMLButtonElement | null>(null);
 
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    const mql = window.matchMedia('(min-width: 768px)');
+    const handleViewportChange = (event: MediaQueryListEvent | MediaQueryList) => {
+      if (event.matches) {
+        setMobileCartOpen(false);
+      }
+    };
+    handleViewportChange(mql);
+    mql.addEventListener('change', handleViewportChange);
+    return () => {
+      mql.removeEventListener('change', handleViewportChange);
+    };
+  }, []);
+
   // POS View Customization state
   const [showPhoto, setShowPhoto] = useState<boolean>(() => {
     try {
@@ -3911,7 +3926,7 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-3.5 pb-20 lg:p-5 lg:pb-5">
+              <div className="flex-1 overflow-y-auto p-3.5 pb-20 md:pb-5 lg:p-5">
                 {!isReady ? (
                   <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
                     {Array.from({ length: 6 }).map((_, idx) => (
@@ -3942,7 +3957,7 @@ export default function App() {
                     </button>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5">
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
                     {filteredProducts.map((product) => {
                       const stock = getBranchStock(product);
                       const inCartQty = getCartQuantity(product.id);
@@ -4040,12 +4055,12 @@ export default function App() {
               </div>
             </section>
 
-            <aside className="hidden w-[350px] shrink-0 border-l border-slate-200 lg:block xl:w-[380px]">
+            <aside className="hidden shrink-0 border-l border-slate-200 md:block md:w-[310px] lg:w-[350px] xl:w-[380px]">
               {renderCartContent(true)}
             </aside>
           </main>
 
-          <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white px-3 py-2 lg:hidden">
+          <div className="fixed inset-x-0 bottom-0 z-30 block border-t border-slate-200 bg-white px-3 py-2 md:hidden">
             <div className="flex items-center justify-between gap-2">
               <button
                 ref={mobileCartTargetRef}
@@ -4291,8 +4306,20 @@ export default function App() {
         )}
 
       {mobileCartOpen && (
-        <div className="fixed inset-0 z-40 flex justify-end bg-slate-950/50 lg:hidden">
-          <div className="flex h-full w-full max-w-md flex-col bg-white">
+        <div
+          className="fixed inset-0 z-40 flex items-end bg-slate-950/50 md:hidden"
+          onClick={() => setMobileCartOpen(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Carrito de compras"
+            onClick={(e) => e.stopPropagation()}
+            className="pos-bottom-sheet flex max-h-[85dvh] w-full flex-col overflow-hidden rounded-t-2xl border-t border-slate-200 bg-white shadow-2xl"
+          >
+            <div className="flex justify-center pt-2 pb-1">
+              <span className="h-1.5 w-10 rounded-full bg-slate-300" aria-hidden="true" />
+            </div>
             <div className="flex items-center justify-between border-b border-slate-200 px-3.5 py-2.5">
               <h2 className="text-sm font-bold text-slate-900">
                 Carrito ({cartTotals.itemCount})
@@ -4306,7 +4333,7 @@ export default function App() {
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <div className="flex-1 overflow-hidden">{renderCartContent()}</div>
+            <div className="min-h-0 flex-1 overflow-hidden">{renderCartContent()}</div>
           </div>
         </div>
       )}
