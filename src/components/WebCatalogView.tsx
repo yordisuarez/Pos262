@@ -21,7 +21,14 @@ import { DEFAULT_BUSINESS_SETTINGS, db, getLocalBusinessSettings } from '../db/p
 import { getSafeSession, isSupabaseConfigured, supabase } from '../lib/supabase';
 import type { BusinessSettings, PaymentMethod, Product } from '../types/pos';
 import { triggerFlyToCart } from '../utils/flyToCart';
+import {
+  formatQuantity,
+  getQuantityStep,
+  isWeightOrVolumeUnit,
+  roundQty,
+} from '../utils/quantityUnits';
 import { ProductImageBox } from './ProductImageBox';
+import { CartDecimalQtyInput, WeightQuantityModal } from './WeightQuantityModal';
 
 interface WebCatalogViewProps {
   mode: 'public' | 'embedded';
@@ -164,6 +171,10 @@ export const WebCatalogView: React.FC<WebCatalogViewProps> = ({
   const [selectedCategory, setSelectedCategory] = useState<string>('Todos');
   const [cart, setCart] = useState<CatalogCartItem[]>([]);
   const [sheetOpen, setSheetOpen] = useState<boolean>(false);
+  const [weightPrompt, setWeightPrompt] = useState<{
+    product: Product;
+    sourceEl: HTMLElement | null;
+  } | null>(null);
 
   // Customer WhatsApp checkout form fields
   const [customerName, setCustomerName] = useState<string>('');
@@ -373,7 +384,7 @@ export const WebCatalogView: React.FC<WebCatalogViewProps> = ({
   }, [catalogProducts, searchQuery, selectedCategory]);
 
   const cartSummary = useMemo(() => {
-    const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+    const itemCount = roundQty(cart.reduce((sum, item) => sum + item.quantity, 0));
     const totalUsd = round2(cart.reduce((sum, item) => sum + item.priceUsd * item.quantity, 0));
     const totalVes = round2(totalUsd * exchangeRate);
     return { itemCount, totalUsd, totalVes };
@@ -383,6 +394,7 @@ export const WebCatalogView: React.FC<WebCatalogViewProps> = ({
     cart.find((item) => item.productId === productId)?.quantity ?? 0;
 
   const fireFlyAnimation = (product: Product, sourceEl: HTMLElement | null) => {
+    if (!sourceEl) return;
     const desktopEl = desktopCartTargetRef.current;
     const desktopRect = desktopEl?.getBoundingClientRect();
     const isDesktopVisible = Boolean(desktopEl && desktopRect && desktopRect.width > 0 && desktopRect.height > 0);
@@ -422,19 +434,26 @@ export const WebCatalogView: React.FC<WebCatalogViewProps> = ({
     });
   };
 
-  const handleAddProduct = (product: Product, sourceEl: HTMLElement | null) => {
-    const stock = getProductStock(product);
+  const handleAddProduct = (
+    product: Product,
+    sourceEl: HTMLElement | null,
+    quantityToAdd = 1
+  ) => {
+    const stock = roundQty(getProductStock(product));
     const maxStock = stock > 0 ? stock : 999;
+    const safeAdd = roundQty(quantityToAdd);
+    if (safeAdd <= 0) return;
+
     const existingQty = getCartQty(product.id);
-    if (existingQty >= maxStock) return;
+    if (existingQty >= maxStock - 0.0001) return;
 
     setCart((prev) => {
       const existing = prev.find((item) => item.productId === product.id);
       if (existing) {
-        if (existing.quantity >= maxStock) return prev;
+        if (existing.quantity >= maxStock - 0.0001) return prev;
         return prev.map((item) =>
           item.productId === product.id
-            ? { ...item, quantity: item.quantity + 1, maxStock }
+            ? { ...item, quantity: Math.min(maxStock, roundQty(item.quantity + safeAdd)), maxStock }
             : item
         );
       }
@@ -446,7 +465,7 @@ export const WebCatalogView: React.FC<WebCatalogViewProps> = ({
           sku: product.sku,
           unit: product.unit || 'und',
           priceUsd: product.priceUsd,
-          quantity: 1,
+          quantity: Math.min(maxStock, safeAdd),
           maxStock,
           imageUrl: product.imageUrl || product.image_url,
         },
@@ -457,15 +476,50 @@ export const WebCatalogView: React.FC<WebCatalogViewProps> = ({
     fireFlyAnimation(product, sourceEl);
   };
 
+  const handleSelectProduct = (product: Product, sourceEl: HTMLElement | null) => {
+    const stock = roundQty(getProductStock(product));
+    const maxStock = stock > 0 ? stock : 999;
+    if (getCartQty(product.id) >= maxStock - 0.0001) return;
+
+    if (isWeightOrVolumeUnit(product.unit)) {
+      setWeightPrompt({ product, sourceEl });
+      return;
+    }
+
+    handleAddProduct(product, sourceEl, 1);
+  };
+
+  const handleConfirmWeightPrompt = (quantity: number) => {
+    if (!weightPrompt) return;
+    const { product, sourceEl } = weightPrompt;
+    setWeightPrompt(null);
+    handleAddProduct(product, sourceEl, quantity);
+  };
+
   const updateItemQty = (productId: string, delta: number) => {
     setCart((prev) =>
       prev
         .map((item) => {
           if (item.productId !== productId) return item;
-          const nextQty = Math.min(item.maxStock, item.quantity + delta);
+          const nextQty = Math.min(item.maxStock, roundQty(item.quantity + delta));
           return { ...item, quantity: nextQty };
         })
-        .filter((item) => item.quantity > 0)
+        .filter((item) => item.quantity > 0.0001)
+    );
+  };
+
+  const setItemQty = (productId: string, nextQuantity: number) => {
+    const rounded = roundQty(nextQuantity);
+    if (rounded <= 0.0001) {
+      setCart((prev) => prev.filter((item) => item.productId !== productId));
+      return;
+    }
+    setCart((prev) =>
+      prev.map((item) =>
+        item.productId === productId
+          ? { ...item, quantity: Math.min(item.maxStock, rounded) }
+          : item
+      )
     );
   };
 
@@ -498,13 +552,14 @@ export const WebCatalogView: React.FC<WebCatalogViewProps> = ({
     cart.forEach((item) => {
       const subUsd = round2(item.priceUsd * item.quantity);
       const subVes = round2(subUsd * exchangeRate);
-      lines.push(
-        `• ${item.quantity}x ${item.name} (${item.unit}) — ${formatVes(subVes)} (${formatUsd(subUsd)})`
-      );
+      const qtyLabel = isWeightOrVolumeUnit(item.unit)
+        ? `${formatQuantity(item.quantity)} ${item.unit} x ${item.name}`
+        : `${formatQuantity(item.quantity)}x ${item.name} (${item.unit})`;
+      lines.push(`• ${qtyLabel} — ${formatVes(subVes)} (${formatUsd(subUsd)})`);
     });
 
     lines.push('────────────────────────');
-    lines.push(`*Artículos:* ${cartSummary.itemCount} und`);
+    lines.push(`*Artículos:* ${formatQuantity(cartSummary.itemCount)}`);
     lines.push(`*Tasa referencial:* Bs ${exchangeRate.toFixed(2)}/$`);
     lines.push(`*TOTAL REFERENCIAL:*`);
     lines.push(`*${formatVes(cartSummary.totalVes)}* / *${formatUsd(cartSummary.totalUsd)} USD*`);
@@ -681,6 +736,9 @@ export const WebCatalogView: React.FC<WebCatalogViewProps> = ({
             {cart.map((item) => {
               const lineUsd = round2(item.priceUsd * item.quantity);
               const lineVes = round2(lineUsd * exchangeRate);
+              const isFractional = isWeightOrVolumeUnit(item.unit);
+              const qtyStep = getQuantityStep(item.unit);
+
               return (
                 <li key={item.productId} className="py-2.5">
                   <div className="flex items-start justify-between gap-2">
@@ -689,7 +747,7 @@ export const WebCatalogView: React.FC<WebCatalogViewProps> = ({
                         {item.name}
                       </p>
                       <p className="mt-0.5 text-[11px] text-slate-500 tabular-nums">
-                        {formatVes(round2(item.priceUsd * exchangeRate))} · {formatUsd(item.priceUsd)} c/{item.unit}
+                        {formatVes(round2(item.priceUsd * exchangeRate))} · {formatUsd(item.priceUsd)}/{item.unit}
                       </p>
                     </div>
                     <button
@@ -703,27 +761,43 @@ export const WebCatalogView: React.FC<WebCatalogViewProps> = ({
                   </div>
 
                   <div className="mt-1.5 flex items-center justify-between gap-2">
-                    <div className="inline-flex items-center rounded-md border border-slate-200 bg-slate-50">
-                      <button
-                        type="button"
-                        onClick={() => updateItemQty(item.productId, -1)}
-                        aria-label="Disminuir cantidad"
-                        className="flex h-7 w-7 items-center justify-center rounded-l-md text-slate-700 hover:bg-slate-200/70 transition-colors cursor-pointer"
-                      >
-                        <Minus className="h-3 w-3" />
-                      </button>
-                      <span className="w-8 text-center text-xs font-semibold tabular-nums text-slate-900">
-                        {item.quantity}
-                      </span>
-                      <button
-                        type="button"
-                        disabled={item.quantity >= item.maxStock}
-                        onClick={() => updateItemQty(item.productId, 1)}
-                        aria-label="Aumentar cantidad"
-                        className="flex h-7 w-7 items-center justify-center rounded-r-md text-slate-700 hover:bg-slate-200/70 disabled:opacity-40 transition-colors cursor-pointer"
-                      >
-                        <Plus className="h-3 w-3" />
-                      </button>
+                    <div className="inline-flex items-center gap-1.5">
+                      <div className="inline-flex items-center rounded-md border border-slate-200 bg-slate-50">
+                        <button
+                          type="button"
+                          onClick={() => updateItemQty(item.productId, -qtyStep)}
+                          aria-label="Disminuir cantidad"
+                          className="flex h-7 w-7 items-center justify-center rounded-l-md text-slate-700 hover:bg-slate-200/70 transition-colors cursor-pointer"
+                        >
+                          <Minus className="h-3 w-3" />
+                        </button>
+                        {isFractional ? (
+                          <CartDecimalQtyInput
+                            quantity={item.quantity}
+                            maxStock={item.maxStock}
+                            unitLabel={item.unit}
+                            onCommit={(nextQty) => setItemQty(item.productId, nextQty)}
+                          />
+                        ) : (
+                          <span className="w-8 text-center text-xs font-semibold tabular-nums text-slate-900">
+                            {formatQuantity(item.quantity)}
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          disabled={item.quantity >= item.maxStock - 0.0001}
+                          onClick={() => updateItemQty(item.productId, qtyStep)}
+                          aria-label="Aumentar cantidad"
+                          className="flex h-7 w-7 items-center justify-center rounded-r-md text-slate-700 hover:bg-slate-200/70 disabled:opacity-40 transition-colors cursor-pointer"
+                        >
+                          <Plus className="h-3 w-3" />
+                        </button>
+                      </div>
+                      {isFractional && (
+                        <span className="text-[11px] font-medium text-slate-500">
+                          {item.unit}
+                        </span>
+                      )}
                     </div>
 
                     <div className="text-right tabular-nums">
@@ -767,7 +841,7 @@ export const WebCatalogView: React.FC<WebCatalogViewProps> = ({
           className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 tabular-nums transition-shadow"
         >
           <div className="flex items-center justify-between text-[11px] text-slate-500">
-            <span>Total referencial ({cartSummary.itemCount} und)</span>
+            <span>Total referencial ({formatQuantity(cartSummary.itemCount)})</span>
             <span className="font-mono">Tasa Bs {exchangeRate.toFixed(2)}/$</span>
           </div>
           <div className="mt-1 flex items-baseline justify-between gap-2">
@@ -962,10 +1036,12 @@ export const WebCatalogView: React.FC<WebCatalogViewProps> = ({
             ) : (
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                 {filteredProducts.map((product) => {
-                  const stock = getProductStock(product);
+                  const stock = roundQty(getProductStock(product));
                   const maxStock = stock > 0 ? stock : 999;
                   const qtyInCart = getCartQty(product.id);
                   const priceVes = round2(product.priceUsd * exchangeRate);
+                  const isFractional = isWeightOrVolumeUnit(product.unit);
+                  const qtyStep = getQuantityStep(product.unit);
 
                   return (
                     <article
@@ -988,7 +1064,7 @@ export const WebCatalogView: React.FC<WebCatalogViewProps> = ({
                         <div className="mt-2.5 space-y-1">
                           <p className="truncate text-[11px] text-slate-500">
                             {product.category || 'General'} · {product.unit || 'und'}
-                            {stock > 0 ? ` · ${stock} disp.` : ''}
+                            {stock > 0 ? ` · ${formatQuantity(stock)} disp.` : ''}
                           </p>
                           <h2 className="line-clamp-2 text-[13px] font-semibold leading-snug text-slate-900 sm:text-sm">
                             {product.name}
@@ -1003,6 +1079,7 @@ export const WebCatalogView: React.FC<WebCatalogViewProps> = ({
                           </p>
                           <p className="font-mono text-xs font-semibold text-[#558B00]">
                             {formatUsd(product.priceUsd)} USD
+                            {isFractional ? ` / ${product.unit}` : ''}
                           </p>
                         </div>
 
@@ -1011,21 +1088,33 @@ export const WebCatalogView: React.FC<WebCatalogViewProps> = ({
                             <div className="inline-flex flex-1 items-center justify-between rounded-lg border border-[#84CC16]/60 bg-[#F7FEE7]">
                               <button
                                 type="button"
-                                onClick={() => updateItemQty(product.id, -1)}
+                                onClick={() => updateItemQty(product.id, -qtyStep)}
                                 aria-label={`Disminuir ${product.name}`}
                                 className="flex h-8 w-8 items-center justify-center rounded-l-lg text-[#3F6212] hover:bg-[#ECFCCB] transition-colors cursor-pointer"
                               >
                                 <Minus className="h-3.5 w-3.5" />
                               </button>
-                              <span className="text-xs font-bold tabular-nums text-[#3F6212]">
-                                {qtyInCart}
-                              </span>
                               <button
                                 type="button"
-                                disabled={qtyInCart >= maxStock}
+                                onClick={(e) => {
+                                  if (isFractional) {
+                                    const cardEl = e.currentTarget.closest('article') as HTMLElement | null;
+                                    handleSelectProduct(product, cardEl ?? e.currentTarget);
+                                  }
+                                }}
+                                className={`px-1 text-xs font-bold tabular-nums text-[#3F6212] ${
+                                  isFractional ? 'cursor-pointer hover:underline' : 'cursor-default'
+                                }`}
+                              >
+                                {formatQuantity(qtyInCart)}
+                                {isFractional ? ` ${product.unit}` : ''}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={qtyInCart >= maxStock - 0.0001}
                                 onClick={(e) => {
                                   const cardEl = e.currentTarget.closest('article') as HTMLElement | null;
-                                  handleAddProduct(product, cardEl ?? e.currentTarget);
+                                  handleSelectProduct(product, cardEl ?? e.currentTarget);
                                 }}
                                 aria-label={`Agregar otro ${product.name}`}
                                 className="flex h-8 w-8 items-center justify-center rounded-r-lg text-[#3F6212] hover:bg-[#ECFCCB] disabled:opacity-40 transition-colors cursor-pointer"
@@ -1039,7 +1128,7 @@ export const WebCatalogView: React.FC<WebCatalogViewProps> = ({
                             type="button"
                             onClick={(e) => {
                               const cardEl = e.currentTarget.closest('article') as HTMLElement | null;
-                              handleAddProduct(product, cardEl ?? e.currentTarget);
+                              handleSelectProduct(product, cardEl ?? e.currentTarget);
                             }}
                             className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-[#84CC16] px-3 py-2 text-xs font-bold text-slate-950 hover:bg-[#76B900] transition-colors cursor-pointer whitespace-nowrap"
                           >
@@ -1062,7 +1151,7 @@ export const WebCatalogView: React.FC<WebCatalogViewProps> = ({
             <div className="flex items-center gap-2">
               <ShoppingCart className="h-4 w-4 text-[#558B00]" />
               <h2 className="text-sm font-bold text-slate-900">
-                Tu pedido ({cartSummary.itemCount})
+                Tu pedido ({formatQuantity(cartSummary.itemCount)})
               </h2>
             </div>
             {cart.length > 0 && (
@@ -1090,7 +1179,7 @@ export const WebCatalogView: React.FC<WebCatalogViewProps> = ({
           >
             <span className="inline-flex items-center gap-2 text-xs font-semibold">
               <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-md bg-[#84CC16] px-1.5 text-xs font-extrabold tabular-nums text-slate-950">
-                {cartSummary.itemCount}
+                {formatQuantity(cartSummary.itemCount)}
               </span>
               <span>Ver pedido</span>
             </span>
@@ -1128,7 +1217,7 @@ export const WebCatalogView: React.FC<WebCatalogViewProps> = ({
               <div className="flex items-center gap-2">
                 <ShoppingCart className="h-4 w-4 text-[#558B00]" />
                 <h2 className="text-sm font-bold text-slate-900">
-                  Tu pedido ({cartSummary.itemCount})
+                  Tu pedido ({formatQuantity(cartSummary.itemCount)})
                 </h2>
               </div>
               <div className="flex items-center gap-2">
@@ -1155,6 +1244,21 @@ export const WebCatalogView: React.FC<WebCatalogViewProps> = ({
             {renderOrderContent(false)}
           </div>
         </div>
+      )}
+
+      {weightPrompt && (
+        <WeightQuantityModal
+          product={weightPrompt.product}
+          exchangeRate={exchangeRate}
+          maxAvailable={
+            roundQty(getProductStock(weightPrompt.product)) > 0
+              ? roundQty(getProductStock(weightPrompt.product))
+              : 999
+          }
+          currentInCart={getCartQty(weightPrompt.product.id)}
+          onConfirm={handleConfirmWeightPrompt}
+          onClose={() => setWeightPrompt(null)}
+        />
       )}
     </div>
   );

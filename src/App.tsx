@@ -72,7 +72,14 @@ import { CustomersModule } from './components/CustomersModule';
 import { PriceCheckerView } from './components/PriceCheckerView';
 import { ProductImageBox } from './components/ProductImageBox';
 import { hasCatalogUrlParam, WebCatalogView } from './components/WebCatalogView';
+import { CartDecimalQtyInput, WeightQuantityModal } from './components/WeightQuantityModal';
 import { triggerFlyToCart } from './utils/flyToCart';
+import {
+  formatQuantity,
+  getQuantityStep,
+  isWeightOrVolumeUnit,
+  roundQty,
+} from './utils/quantityUnits';
 import {
   buildSubscriptionRenewalWhatsAppUrl,
   createInitialSubscriptionState,
@@ -182,7 +189,10 @@ function buildWhatsAppReceiptText(sale: Sale, business?: BusinessSettings): stri
   sale.items.forEach((item) => {
     const lineUsd = round2(item.priceUsd * item.quantity);
     const lineVes = round2(lineUsd * sale.exchangeRate);
-    lines.push(`${item.quantity}x ${item.name}`);
+    const qtyText = isWeightOrVolumeUnit(item.unit)
+      ? `${formatQuantity(item.quantity)} ${item.unit} x ${item.name}`
+      : `${formatQuantity(item.quantity)}x ${item.name}`;
+    lines.push(qtyText);
     lines.push(`   ${formatUsd(lineUsd)} (${formatVes(lineVes)})`);
   });
 
@@ -334,6 +344,10 @@ export default function App() {
   const [applyTax, setApplyTax] = useState<boolean>(false);
   const [orderNotes, setOrderNotes] = useState<string>('');
   const [mobileCartOpen, setMobileCartOpen] = useState<boolean>(false);
+  const [weightPrompt, setWeightPrompt] = useState<{
+    product: Product;
+    sourceEl: HTMLElement | null;
+  } | null>(null);
   const desktopCartTargetRef = useRef<HTMLDivElement | null>(null);
   const mobileCartTargetRef = useRef<HTMLButtonElement | null>(null);
 
@@ -2208,9 +2222,12 @@ export default function App() {
     ) {
       return;
     }
+    const isFractionalUnit = isWeightOrVolumeUnit(params.unit);
     const sanitizedStockByBranch: Record<string, number> = {};
     for (const [bId, qty] of Object.entries(params.stockByBranch)) {
-      sanitizedStockByBranch[bId] = Number.isFinite(qty) ? Math.max(0, Math.floor(qty)) : 0;
+      sanitizedStockByBranch[bId] = Number.isFinite(qty)
+        ? Math.max(0, isFractionalUnit ? roundQty(qty) : Math.floor(qty))
+        : 0;
     }
     const safeImageUrl = getSafeImageUrl(params.imageUrl) ?? undefined;
     const now = new Date().toISOString();
@@ -2265,9 +2282,12 @@ export default function App() {
     ) {
       return;
     }
+    const isFractionalUnit = isWeightOrVolumeUnit(updatedProduct.unit);
     const sanitizedStockByBranch: Record<string, number> = {};
     for (const [bId, qty] of Object.entries(updatedProduct.stockByBranch)) {
-      sanitizedStockByBranch[bId] = Number.isFinite(qty) ? Math.max(0, Math.floor(qty)) : 0;
+      sanitizedStockByBranch[bId] = Number.isFinite(qty)
+        ? Math.max(0, isFractionalUnit ? roundQty(qty) : Math.floor(qty))
+        : 0;
     }
     const safeImageUrl =
       getSafeImageUrl(updatedProduct.imageUrl ?? updatedProduct.image_url) ?? undefined;
@@ -2385,7 +2405,7 @@ export default function App() {
             await db.products.update(prod.id, {
               stockByBranch: {
                 ...prod.stockByBranch,
-                [oldSale.branchId]: Math.max(0, currentStock + stockDelta),
+                [oldSale.branchId]: Math.max(0, roundQty(currentStock + stockDelta)),
               },
               updatedAt: now,
               syncStatus: 'pending',
@@ -2468,7 +2488,7 @@ export default function App() {
           await db.products.update(prod.id, {
             stockByBranch: {
               ...prod.stockByBranch,
-              [oldSale.branchId]: currentStock + item.quantity,
+              [oldSale.branchId]: Math.max(0, roundQty(currentStock + item.quantity)),
             },
             updatedAt: now,
             syncStatus: 'pending',
@@ -2602,20 +2622,21 @@ export default function App() {
   const getCartQuantity = (productId: string): number =>
     cart.find((item) => item.productId === productId)?.quantity ?? 0;
 
-  const addToCart = (product: Product) => {
-    const available = getBranchStock(product);
-    if (available <= 0) return;
+  const addToCart = (product: Product, quantityToAdd = 1) => {
+    const available = roundQty(getBranchStock(product));
+    const safeAdd = roundQty(quantityToAdd);
+    if (available <= 0 || safeAdd <= 0) return;
 
     setCart((prev) => {
       const existing = prev.find((item) => item.productId === product.id);
       if (existing) {
-        if (existing.quantity >= available) return prev;
+        if (existing.quantity >= available - 0.0001) return prev;
+        const nextQty = Math.min(available, roundQty(existing.quantity + safeAdd));
         return prev.map((item) =>
-          item.productId === product.id
-            ? { ...item, quantity: item.quantity + 1 }
-            : item
+          item.productId === product.id ? { ...item, quantity: nextQty } : item
         );
       }
+      const initialQty = Math.min(available, safeAdd);
       return [
         ...prev,
         {
@@ -2625,20 +2646,15 @@ export default function App() {
           unit: product.unit,
           priceUsd: product.priceUsd,
           costUsd: product.costUsd,
-          quantity: 1,
+          quantity: initialQty,
           taxExempt: product.taxExempt,
         },
       ];
     });
   };
 
-  const handleCatalogProductTap = (product: Product, sourceEl: HTMLElement | null) => {
-    const available = getBranchStock(product);
-    if (available <= 0) return;
-    const currentQty = getCartQuantity(product.id);
-    addToCart(product);
-    if (currentQty >= available) return;
-
+  const firePosFlyToCart = (product: Product, sourceEl: HTMLElement | null) => {
+    if (!sourceEl) return;
     const desktopTarget = desktopCartTargetRef.current;
     const mobileTarget = mobileCartTargetRef.current;
     const desktopRect = desktopTarget?.getBoundingClientRect();
@@ -2656,18 +2672,60 @@ export default function App() {
     });
   };
 
+  const handleCatalogProductTap = (product: Product, sourceEl: HTMLElement | null) => {
+    const available = roundQty(getBranchStock(product));
+    if (available <= 0) return;
+    const currentQty = getCartQuantity(product.id);
+    if (currentQty >= available - 0.0001) return;
+
+    if (isWeightOrVolumeUnit(product.unit)) {
+      setWeightPrompt({ product, sourceEl });
+      return;
+    }
+
+    addToCart(product, 1);
+    firePosFlyToCart(product, sourceEl);
+  };
+
+  const handleConfirmWeightPrompt = (quantity: number) => {
+    if (!weightPrompt) return;
+    const { product, sourceEl } = weightPrompt;
+    addToCart(product, quantity);
+    setWeightPrompt(null);
+    firePosFlyToCart(product, sourceEl);
+  };
+
   const updateCartQuantity = (productId: string, delta: number) => {
     const product = products.find((p) => p.id === productId);
-    const maxStock = product ? getBranchStock(product) : 9999;
+    const maxStock = product ? roundQty(getBranchStock(product)) : 9999;
 
     setCart((prev) =>
       prev
         .map((item) => {
           if (item.productId !== productId) return item;
-          const nextQty = Math.min(maxStock, item.quantity + delta);
+          const nextQty = Math.min(maxStock, roundQty(item.quantity + delta));
           return { ...item, quantity: nextQty };
         })
-        .filter((item) => item.quantity > 0)
+        .filter((item) => item.quantity > 0.0001)
+    );
+  };
+
+  const setCartItemQuantity = (productId: string, nextQuantity: number) => {
+    const product = products.find((p) => p.id === productId);
+    const maxStock = product ? roundQty(getBranchStock(product)) : 9999;
+    const rounded = roundQty(nextQuantity);
+
+    if (rounded <= 0.0001) {
+      setCart((prev) => prev.filter((item) => item.productId !== productId));
+      return;
+    }
+
+    setCart((prev) =>
+      prev.map((item) =>
+        item.productId === productId
+          ? { ...item, quantity: Math.min(maxStock, rounded) }
+          : item
+      )
     );
   };
 
@@ -2685,7 +2743,11 @@ export default function App() {
         (p.barcode && p.barcode.toLowerCase() === q)
     );
     if (exactMatch && getBranchStock(exactMatch) > 0) {
-      addToCart(exactMatch);
+      if (isWeightOrVolumeUnit(exactMatch.unit)) {
+        setWeightPrompt({ product: exactMatch, sourceEl: null });
+      } else {
+        addToCart(exactMatch, 1);
+      }
       setSearchQuery('');
     }
   };
@@ -2702,7 +2764,7 @@ export default function App() {
     const taxUsd = round2(taxableUsd * taxRate);
     const totalUsd = round2(subtotalUsd + taxUsd);
     const totalVes = round2(totalUsd * exchangeRate);
-    const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+    const itemCount = roundQty(cart.reduce((sum, item) => sum + item.quantity, 0));
     return { subtotalUsd, taxRate, taxUsd, totalUsd, totalVes, itemCount };
   }, [cart, applyTax, exchangeRate]);
 
@@ -2999,7 +3061,7 @@ export default function App() {
           await db.products.update(prod.id, {
             stockByBranch: {
               ...prod.stockByBranch,
-              [activeBranch.id]: Math.max(0, currentStock - item.quantity),
+              [activeBranch.id]: Math.max(0, roundQty(currentStock - item.quantity)),
             },
             updatedAt: nowIso,
             syncStatus: 'pending',
@@ -3158,7 +3220,9 @@ export default function App() {
             {cart.map((item) => {
               const lineUsd = round2(item.priceUsd * item.quantity);
               const prod = products.find((p) => p.id === item.productId);
-              const maxStock = prod ? getBranchStock(prod) : item.quantity;
+              const maxStock = prod ? roundQty(getBranchStock(prod)) : item.quantity;
+              const isFractional = isWeightOrVolumeUnit(item.unit);
+              const qtyStep = getQuantityStep(item.unit);
 
               return (
                 <li key={item.productId} className="py-2.5">
@@ -3168,7 +3232,9 @@ export default function App() {
                         {item.name}
                       </p>
                       <p className="mt-0.5 text-[11px] text-slate-400 tabular-nums">
-                        <span className="text-slate-500">{formatPrimary(item.priceUsd)} c/u</span>
+                        <span className="text-slate-500">
+                          {formatPrimary(item.priceUsd)}/{item.unit || 'und'}
+                        </span>
                         {item.sku ? ` · ${item.sku}` : ''}
                       </p>
                     </div>
@@ -3183,27 +3249,43 @@ export default function App() {
                   </div>
 
                   <div className="mt-1.5 flex items-center justify-between gap-2">
-                    <div className="inline-flex items-center rounded-md border border-slate-200 bg-slate-50">
-                      <button
-                        type="button"
-                        onClick={() => updateCartQuantity(item.productId, -1)}
-                        aria-label="Disminuir cantidad"
-                        className="flex h-7 w-7 items-center justify-center rounded-l-md text-slate-700 hover:bg-slate-200/70 transition-colors cursor-pointer"
-                      >
-                        <Minus className="h-3 w-3" />
-                      </button>
-                      <span className="w-7 text-center text-xs font-semibold tabular-nums text-slate-900">
-                        {item.quantity}
-                      </span>
-                      <button
-                        type="button"
-                        disabled={item.quantity >= maxStock}
-                        onClick={() => updateCartQuantity(item.productId, 1)}
-                        aria-label="Aumentar cantidad"
-                        className="flex h-7 w-7 items-center justify-center rounded-r-md text-slate-700 hover:bg-slate-200/70 disabled:opacity-40 transition-colors cursor-pointer"
-                      >
-                        <Plus className="h-3 w-3" />
-                      </button>
+                    <div className="inline-flex items-center gap-1.5">
+                      <div className="inline-flex items-center rounded-md border border-slate-200 bg-slate-50">
+                        <button
+                          type="button"
+                          onClick={() => updateCartQuantity(item.productId, -qtyStep)}
+                          aria-label="Disminuir cantidad"
+                          className="flex h-7 w-7 items-center justify-center rounded-l-md text-slate-700 hover:bg-slate-200/70 transition-colors cursor-pointer"
+                        >
+                          <Minus className="h-3 w-3" />
+                        </button>
+                        {isFractional ? (
+                          <CartDecimalQtyInput
+                            quantity={item.quantity}
+                            maxStock={maxStock}
+                            unitLabel={item.unit || 'kg'}
+                            onCommit={(nextQty) => setCartItemQuantity(item.productId, nextQty)}
+                          />
+                        ) : (
+                          <span className="w-7 text-center text-xs font-semibold tabular-nums text-slate-900">
+                            {formatQuantity(item.quantity)}
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          disabled={item.quantity >= maxStock - 0.0001}
+                          onClick={() => updateCartQuantity(item.productId, qtyStep)}
+                          aria-label="Aumentar cantidad"
+                          className="flex h-7 w-7 items-center justify-center rounded-r-md text-slate-700 hover:bg-slate-200/70 disabled:opacity-40 transition-colors cursor-pointer"
+                        >
+                          <Plus className="h-3 w-3" />
+                        </button>
+                      </div>
+                      {isFractional && (
+                        <span className="text-[11px] font-medium text-slate-500">
+                          {item.unit}
+                        </span>
+                      )}
                     </div>
 
                     <div className="text-right tabular-nums">
@@ -3268,7 +3350,7 @@ export default function App() {
 
         <div className="space-y-1 text-xs text-slate-500 tabular-nums">
           <div className="flex items-center justify-between">
-            <span>Subtotal ({cartTotals.itemCount} und)</span>
+            <span>Subtotal ({formatQuantity(cartTotals.itemCount)})</span>
             <span className="font-medium text-slate-700">{formatPrimary(cartTotals.subtotalUsd)}</span>
           </div>
           {applyTax && (
@@ -4041,7 +4123,7 @@ export default function App() {
                               </h2>
                               {inCartQty > 0 && (
                                 <span className="shrink-0 rounded-full border border-[#84CC16]/40 bg-[#F7FEE7] px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-[#3F6212]">
-                                  ×{inCartQty}
+                                  ×{formatQuantity(inCartQty)}
                                 </span>
                               )}
                             </div>
@@ -4088,10 +4170,12 @@ export default function App() {
                               {outOfStock ? (
                                 <span className="font-semibold text-red-600">Agotado</span>
                               ) : lowStock ? (
-                                <span className="font-semibold text-amber-600">Bajo: {stock}</span>
+                                <span className="font-semibold text-amber-600">
+                                  Bajo: {formatQuantity(stock)}
+                                </span>
                               ) : (
                                 <span className="text-slate-400">
-                                  {stock} {product.unit}
+                                  {formatQuantity(stock)} {product.unit}
                                 </span>
                               )}
                             </div>
@@ -4119,7 +4203,7 @@ export default function App() {
               >
                 <span className="inline-flex items-center gap-1.5">
                   <ShoppingCart className="h-3.5 w-3.5" />
-                  Carrito ({cartTotals.itemCount})
+                  Carrito ({formatQuantity(cartTotals.itemCount)})
                 </span>
                 <span className="font-semibold tabular-nums">
                   {formatPrimary(cartTotals.totalUsd)}
@@ -4385,7 +4469,7 @@ export default function App() {
             </div>
             <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-4 py-2.5">
               <h2 className="text-sm font-bold text-slate-900">
-                Carrito ({cartTotals.itemCount})
+                Carrito ({formatQuantity(cartTotals.itemCount)})
               </h2>
               <button
                 type="button"
@@ -4399,6 +4483,17 @@ export default function App() {
             {renderCartContent(false)}
           </div>
         </div>
+      )}
+
+      {weightPrompt && (
+        <WeightQuantityModal
+          product={weightPrompt.product}
+          exchangeRate={exchangeRate}
+          maxAvailable={roundQty(getBranchStock(weightPrompt.product))}
+          currentInCart={getCartQuantity(weightPrompt.product.id)}
+          onConfirm={handleConfirmWeightPrompt}
+          onClose={() => setWeightPrompt(null)}
+        />
       )}
 
       {checkoutOpen && (
