@@ -70,6 +70,7 @@ import {
 import { CustomersModule } from './components/CustomersModule';
 import { PriceCheckerView } from './components/PriceCheckerView';
 import { ProductImageBox } from './components/ProductImageBox';
+import { triggerFlyToCart } from './utils/flyToCart';
 import {
   buildSubscriptionRenewalWhatsAppUrl,
   createInitialSubscriptionState,
@@ -329,6 +330,8 @@ export default function App() {
   const [applyTax, setApplyTax] = useState<boolean>(false);
   const [orderNotes, setOrderNotes] = useState<string>('');
   const [mobileCartOpen, setMobileCartOpen] = useState<boolean>(false);
+  const desktopCartTargetRef = useRef<HTMLDivElement | null>(null);
+  const mobileCartTargetRef = useRef<HTMLButtonElement | null>(null);
 
   // POS View Customization state
   const [showPhoto, setShowPhoto] = useState<boolean>(() => {
@@ -2610,6 +2613,30 @@ export default function App() {
     });
   };
 
+  const handleCatalogProductTap = (product: Product, sourceEl: HTMLElement | null) => {
+    const available = getBranchStock(product);
+    if (available <= 0) return;
+    const currentQty = getCartQuantity(product.id);
+    addToCart(product);
+    if (currentQty >= available) return;
+
+    const desktopTarget = desktopCartTargetRef.current;
+    const mobileTarget = mobileCartTargetRef.current;
+    const desktopRect = desktopTarget?.getBoundingClientRect();
+    const targetEl =
+      desktopTarget && desktopRect && desktopRect.width > 0 && desktopRect.height > 0
+        ? desktopTarget
+        : mobileTarget;
+
+    triggerFlyToCart({
+      sourceEl,
+      targetEl,
+      imageUrl: product.imageUrl || product.image_url,
+      productName: product.name,
+      showPhoto,
+    });
+  };
+
   const updateCartQuantity = (productId: string, delta: number) => {
     const product = products.find((p) => p.id === productId);
     const maxStock = product ? getBranchStock(product) : 9999;
@@ -3003,7 +3030,7 @@ export default function App() {
     }
   };
 
-  const renderCartContent = () => (
+  const renderCartContent = (isDesktopAside = false) => (
     <div className="flex h-full flex-col bg-white">
       <div className="border-b border-slate-200 px-3.5 py-2.5">
         <div className="flex items-center justify-between gap-2">
@@ -3213,7 +3240,10 @@ export default function App() {
               <span className="font-medium text-slate-700">{formatPrimary(cartTotals.taxUsd)}</span>
             </div>
           )}
-          <div className="flex items-baseline justify-between border-t border-slate-200 pt-2">
+          <div
+            ref={isDesktopAside ? desktopCartTargetRef : undefined}
+            className="flex items-baseline justify-between rounded-lg border-t border-slate-200 px-1 pt-2 transition-shadow"
+          >
             <span className="text-xs font-semibold text-slate-900">Total a pagar</span>
             <div className="text-right tabular-nums">
               <p
@@ -3924,7 +3954,7 @@ export default function App() {
                           key={product.id}
                           type="button"
                           disabled={outOfStock}
-                          onClick={() => addToCart(product)}
+                          onClick={(e) => handleCatalogProductTap(product, e.currentTarget)}
                           className={`group flex flex-col justify-between rounded-xl border p-2.5 text-left transition-all cursor-pointer ${
                             outOfStock
                               ? 'border-slate-200 bg-slate-100/70 opacity-60 cursor-not-allowed'
@@ -4011,13 +4041,14 @@ export default function App() {
             </section>
 
             <aside className="hidden w-[350px] shrink-0 border-l border-slate-200 lg:block xl:w-[380px]">
-              {renderCartContent()}
+              {renderCartContent(true)}
             </aside>
           </main>
 
           <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white px-3 py-2 lg:hidden">
             <div className="flex items-center justify-between gap-2">
               <button
+                ref={mobileCartTargetRef}
                 type="button"
                 onClick={() => setMobileCartOpen(true)}
                 className="flex flex-1 items-center justify-between rounded-lg border border-slate-200 bg-slate-900 px-3 py-2 text-xs font-semibold text-white cursor-pointer"
