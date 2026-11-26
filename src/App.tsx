@@ -27,6 +27,7 @@ import {
   ShoppingCart,
   SlidersHorizontal,
   Smartphone,
+  Store,
   Trash2,
   UserCheck,
   UserPlus,
@@ -70,6 +71,7 @@ import {
 import { CustomersModule } from './components/CustomersModule';
 import { PriceCheckerView } from './components/PriceCheckerView';
 import { ProductImageBox } from './components/ProductImageBox';
+import { hasCatalogUrlParam, WebCatalogView } from './components/WebCatalogView';
 import { triggerFlyToCart } from './utils/flyToCart';
 import {
   buildSubscriptionRenewalWhatsAppUrl,
@@ -113,6 +115,7 @@ type WorkspaceTab =
   | 'inventory'
   | 'customers'
   | 'priceChecker'
+  | 'webCatalog'
   | 'reports'
   | 'costing'
   | 'settings'
@@ -262,6 +265,7 @@ export default function App() {
   const [isReady, setIsReady] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
   const [cloudUser, setCloudUser] = useState<User | null>(null);
+  const [isDirectWebCatalog] = useState<boolean>(() => hasCatalogUrlParam());
   const [passwordRecoveryOpen, setPasswordRecoveryOpen] = useState<boolean>(() =>
     hasPasswordRecoveryUrlParams()
   );
@@ -1073,7 +1077,7 @@ export default function App() {
     const margin = 8;
     const maxLeft = Math.max(margin, window.innerWidth - menuWidth - margin);
     const left = Math.min(Math.max(margin, rect.left), maxLeft);
-    const top = Math.min(rect.bottom + 6, Math.max(margin, window.innerHeight - 335));
+    const top = Math.min(rect.bottom + 6, Math.max(margin, window.innerHeight - 375));
     setNavMenuPos({ top, left });
   }, []);
 
@@ -3310,6 +3314,10 @@ export default function App() {
     </div>
   );
 
+  if (isDirectWebCatalog) {
+    return <WebCatalogView mode="public" />;
+  }
+
   if (!authChecked) {
     return (
       <div className="flex min-h-screen w-full flex-col items-center justify-center bg-[#F8FAFC] px-4 text-slate-900">
@@ -3569,6 +3577,7 @@ export default function App() {
                 const isGroupedTabActive =
                   activeTab === 'customers' ||
                   activeTab === 'priceChecker' ||
+                  activeTab === 'webCatalog' ||
                   activeTab === 'inventory' ||
                   activeTab === 'reports' ||
                   activeTab === 'costing' ||
@@ -3699,6 +3708,28 @@ export default function App() {
                 <span>Verificador de precios</span>
               </span>
               {activeTab === 'priceChecker' && (
+                <Check className="h-3.5 w-3.5 shrink-0 text-[#558B00]" />
+              )}
+            </button>
+
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setActiveTab('webCatalog');
+                setNavMenuOpen(false);
+              }}
+              className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold transition-colors cursor-pointer ${
+                activeTab === 'webCatalog'
+                  ? 'bg-[#F7FEE7] text-[#3F6212]'
+                  : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
+              }`}
+            >
+              <span className="inline-flex items-center gap-2">
+                <Store className="h-3.5 w-3.5 shrink-0" />
+                <span>Catálogo Web</span>
+              </span>
+              {activeTab === 'webCatalog' && (
                 <Check className="h-3.5 w-3.5 shrink-0 text-[#558B00]" />
               )}
             </button>
@@ -4285,6 +4316,20 @@ export default function App() {
             products={products}
             activeBranch={activeBranch}
             exchangeRate={exchangeRate}
+            onExit={() => setActiveTab('pos')}
+          />
+        </div>
+      )}
+
+      {activeTab === 'webCatalog' && (
+        <div className="flex min-h-0 flex-1 overflow-hidden">
+          <WebCatalogView
+            mode="embedded"
+            initialProducts={products}
+            initialBusinessSettings={businessSettings}
+            initialExchangeRate={exchangeRate}
+            activeBranchId={activeBranchId}
+            storeUserId={cloudUser?.id}
             onExit={() => setActiveTab('pos')}
           />
         </div>
