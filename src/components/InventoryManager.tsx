@@ -491,7 +491,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
     const parsedStockByBranch: Record<string, number> = {};
     for (const branch of visibleBranches) {
       const rawVal = productForm.stockByBranch[branch.id] ?? '0';
-      const qty = parseInt(rawVal, 10);
+      const qty = parseFloat(rawVal.replace(',', '.'));
       if (!Number.isFinite(qty) || qty < 0) {
         setProductFormError(`Stock inválido para ${branch.name}. Debe ser 0 o mayor.`);
         return;
@@ -589,9 +589,9 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
     setLoadFeedback(null);
 
     const targetBranchId = isBranchLocked ? activeBranchId : loadBranchId;
-    const qty = parseInt(loadQtyInput, 10);
+    const qty = parseFloat(loadQtyInput.replace(',', '.'));
     if (!loadProductId || !targetBranchId || !Number.isFinite(qty) || qty <= 0) {
-      setLoadFeedback({ type: 'err', text: 'Ingresa una cantidad entera mayor a 0.' });
+      setLoadFeedback({ type: 'err', text: 'Ingresa una cantidad mayor a 0.' });
       return;
     }
 
@@ -607,7 +607,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
     setLoadNotes('');
     setLoadFeedback({
       type: 'ok',
-      text: `Se cargaron +${qty} und de "${productName}" en ${branchName}.`,
+      text: `Se cargaron +${qty} de "${productName}" en ${branchName}.`,
     });
   };
 
@@ -616,7 +616,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
     if (!canEditInventory || isBranchLocked) return;
     setTransferFeedback(null);
 
-    const qty = parseInt(transferQtyInput, 10);
+    const qty = parseFloat(transferQtyInput.replace(',', '.'));
     if (fromBranchId === toBranchId) {
       setTransferFeedback({
         type: 'err',
@@ -625,7 +625,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
       return;
     }
     if (!transferProductId || !Number.isFinite(qty) || qty <= 0) {
-      setTransferFeedback({ type: 'err', text: 'Ingresa una cantidad entera mayor a 0.' });
+      setTransferFeedback({ type: 'err', text: 'Ingresa una cantidad mayor a 0.' });
       return;
     }
     if (qty > availableInSource) {
@@ -1440,7 +1440,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                       <input
                         type="number"
                         min="0"
-                        step="1"
+                        step="any"
                         required
                         value={productForm.stockByBranch[branch.id] ?? '0'}
                         onChange={(e) =>
@@ -1556,8 +1556,8 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                   <label className="block text-xs font-semibold text-slate-700">Cantidad *</label>
                   <input
                     type="number"
-                    min="1"
-                    step="1"
+                    min="0"
+                    step="any"
                     required
                     value={loadQtyInput}
                     onChange={(e) => setLoadQtyInput(e.target.value)}
@@ -1705,9 +1705,9 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                   <label className="block text-xs font-semibold text-slate-700">Cantidad *</label>
                   <input
                     type="number"
-                    min="1"
-                    max={Math.max(1, availableInSource)}
-                    step="1"
+                    min="0"
+                    max={availableInSource}
+                    step="any"
                     required
                     value={transferQtyInput}
                     onChange={(e) => setTransferQtyInput(e.target.value)}
