@@ -138,6 +138,7 @@ type WorkspaceTab =
   | 'subscriptions';
 
 const RATE_STORAGE_KEY = 'pos_262_exchange_rate';
+const LAST_PAYMENT_METHOD_STORAGE_KEY = 'pos_262_last_payment_method';
 
 const PAYMENT_METHODS: Array<{
   method: PaymentMethod;
@@ -151,6 +152,18 @@ const PAYMENT_METHODS: Array<{
   { method: 'Efectivo Divisa $', currency: 'USD', requiresRef: false },
   { method: 'Binance USDT', currency: 'USD', requiresRef: true },
 ];
+
+const getInitialLastPaymentMethod = (): PaymentMethod => {
+  try {
+    const saved = localStorage.getItem(LAST_PAYMENT_METHOD_STORAGE_KEY);
+    if (saved && PAYMENT_METHODS.some((pm) => pm.method === saved)) {
+      return saved as PaymentMethod;
+    }
+  } catch {
+    // Ignore storage errors
+  }
+  return 'Efectivo Bs';
+};
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -460,7 +473,12 @@ export default function App() {
   // Checkout Modal state
   const [checkoutOpen, setCheckoutOpen] = useState<boolean>(false);
   const [saleType, setSaleType] = useState<SaleType>('cash');
-  const [selectedMethod, setSelectedMethod] = useState<PaymentMethod>('Pago Móvil');
+  const [lastPaymentMethod, setLastPaymentMethod] = useState<PaymentMethod>(() =>
+    getInitialLastPaymentMethod()
+  );
+  const [selectedMethod, setSelectedMethod] = useState<PaymentMethod>(() =>
+    getInitialLastPaymentMethod()
+  );
   const [paymentAmountInput, setPaymentAmountInput] = useState<string>('');
   const [paymentReference, setPaymentReference] = useState<string>('');
   const [payments, setPayments] = useState<SalePayment[]>([]);
@@ -2925,6 +2943,15 @@ export default function App() {
     setPaymentAmountInput(suggested.toFixed(2));
   };
 
+  const rememberPaymentMethod = (method: PaymentMethod) => {
+    setLastPaymentMethod(method);
+    try {
+      localStorage.setItem(LAST_PAYMENT_METHOD_STORAGE_KEY, method);
+    } catch {
+      // Ignore storage errors
+    }
+  };
+
   const openCheckoutModal = () => {
     if (cart.length === 0) return;
     setCompletedSale(null);
@@ -2933,7 +2960,7 @@ export default function App() {
     setPaymentReference('');
     setCheckoutError('');
     setShowCheckoutNewCustomer(false);
-    const defaultMethod: PaymentMethod = currency === 'VES' ? 'Pago Móvil' : 'Efectivo Divisa $';
+    const defaultMethod: PaymentMethod = lastPaymentMethod || 'Efectivo Bs';
     setSelectedMethod(defaultMethod);
     prefillPaymentInput(defaultMethod, cartTotals.totalUsd);
     setCheckoutOpen(true);
@@ -2971,6 +2998,7 @@ export default function App() {
       setCheckoutError('Ingresa un monto válido para agregar el pago.');
       return;
     }
+    rememberPaymentMethod(entry.method);
     const nextPayments = [...payments, entry];
     const nextPaid = round2(nextPayments.reduce((s, p) => s + p.amountUsd, 0));
     const nextRemaining = round2(Math.max(0, cartTotals.totalUsd - nextPaid));
@@ -3134,6 +3162,9 @@ export default function App() {
     });
 
     playCashRegisterSound(soundEnabled);
+    if (finalPayments.length > 0) {
+      rememberPaymentMethod(finalPayments[finalPayments.length - 1].method);
+    }
 
     await reloadAllData();
     let finalSaleRecord = newSale;
@@ -3171,35 +3202,35 @@ export default function App() {
       }`}
     >
       <div
-        className={`shrink-0 border-b border-slate-200 py-2.5 ${
-          isDesktopAside ? 'px-3.5' : 'px-4'
+        className={`shrink-0 border-b border-slate-200 py-1.5 ${
+          isDesktopAside ? 'px-3' : 'px-3.5'
         }`}
       >
         <div className="flex items-center justify-between gap-2">
           <label
             htmlFor="customer-select"
-            className="flex items-center gap-1.5 text-xs font-semibold text-slate-600"
+            className="flex items-center gap-1 text-[11px] font-semibold text-slate-600"
           >
-            <Users className="h-3.5 w-3.5 text-slate-400" />
+            <Users className="h-3 w-3 text-slate-400" />
             Cliente
           </label>
           <button
             type="button"
             onClick={() => setShowNewCustomerForm((prev) => !prev)}
-            className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-semibold text-[#558B00] hover:bg-[#F7FEE7] hover:text-[#3F6212] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-semibold text-[#558B00] hover:bg-[#F7FEE7] hover:text-[#3F6212] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
           >
-            <UserPlus className="h-3.5 w-3.5" />
+            <UserPlus className="h-3 w-3" />
             {showNewCustomerForm ? 'Cancelar' : 'Nuevo'}
           </button>
         </div>
 
         {!showNewCustomerForm ? (
-          <div className="mt-1.5">
+          <div className="mt-1">
             <select
               id="customer-select"
               value={selectedCustomerId}
               onChange={(e) => setSelectedCustomerId(e.target.value)}
-              className="w-full rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
+              className="w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
             >
               <option value="">Cliente</option>
               {customers.map((customer) => (
@@ -3210,7 +3241,7 @@ export default function App() {
               ))}
             </select>
             {selectedCustomer && selectedCustomer.balanceUsd > 0 && (
-              <p className="mt-1 text-[11px] font-medium text-amber-700 font-mono tabular-nums">
+              <p className="mt-0.5 text-[11px] font-medium text-amber-700 font-mono tabular-nums">
                 Por cobrar: {formatUsd(selectedCustomer.balanceUsd)} ·{' '}
                 {formatVes(round2(selectedCustomer.balanceUsd * exchangeRate))}
               </p>
@@ -3219,7 +3250,7 @@ export default function App() {
         ) : (
           <form
             onSubmit={handleCreateCustomer}
-            className="mt-2 space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-2.5"
+            className="mt-1.5 space-y-1.5 rounded-lg border border-slate-200 bg-slate-50 p-2"
           >
             <input
               type="text"
@@ -3227,7 +3258,7 @@ export default function App() {
               placeholder="Nombre o razón social *"
               value={newCustomerName}
               onChange={(e) => setNewCustomerName(e.target.value)}
-              className="w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-[#76B900] focus:outline-none"
+              className="w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-900 placeholder:text-slate-400 focus:border-[#76B900] focus:outline-none"
             />
             <div className="grid grid-cols-2 gap-1.5">
               <input
@@ -3235,19 +3266,19 @@ export default function App() {
                 placeholder="Cédula / RIF"
                 value={newCustomerDoc}
                 onChange={(e) => setNewCustomerDoc(e.target.value)}
-                className="w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-[#76B900] focus:outline-none"
+                className="w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-900 placeholder:text-slate-400 focus:border-[#76B900] focus:outline-none"
               />
               <input
                 type="tel"
                 placeholder="WhatsApp (58412...)"
                 value={newCustomerPhone}
                 onChange={(e) => setNewCustomerPhone(e.target.value)}
-                className="w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-[#76B900] focus:outline-none"
+                className="w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-900 placeholder:text-slate-400 focus:border-[#76B900] focus:outline-none"
               />
             </div>
             <button
               type="submit"
-              className="w-full rounded-md bg-[#84CC16] px-2.5 py-1.5 text-xs font-semibold text-slate-950 hover:bg-[#76B900] transition-colors cursor-pointer"
+              className="w-full rounded-md bg-[#84CC16] px-2.5 py-1 text-xs font-semibold text-slate-950 hover:bg-[#76B900] transition-colors cursor-pointer"
             >
               Guardar y asignar
             </button>
@@ -3257,14 +3288,14 @@ export default function App() {
 
       <div
         className={`min-h-0 overflow-y-auto overscroll-contain ${
-          isDesktopAside ? 'flex-1 px-3.5' : 'flex-auto px-4 py-2'
+          isDesktopAside ? 'flex-1 px-3 py-1' : 'flex-auto px-3.5 py-1'
         }`}
       >
         {cart.length === 0 ? (
-          <div className="flex h-full min-h-[190px] flex-col items-center justify-center py-8 text-center">
-            <ShoppingCart className="h-8 w-8 text-slate-300" />
-            <p className="mt-2.5 text-xs font-semibold text-slate-700">Carrito vacío</p>
-            <p className="mt-1 max-w-[210px] text-[11px] text-slate-500">
+          <div className="flex h-full min-h-[160px] flex-col items-center justify-center py-6 text-center">
+            <ShoppingCart className="h-7 w-7 text-slate-300" />
+            <p className="mt-2 text-xs font-semibold text-slate-700">Carrito vacío</p>
+            <p className="mt-0.5 max-w-[210px] text-[11px] text-slate-500">
               Toca productos del catálogo o escanea un código SKU para iniciar.
             </p>
           </div>
@@ -3278,14 +3309,14 @@ export default function App() {
               const qtyStep = getQuantityStep(item.unit);
 
               return (
-                <li key={item.productId} className="py-2.5">
-                  <div className="flex items-start justify-between gap-2">
+                <li key={item.productId} className="py-1.5">
+                  <div className="flex items-start justify-between gap-1.5">
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-[13px] font-semibold leading-snug text-slate-900">
+                      <p className="truncate text-sm font-semibold leading-tight text-slate-900">
                         {item.name}
                       </p>
-                      <p className="mt-0.5 text-[11px] text-slate-400 tabular-nums">
-                        <span className="text-slate-500">
+                      <p className="text-[11px] leading-tight text-slate-400 tabular-nums">
+                        <span className="text-slate-600">
                           {formatPrimary(item.priceUsd)}/{item.unit || 'und'}
                         </span>
                         {item.sku ? ` · ${item.sku}` : ''}
@@ -3295,20 +3326,20 @@ export default function App() {
                       type="button"
                       onClick={() => removeFromCart(item.productId)}
                       aria-label={`Eliminar ${item.name}`}
-                      className="rounded-md p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 transition-colors cursor-pointer"
+                      className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 transition-colors cursor-pointer shrink-0"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
                   </div>
 
-                  <div className="mt-1.5 flex items-center justify-between gap-2">
-                    <div className="inline-flex items-center gap-1.5">
+                  <div className="mt-1 flex items-center justify-between gap-1.5">
+                    <div className="inline-flex items-center gap-1">
                       <div className="inline-flex items-center rounded-md border border-slate-200 bg-slate-50">
                         <button
                           type="button"
                           onClick={() => updateCartQuantity(item.productId, -qtyStep)}
                           aria-label="Disminuir cantidad"
-                          className="flex h-7 w-7 items-center justify-center rounded-l-md text-slate-700 hover:bg-slate-200/70 transition-colors cursor-pointer"
+                          className="flex h-6 w-6 items-center justify-center rounded-l-md text-slate-700 hover:bg-slate-200/70 transition-colors cursor-pointer"
                         >
                           <Minus className="h-3 w-3" />
                         </button>
@@ -3320,7 +3351,7 @@ export default function App() {
                             onCommit={(nextQty) => setCartItemQuantity(item.productId, nextQty)}
                           />
                         ) : (
-                          <span className="w-7 text-center text-xs font-semibold tabular-nums text-slate-900">
+                          <span className="w-6 text-center text-xs font-semibold tabular-nums text-slate-900">
                             {formatQuantity(item.quantity)}
                           </span>
                         )}
@@ -3329,7 +3360,7 @@ export default function App() {
                           disabled={item.quantity >= maxStock - 0.0001}
                           onClick={() => updateCartQuantity(item.productId, qtyStep)}
                           aria-label="Aumentar cantidad"
-                          className="flex h-7 w-7 items-center justify-center rounded-r-md text-slate-700 hover:bg-slate-200/70 disabled:opacity-40 transition-colors cursor-pointer"
+                          className="flex h-6 w-6 items-center justify-center rounded-r-md text-slate-700 hover:bg-slate-200/70 disabled:opacity-40 transition-colors cursor-pointer"
                         >
                           <Plus className="h-3 w-3" />
                         </button>
@@ -3341,7 +3372,7 @@ export default function App() {
                       )}
                     </div>
 
-                    <div className="text-right tabular-nums">
+                    <div className="text-right leading-tight tabular-nums">
                       <p
                         className={`text-xs font-semibold ${
                           currency === 'VES' ? 'text-[#558B00]' : 'text-slate-900'
@@ -3366,14 +3397,14 @@ export default function App() {
       </div>
 
       <div
-        className={`shrink-0 border-t border-slate-200 space-y-2.5 ${
+        className={`shrink-0 border-t border-slate-200 space-y-1.5 ${
           isDesktopAside
-            ? 'bg-slate-50/80 px-3.5 py-2.5'
-            : 'bg-white px-4 pt-3 pb-[calc(1.25rem+env(safe-area-inset-bottom,0px))]'
+            ? 'bg-slate-50/80 px-3 py-2'
+            : 'bg-white px-3.5 pt-2 pb-[calc(1rem+env(safe-area-inset-bottom,0px))]'
         }`}
       >
         <div className="flex items-center justify-between gap-2">
-          <label className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-700 cursor-pointer select-none">
+          <label className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-600 cursor-pointer select-none">
             <input
               type="checkbox"
               checked={applyTax}
@@ -3386,7 +3417,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => setCart([])}
-              className="text-xs font-medium text-slate-500 hover:text-red-600 transition-colors cursor-pointer whitespace-nowrap"
+              className="text-[11px] font-medium text-slate-500 hover:text-red-600 transition-colors cursor-pointer whitespace-nowrap"
             >
               Vaciar
             </button>
@@ -3398,10 +3429,10 @@ export default function App() {
           placeholder="Nota opcional del pedido..."
           value={orderNotes}
           onChange={(e) => setOrderNotes(e.target.value)}
-          className="w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-[#76B900] focus:outline-none"
+          className="w-full rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-900 placeholder:text-slate-400 focus:border-[#76B900] focus:outline-none"
         />
 
-        <div className="space-y-1 text-xs text-slate-500 tabular-nums">
+        <div className="space-y-0.5 text-[11px] text-slate-500 tabular-nums">
           <div className="flex items-center justify-between">
             <span>Subtotal ({formatQuantity(cartTotals.itemCount)})</span>
             <span className="font-medium text-slate-700">{formatPrimary(cartTotals.subtotalUsd)}</span>
@@ -3414,19 +3445,19 @@ export default function App() {
           )}
           <div
             ref={isDesktopAside ? desktopCartTargetRef : undefined}
-            className="flex items-baseline justify-between rounded-lg border-t border-slate-200 px-1 pt-2 transition-shadow"
+            className="flex items-baseline justify-between border-t border-slate-200 px-0.5 pt-1.5 transition-shadow"
           >
             <span className="text-xs font-semibold text-slate-900">Total a pagar</span>
-            <div className="text-right tabular-nums">
+            <div className="text-right leading-tight tabular-nums">
               <p
-                className={`text-base font-bold tracking-tight ${
+                className={`text-sm font-bold tracking-tight ${
                   currency === 'VES' ? 'text-[#558B00]' : 'text-slate-900'
                 }`}
               >
                 {formatPrimary(cartTotals.totalUsd)}
               </p>
               <p
-                className={`text-xs font-medium ${
+                className={`text-[11px] font-medium ${
                   currency === 'USD' ? 'text-[#558B00]' : 'text-slate-400'
                 }`}
               >
@@ -3440,7 +3471,7 @@ export default function App() {
           type="button"
           disabled={cart.length === 0 || !activeCashier}
           onClick={openCheckoutModal}
-          className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-[#84CC16] px-3.5 py-2.5 text-xs font-bold text-slate-950 hover:bg-[#76B900] disabled:bg-slate-200 disabled:text-slate-400 transition-colors cursor-pointer disabled:cursor-not-allowed"
+          className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-[#84CC16] px-3 py-2 text-xs font-bold text-slate-950 hover:bg-[#76B900] disabled:bg-slate-200 disabled:text-slate-400 transition-colors cursor-pointer disabled:cursor-not-allowed"
         >
           <CreditCard className="h-3.5 w-3.5" />
           Cobrar {cart.length > 0 ? formatPrimary(cartTotals.totalUsd) : ''}
@@ -4558,7 +4589,7 @@ export default function App() {
             <div className="flex shrink-0 justify-center pt-2 pb-1">
               <span className="h-1.5 w-10 rounded-full bg-slate-300" aria-hidden="true" />
             </div>
-            <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-4 py-2.5">
+            <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-3.5 py-2">
               <h2 className="text-sm font-bold text-slate-900">
                 Carrito ({formatQuantity(cartTotals.itemCount)})
               </h2>
