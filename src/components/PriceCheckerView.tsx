@@ -662,50 +662,50 @@ export const PriceCheckerView: React.FC<PriceCheckerViewProps> = ({
       )}
 
       {/* Main Full-Viewport Kiosk Stage */}
-      <main className="flex min-h-0 flex-1 items-center justify-center overflow-hidden p-4 sm:p-8 lg:p-10">
+      <main className="flex min-h-0 flex-1 overflow-hidden p-3 sm:p-5 lg:p-6">
         {matchedProduct ? (
           <section
             key={`${matchedProduct.id}-${scanSeq}`}
-            className="flex max-h-full w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
+            className="flex h-full w-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
           >
             {hasVisibleImage ? (
-              <div className="grid h-full min-h-0 grid-cols-1 items-stretch md:grid-cols-12">
-                <div className="flex items-center justify-center border-b border-slate-200 bg-white p-5 sm:p-8 md:col-span-5 md:border-b-0 md:border-r lg:p-10">
+              <div className="flex h-full min-h-0 w-full flex-col md:grid md:grid-cols-12">
+                <div className="flex min-h-0 flex-[1_1_46%] items-center justify-center border-b border-slate-200 bg-white p-4 sm:p-6 md:col-span-6 md:h-full md:border-b-0 md:border-r lg:p-10">
                   <img
                     src={safeImageUrl}
                     alt={matchedProduct.name}
                     decoding="async"
                     referrerPolicy="no-referrer"
                     onError={() => setFailedImageSrc(safeImageUrl)}
-                    className="max-h-[26vh] w-full object-contain sm:max-h-[34vh] md:max-h-[62vh]"
+                    className="h-full max-h-[45vh] w-full object-contain md:max-h-[76vh]"
                   />
                 </div>
 
-                <div className="flex flex-col justify-center gap-5 p-6 sm:gap-6 sm:p-10 md:col-span-7 lg:p-14">
+                <div className="flex min-h-0 flex-[1_1_54%] flex-col justify-center gap-4 px-6 py-5 sm:gap-6 sm:px-10 sm:py-8 md:col-span-6 md:h-full lg:gap-8 lg:px-14 lg:py-12">
                   <div className="space-y-2">
                     {matchedProduct.category && (
-                      <p className="text-sm font-medium text-slate-500 sm:text-base">
+                      <p className="text-sm font-semibold text-slate-500 sm:text-base lg:text-lg">
                         {matchedProduct.category}
                       </p>
                     )}
-                    <h2 className="text-balance text-3xl font-extrabold leading-[1.08] tracking-tight text-slate-900 sm:text-4xl lg:text-5xl xl:text-6xl">
+                    <h2 className="line-clamp-3 text-balance text-[clamp(2rem,4.2vw,4.5rem)] font-extrabold leading-[1.06] tracking-tight text-slate-900">
                       {matchedProduct.name}
                     </h2>
                   </div>
 
-                  <div className="border-t border-slate-200 pt-5 sm:pt-6 tabular-nums">
-                    <p className="text-5xl font-black leading-none tracking-tight text-slate-950 sm:text-6xl lg:text-7xl xl:text-8xl">
+                  <div className="rounded-2xl border border-[#84CC16]/45 bg-[#F7FEE7]/70 px-5 py-5 sm:px-7 sm:py-7 lg:px-9 lg:py-8 tabular-nums">
+                    <p className="text-[clamp(2.75rem,6.5vw,6.75rem)] font-black leading-none tracking-tight text-slate-950">
                       {formatVes(matchedPriceVes)}
                     </p>
-                    <div className="mt-4 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                      <p className="font-mono text-2xl font-extrabold text-[#3F6212] sm:text-3xl lg:text-4xl">
+                    <div className="mt-4 flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t border-[#84CC16]/30 pt-4">
+                      <p className="font-mono text-[clamp(1.65rem,3.4vw,3.5rem)] font-extrabold leading-none text-[#3F6212]">
                         {formatUsd(matchedProduct.priceUsd)}
-                        <span className="ml-1.5 font-sans text-base font-bold text-[#558B00] sm:text-lg">
+                        <span className="ml-2 font-sans text-[clamp(1rem,1.5vw,1.5rem)] font-bold text-[#558B00]">
                           USD
                         </span>
                       </p>
                       {matchedProduct.unit && (
-                        <span className="text-sm font-medium text-slate-500 sm:text-base">
+                        <span className="text-sm font-medium text-slate-600 sm:text-base lg:text-lg">
                           · por {matchedProduct.unit}
                         </span>
                       )}
@@ -714,33 +714,31 @@ export const PriceCheckerView: React.FC<PriceCheckerViewProps> = ({
                 </div>
               </div>
             ) : (
-              <div className="flex flex-col items-center justify-center gap-6 px-6 py-10 text-center sm:px-14 sm:py-16 lg:px-20 lg:py-20">
+              <div className="flex h-full w-full flex-col items-center justify-center gap-6 px-6 py-8 text-center sm:gap-8 sm:px-14 lg:gap-10 lg:px-20">
                 <div className="space-y-2.5">
                   {matchedProduct.category && (
-                    <p className="text-sm font-medium text-slate-500 sm:text-base">
+                    <p className="text-base font-semibold text-slate-500 sm:text-lg lg:text-xl">
                       {matchedProduct.category}
                     </p>
                   )}
-                  <h2 className="mx-auto max-w-4xl text-balance text-4xl font-extrabold leading-[1.08] tracking-tight text-slate-900 sm:text-5xl lg:text-6xl xl:text-7xl">
+                  <h2 className="mx-auto max-w-5xl line-clamp-3 text-balance text-[clamp(2.5rem,5.5vw,5.75rem)] font-extrabold leading-[1.06] tracking-tight text-slate-900">
                     {matchedProduct.name}
                   </h2>
                 </div>
 
-                <div className="w-24 border-t border-slate-200" />
-
-                <div className="tabular-nums">
-                  <p className="text-6xl font-black leading-none tracking-tight text-slate-950 sm:text-7xl lg:text-8xl xl:text-9xl">
+                <div className="w-full max-w-4xl rounded-2xl border border-[#84CC16]/45 bg-[#F7FEE7]/70 px-6 py-7 sm:px-10 sm:py-10 lg:px-14 lg:py-12 tabular-nums">
+                  <p className="text-[clamp(3.5rem,9vw,9rem)] font-black leading-none tracking-tight text-slate-950">
                     {formatVes(matchedPriceVes)}
                   </p>
-                  <div className="mt-5 flex flex-wrap items-baseline justify-center gap-x-3 gap-y-1">
-                    <p className="font-mono text-3xl font-extrabold text-[#3F6212] sm:text-4xl lg:text-5xl">
+                  <div className="mt-5 flex flex-wrap items-baseline justify-center gap-x-3 gap-y-1 border-t border-[#84CC16]/30 pt-5">
+                    <p className="font-mono text-[clamp(2rem,4.5vw,4.5rem)] font-extrabold leading-none text-[#3F6212]">
                       {formatUsd(matchedProduct.priceUsd)}
-                      <span className="ml-1.5 font-sans text-lg font-bold text-[#558B00] sm:text-xl">
+                      <span className="ml-2 font-sans text-[clamp(1.1rem,1.8vw,1.75rem)] font-bold text-[#558B00]">
                         USD
                       </span>
                     </p>
                     {matchedProduct.unit && (
-                      <span className="text-base font-medium text-slate-500 sm:text-lg">
+                      <span className="text-base font-medium text-slate-600 sm:text-lg lg:text-xl">
                         · por {matchedProduct.unit}
                       </span>
                     )}
@@ -752,27 +750,27 @@ export const PriceCheckerView: React.FC<PriceCheckerViewProps> = ({
         ) : notFound ? (
           <section
             key={`not-found-${scanSeq}`}
-            className="w-full max-w-2xl rounded-2xl border border-red-200 bg-white px-6 py-12 text-center shadow-sm sm:px-12 sm:py-16"
+            className="flex h-full w-full flex-col items-center justify-center rounded-2xl border border-red-200 bg-white px-6 py-12 text-center shadow-sm sm:px-12"
           >
-            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border border-red-200 bg-red-50 text-red-600">
-              <AlertCircle className="h-8 w-8" />
+            <div className="flex h-20 w-20 items-center justify-center rounded-full border border-red-200 bg-red-50 text-red-600">
+              <AlertCircle className="h-10 w-10" />
             </div>
-            <h2 className="mt-5 text-2xl font-bold tracking-tight text-slate-900 sm:text-4xl">
+            <h2 className="mt-6 text-[clamp(1.75rem,3.8vw,3.5rem)] font-bold tracking-tight text-slate-900">
               Producto no encontrado
             </h2>
-            <p className="mt-3 text-sm text-slate-600 sm:text-lg">
+            <p className="mt-3 max-w-lg text-base text-slate-600 sm:text-xl">
               Escanea otro producto para consultar su precio al instante.
             </p>
           </section>
         ) : (
-          <section className="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white px-6 py-12 text-center shadow-sm sm:px-12 sm:py-16">
-            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-[#84CC16]/45 bg-[#F7FEE7] text-[#558B00]">
-              <ScanBarcode className="h-8 w-8" />
+          <section className="flex h-full w-full flex-col items-center justify-center rounded-2xl border border-slate-200 bg-white px-6 py-12 text-center shadow-sm sm:px-12">
+            <div className="flex h-20 w-20 items-center justify-center rounded-2xl border border-[#84CC16]/45 bg-[#F7FEE7] text-[#558B00] sm:h-24 sm:w-24">
+              <ScanBarcode className="h-10 w-10 sm:h-12 sm:w-12" />
             </div>
-            <h2 className="mt-5 text-balance text-2xl font-bold tracking-tight text-slate-900 sm:text-4xl">
+            <h2 className="mt-6 text-balance text-[clamp(1.85rem,4vw,3.75rem)] font-bold tracking-tight text-slate-900">
               Escanea un producto
             </h2>
-            <p className="mx-auto mt-3 max-w-md text-sm text-slate-600 sm:text-lg">
+            <p className="mx-auto mt-3 max-w-xl text-base text-slate-600 sm:text-xl">
               Acerca el código de barras al lector para mostrar el precio de inmediato.
             </p>
           </section>
