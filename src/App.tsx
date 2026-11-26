@@ -2983,14 +2983,32 @@ export default function App() {
       return;
     }
 
-    // For Cash sales, allow direct confirmation using the prefilled amount input.
+    // For Cash sales, allow direct confirmation using the entered/prefilled amount input.
+    // For "Efectivo Bs", also fall back to the full Bs total if Monto (Bs) is empty/zero.
     // For Credit sales, ONLY count explicit initial deposits added via "+ Agregar"
     // so 0 added payments always sends 100% of the sale to Accounts Receivable.
     let finalPayments = [...payments];
-    if (saleType === 'cash' && finalPayments.length === 0) {
+    const autoAddedPayment = saleType === 'cash' && finalPayments.length === 0;
+    if (autoAddedPayment) {
       const quickEntry = buildPaymentEntryFromInput();
       if (quickEntry) {
+        if (
+          selectedMethod === 'Efectivo Bs' &&
+          Math.abs(quickEntry.amountVes - cartTotals.totalVes) < 0.005
+        ) {
+          quickEntry.amountUsd = cartTotals.totalUsd;
+          quickEntry.amountVes = cartTotals.totalVes;
+        }
         finalPayments = [quickEntry];
+      } else if (selectedMethod === 'Efectivo Bs') {
+        finalPayments = [
+          {
+            method: 'Efectivo Bs',
+            amountUsd: cartTotals.totalUsd,
+            amountVes: cartTotals.totalVes,
+            reference: paymentReference.trim() || undefined,
+          },
+        ];
       }
     }
 
@@ -3003,6 +3021,10 @@ export default function App() {
         )}) para completar el pago de contado.`
       );
       return;
+    }
+
+    if (autoAddedPayment && finalPayments.length > 0) {
+      setPayments(finalPayments);
     }
 
     const finalPendingUsd =
