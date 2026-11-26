@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   Building2,
@@ -34,6 +34,7 @@ import type {
   Cashier,
   CashierPermissions,
   CloudSyncState,
+  Product,
   SubscriptionState,
 } from '../types/pos';
 import type { PendingSyncSummary } from '../services/syncQueue';
@@ -110,6 +111,8 @@ interface SettingsManagerProps {
     cloudCleared: boolean;
     errorMessage?: string;
   }>;
+  products?: Product[];
+  onUpdateProduct?: (product: Product) => Promise<void>;
 }
 
 export const SettingsManager: React.FC<SettingsManagerProps> = ({
@@ -144,7 +147,124 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
   onToggleBranchActive,
   onDeleteBranch,
   onResetOperationalData,
+  products,
+  onUpdateProduct,
 }) => {
+  const CUSTOM_CATEGORIES_STORAGE_KEY = 'pos_262_custom_categories';
+  const mergeSortedCategories = (cats: string[]): string[] => {
+    const seen = new Map<string, string>();
+    cats.forEach((raw) => {
+      const cleaned = raw.trim();
+      if (!cleaned) return;
+      const key = cleaned.toLowerCase();
+      if (!seen.has(key)) {
+        seen.set(key, cleaned);
+      }
+    });
+    return Array.from(seen.values()).sort((a, b) =>
+      a.localeCompare(b, 'es', { sensitivity: 'base' })
+    );
+  };
+
+  const [categoryModalOpen, setCategoryModalOpen] = useState<boolean>(false);
+  const [newCatInput, setNewCatInput] = useState<string>('');
+  const [editingCatOld, setEditingCatOld] = useState<string | null>(null);
+  const [editingCatName, setEditingCatName] = useState<string>('');
+  const [catFeedback, setCatFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+
+  const productList = products || [];
+
+  const customCategories = useMemo(() => {
+    try {
+      const raw = localStorage.getItem(CUSTOM_CATEGORIES_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed.map(String);
+      }
+    } catch {}
+    return ['Bebidas', 'General', 'Limpieza', 'Snacks', 'Víveres'];
+  }, []);
+
+  const allCategories = useMemo(() => {
+    return mergeSortedCategories([
+      ...productList.map((p) => p.category),
+      ...customCategories,
+    ]);
+  }, [productList, customCategories]);
+
+  const saveCustomCategories = (next: string[]) => {
+    const sorted = mergeSortedCategories(next);
+    try {
+      localStorage.setItem(CUSTOM_CATEGORIES_STORAGE_KEY, JSON.stringify(sorted));
+    } catch {}
+  };
+
+  const handleAddCategory = (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleaned = newCatInput.trim();
+    if (!cleaned) return;
+    const existing = mergeSortedCategories([...allCategories, cleaned]);
+    saveCustomCategories(existing);
+    setNewCatInput('');
+    setCatFeedback({ type: 'ok', text: `Categoría "${cleaned}" agregada correctamente.` });
+  };
+
+  const handleRenameCategory = async (oldName: string) => {
+    const cleaned = editingCatName.trim();
+    if (!cleaned || cleaned.toLowerCase() === oldName.toLowerCase()) {
+      setEditingCatOld(null);
+      return;
+    }
+    const matchingProducts = productList.filter(
+      (p) => p.category.trim().toLowerCase() === oldName.toLowerCase()
+    );
+    if (onUpdateProduct) {
+      for (const prod of matchingProducts) {
+        await onUpdateProduct({
+          ...prod,
+          category: cleaned,
+        });
+      }
+    }
+    const updatedCustom = customCategories.map((c: string) =>
+      c.trim().toLowerCase() === oldName.toLowerCase() ? cleaned : c
+    );
+    if (!updatedCustom.some((c: string) => c.trim().toLowerCase() === cleaned.toLowerCase())) {
+      updatedCustom.push(cleaned);
+    }
+    saveCustomCategories(updatedCustom);
+    setEditingCatOld(null);
+    setEditingCatName('');
+    setCatFeedback({ type: 'ok', text: `Categoría "${oldName}" renombrada a "${cleaned}" (${matchingProducts.length} productos actualizados).` });
+  };
+
+  const handleDeleteCategory = async (catName: string) => {
+    const matchingProducts = productList.filter(
+      (p) => p.category.trim().toLowerCase() === catName.toLowerCase()
+    );
+    if (matchingProducts.length > 0) {
+      const confirmReassign = window.confirm(
+        `La categoría "${catName}" tiene ${matchingProducts.length} productos asociados. ¿Deseas reasignarlos a "General" y eliminar "${catName}"?`
+      );
+      if (!confirmReassign) return;
+      if (onUpdateProduct) {
+        for (const prod of matchingProducts) {
+          await onUpdateProduct({
+            ...prod,
+            category: 'General',
+          });
+        }
+      }
+    } else {
+      const confirmDelete = window.confirm(`¿Estás seguro de eliminar la categoría "${catName}"?`);
+      if (!confirmDelete) return;
+    }
+    const updatedCustom = customCategories.filter(
+      (c: string) => c.trim().toLowerCase() !== catName.toLowerCase()
+    );
+    saveCustomCategories(updatedCustom);
+    setCatFeedback({ type: 'ok', text: `Categoría "${catName}" eliminada correctamente.` });
+  };
   const [businessName, setBusinessName] = useState<string>(businessSettings.businessName);
   const [rif, setRif] = useState<string>(businessSettings.rif);
   const [phone, setPhone] = useState<string>(businessSettings.phone);
@@ -1805,6 +1925,173 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
           </div>
         </form>
       </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 space-y-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-slate-200 pb-3">
+          <div className="flex items-center gap-2">
+            <SlidersHorizontal className="h-4 w-4 text-[#76B900]" />
+            <div>
+              <h2 className="text-sm font-bold text-slate-900">Categorías de productos</h2>
+              <p className="text-xs text-slate-500">
+                Administra las categorías de tu inventario y catálogo web ({allCategories.length} categorías)
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setCatFeedback(null);
+              setCategoryModalOpen(true);
+            }}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-[#84CC16] px-3.5 py-1.5 text-xs font-bold text-slate-950 hover:bg-[#76B900] transition-colors whitespace-nowrap cursor-pointer self-start sm:self-auto"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+            Editar categorías
+          </button>
+        </div>
+      </section>
+
+      {/* Category Manager Modal */}
+      {categoryModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-3 sm:p-4">
+          <div className="flex max-h-[92vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+              <div className="flex items-center gap-2">
+                <SlidersHorizontal className="h-4 w-4 text-[#76B900]" />
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Gestión de categorías</h3>
+                  <p className="text-xs text-slate-500">Añade, renombra o elimina categorías de productos</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCategoryModalOpen(false)}
+                aria-label="Cerrar"
+                className="rounded-md p-1 text-slate-500 hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              <form onSubmit={handleAddCategory} className="flex items-center gap-2">
+                <input
+                  type="text"
+                  placeholder="Nueva categoría..."
+                  value={newCatInput}
+                  onChange={(e) => setNewCatInput(e.target.value)}
+                  className="flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-[#76B900] focus:bg-white focus:outline-none"
+                />
+                <button
+                  type="submit"
+                  className="inline-flex items-center gap-1 rounded-lg bg-[#84CC16] px-3.5 py-1.5 text-xs font-bold text-slate-950 hover:bg-[#76B900] transition-colors whitespace-nowrap cursor-pointer"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Añadir
+                </button>
+              </form>
+
+              {catFeedback && (
+                <p
+                  className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium ${
+                    catFeedback.type === 'ok'
+                      ? 'border-[#84CC16]/40 bg-[#F7FEE7] text-[#3F6212]'
+                      : 'border-red-200 bg-red-50 text-red-700'
+                  }`}
+                >
+                  {catFeedback.type === 'ok' && (
+                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-[#76B900]" />
+                  )}
+                  <span>{catFeedback.text}</span>
+                </p>
+              )}
+
+              <div className="divide-y divide-slate-100 rounded-lg border border-slate-200 overflow-hidden max-h-72 overflow-y-auto">
+                {allCategories.length === 0 ? (
+                  <p className="p-4 text-center text-xs text-slate-500">No hay categorías registradas.</p>
+                ) : (
+                  allCategories.map((cat: string) => {
+                    const count = productList.filter(
+                      (p) => p.category.trim().toLowerCase() === cat.toLowerCase()
+                    ).length;
+                    const isEditing = editingCatOld === cat;
+
+                    return (
+                      <div key={cat} className="flex items-center justify-between gap-3 p-3 hover:bg-slate-50/70">
+                        {isEditing ? (
+                          <div className="flex flex-1 items-center gap-2">
+                            <input
+                              type="text"
+                              value={editingCatName}
+                              onChange={(e) => setEditingCatName(e.target.value)}
+                              className="flex-1 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-900 focus:border-[#76B900] focus:outline-none"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => void handleRenameCategory(cat)}
+                              className="rounded-md bg-[#84CC16] px-2.5 py-1 text-xs font-bold text-slate-950 hover:bg-[#76B900] cursor-pointer"
+                            >
+                              Guardar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingCatOld(null)}
+                              className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                            >
+                              Cancelar
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="min-w-0">
+                              <p className="truncate text-xs font-semibold text-slate-900">{cat}</p>
+                              <p className="text-[11px] text-slate-500 font-mono tabular-nums">
+                                {count} {count === 1 ? 'producto' : 'productos'} asociados
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingCatOld(cat);
+                                  setEditingCatName(cat);
+                                  setCatFeedback(null);
+                                }}
+                                title="Renombrar categoría"
+                                className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-900 cursor-pointer"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void handleDeleteCategory(cat)}
+                                title="Eliminar categoría"
+                                className="rounded-md p-1.5 text-red-500 hover:bg-red-50 hover:text-red-700 cursor-pointer"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end border-t border-slate-200 px-4 py-3">
+              <button
+                type="button"
+                onClick={() => setCategoryModalOpen(false)}
+                className="rounded-lg bg-slate-900 px-4 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 cursor-pointer"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-3">

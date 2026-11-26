@@ -4568,6 +4568,8 @@ export default function App() {
             onToggleBranchActive={handleToggleBranchActive}
             onDeleteBranch={handleDeleteBranch}
             onResetOperationalData={handleResetOperationalData}
+            products={products}
+            onUpdateProduct={handleUpdateProduct}
           />
         </div>
       )}
