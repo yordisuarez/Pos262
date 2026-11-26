@@ -391,33 +391,37 @@ export const InventoryValuationPanel: React.FC<InventoryValuationPanelProps> = (
 
   if (loading && !summary) {
     return (
-      <section className="space-y-4" aria-busy="true" aria-label="Cargando resumen financiero">
-        <div className="h-7 w-72 rounded-lg bg-slate-200/70" />
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          {[0, 1, 2].map((idx) => (
-            <div
-              key={idx}
-              className="h-36 rounded-xl border border-slate-200 bg-white p-5 space-y-3"
-            >
-              <div className="h-3.5 w-32 rounded bg-slate-200/70" />
-              <div className="h-7 w-40 rounded bg-slate-200/80" />
-              <div className="h-3 w-48 rounded bg-slate-100" />
-            </div>
-          ))}
-        </div>
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <div className="h-72 rounded-xl border border-slate-200 bg-white p-5" />
-          <div className="h-72 rounded-xl border border-slate-200 bg-white p-5" />
-        </div>
-      </section>
+      <div className="mx-auto max-w-6xl px-4 sm:px-6 py-4 space-y-4">
+        <section className="space-y-4" aria-busy="true" aria-label="Cargando resumen financiero">
+          <div className="h-7 w-72 rounded-lg bg-slate-200/70" />
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            {[0, 1, 2].map((idx) => (
+              <div
+                key={idx}
+                className="h-36 rounded-xl border border-slate-200 bg-white p-5 space-y-3"
+              >
+                <div className="h-3.5 w-32 rounded bg-slate-200/70" />
+                <div className="h-7 w-40 rounded bg-slate-200/80" />
+                <div className="h-3 w-48 rounded bg-slate-100" />
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <div className="h-72 rounded-xl border border-slate-200 bg-white p-5" />
+            <div className="h-72 rounded-xl border border-slate-200 bg-white p-5" />
+          </div>
+        </section>
+      </div>
     );
   }
 
   if (error || !summary) {
     return (
-      <section className="rounded-xl border border-red-200 bg-red-50 p-4 text-xs text-red-700">
-        {error || 'No hay datos disponibles para mostrar el resumen financiero.'}
-      </section>
+      <div className="mx-auto max-w-6xl px-4 sm:px-6 py-4 space-y-4">
+        <section className="rounded-xl border border-red-200 bg-red-50 p-4 text-xs text-red-700">
+          {error || 'No hay datos disponibles para mostrar el resumen financiero.'}
+        </section>
+      </div>
     );
   }
 
@@ -429,7 +433,8 @@ export const InventoryValuationPanel: React.FC<InventoryValuationPanelProps> = (
     valuationMode === 'cost' ? summary.costVariationPercent : summary.retailVariationPercent;
 
   return (
-    <section className="space-y-4" aria-label="Resumen Financiero y Valor de Inventario">
+    <div className="mx-auto max-w-6xl px-4 sm:px-6 py-4 space-y-4">
+      <section className="space-y-4" aria-label="Resumen Financiero y Valor de Inventario">
       {/* Header strip */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
@@ -1318,6 +1323,7 @@ export const InventoryValuationPanel: React.FC<InventoryValuationPanelProps> = (
           </div>
         </div>
       )}
-    </section>
+      </section>
+    </div>
   );
 };
