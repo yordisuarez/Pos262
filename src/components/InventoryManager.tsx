@@ -203,6 +203,8 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
   const [uploadingPhoto, setUploadingPhoto] = useState<boolean>(false);
   const [stagedImage, setStagedImage] = useState<CompressedProductImage | null>(null);
   const [stagedPreviewUrl, setStagedPreviewUrl] = useState<string | null>(null);
+  const [loadStockModalOpen, setLoadStockModalOpen] = useState<boolean>(false);
+  const [transferStockModalOpen, setTransferStockModalOpen] = useState<boolean>(false);
 
   // Create / Edit product modal state
   const [productModalOpen, setProductModalOpen] = useState<boolean>(false);
@@ -701,248 +703,26 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
         isBranchLocked={isBranchLocked}
         canEditInventory={canEditInventory}
         refreshKey={valuationRefreshKey}
-        onQuickRestock={canEditInventory ? handleQuickRestock : undefined}
+        onQuickRestock={(productId, branchId, suggestedQty) => {
+          if (!canEditInventory) return;
+          if (!isBranchLocked && branchId) {
+            setLoadBranchId(branchId);
+          }
+          setLoadProductId(productId);
+          setLoadQtyInput(String(Math.max(1, suggestedQty)));
+          setLoadFeedback(null);
+          setLoadStockModalOpen(true);
+        }}
         onCreateProduct={canEditInventory ? openCreateProductModal : undefined}
+        onOpenLoadStock={() => {
+          setLoadFeedback(null);
+          setLoadStockModalOpen(true);
+        }}
+        onOpenTransferStock={() => {
+          setTransferFeedback(null);
+          setTransferStockModalOpen(true);
+        }}
       />
-
-      {canEditInventory && (
-        <div className={`grid grid-cols-1 gap-5 ${isBranchLocked ? '' : 'lg:grid-cols-2'}`}>
-          <section
-            ref={loadSectionRef}
-            className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5"
-          >
-            <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
-              <PackagePlus className="h-4 w-4 text-[#76B900]" />
-              <div>
-                <h2 className="text-sm font-bold text-slate-900">Cargar stock a sucursal</h2>
-                <p className="text-xs text-slate-500">
-                  Ingreso de mercancía por tienda · {activeCashier.name}
-                </p>
-              </div>
-            </div>
-
-            <form onSubmit={handleLoadSubmit} className="mt-3.5 space-y-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700">
-                  Sucursal destino {isBranchLocked ? '(Fija)' : ''}
-                </label>
-                <select
-                  value={isBranchLocked ? activeBranchId : loadBranchId}
-                  disabled={isBranchLocked}
-                  onChange={(e) => {
-                    if (!isBranchLocked) setLoadBranchId(e.target.value);
-                  }}
-                  className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none disabled:cursor-not-allowed disabled:opacity-75"
-                >
-                  {operationalBranches.map((branch) => (
-                    <option key={branch.id} value={branch.id}>
-                      {branch.name} ({branch.code})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700">Producto</label>
-              <select
-                value={loadProductId}
-                onChange={(e) => setLoadProductId(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
-              >
-                {products.map((product) => (
-                  <option key={product.id} value={product.id}>
-                    {product.sku} — {product.name} (Actual:{' '}
-                    {product.stockByBranch[loadBranchId] ?? 0})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700">Cantidad *</label>
-                <input
-                  type="number"
-                  min="1"
-                  step="1"
-                  required
-                  value={loadQtyInput}
-                  onChange={(e) => setLoadQtyInput(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 font-mono text-xs font-bold tabular-nums text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
-                />
-              </div>
-              <div className="sm:col-span-2">
-                <label className="block text-xs font-semibold text-slate-700">
-                  Referencia / Proveedor (opcional)
-                </label>
-                <input
-                  type="text"
-                  placeholder="Ej: Factura proveedor #8841"
-                  value={loadNotes}
-                  onChange={(e) => setLoadNotes(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-[#76B900] focus:bg-white focus:outline-none"
-                />
-              </div>
-            </div>
-
-            {loadFeedback && (
-              <p
-                className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium ${
-                  loadFeedback.type === 'ok'
-                    ? 'border-[#84CC16]/40 bg-[#F7FEE7] text-[#3F6212]'
-                    : 'border-red-200 bg-red-50 text-red-700'
-                }`}
-              >
-                {loadFeedback.type === 'ok' && (
-                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-[#76B900]" />
-                )}
-                {loadFeedback.text}
-              </p>
-            )}
-
-            <button
-              type="submit"
-              disabled={products.length === 0 || operationalBranches.length === 0}
-              className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-[#84CC16] px-3 py-2 text-xs font-bold text-slate-950 hover:bg-[#76B900] disabled:bg-slate-200 disabled:text-slate-400 transition-colors cursor-pointer"
-            >
-              <PackagePlus className="h-3.5 w-3.5" />
-              Cargar stock
-            </button>
-          </form>
-        </section>
-
-        {!isBranchLocked && (
-        <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5">
-          <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
-            <ArrowLeftRight className="h-4 w-4 text-slate-800" />
-            <div>
-              <h2 className="text-sm font-bold text-slate-900">Traslado entre sucursales</h2>
-              <p className="text-xs text-slate-500">
-                Descuenta del origen, suma en el destino y guarda historial offline-first
-              </p>
-            </div>
-          </div>
-
-          <form onSubmit={handleTransferSubmit} className="mt-3.5 space-y-3">
-            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700">Sucursal origen</label>
-                <select
-                  value={fromBranchId}
-                  onChange={(e) => {
-                    setFromBranchId(e.target.value);
-                    setTransferFeedback(null);
-                  }}
-                  className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
-                >
-                  {operationalBranches.map((branch) => (
-                    <option key={branch.id} value={branch.id}>
-                      {branch.name} ({branch.code})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700">Sucursal destino</label>
-                <select
-                  value={toBranchId}
-                  onChange={(e) => {
-                    setToBranchId(e.target.value);
-                    setTransferFeedback(null);
-                  }}
-                  className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
-                >
-                  {operationalBranches.map((branch) => (
-                    <option key={branch.id} value={branch.id}>
-                      {branch.name} ({branch.code})
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between">
-                <label className="block text-xs font-semibold text-slate-700">Producto</label>
-                <span className="font-mono text-[11px] font-semibold tabular-nums text-slate-600">
-                  Disponible: {availableInSource} und
-                </span>
-              </div>
-              <select
-                value={transferProductId}
-                onChange={(e) => {
-                  setTransferProductId(e.target.value);
-                  setTransferFeedback(null);
-                }}
-                className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
-              >
-                {products.map((product) => (
-                  <option key={product.id} value={product.id}>
-                    {product.sku} — {product.name} (Origen:{' '}
-                    {product.stockByBranch[fromBranchId] ?? 0} → Destino:{' '}
-                    {product.stockByBranch[toBranchId] ?? 0})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700">Cantidad *</label>
-                <input
-                  type="number"
-                  min="1"
-                  max={Math.max(1, availableInSource)}
-                  step="1"
-                  required
-                  value={transferQtyInput}
-                  onChange={(e) => setTransferQtyInput(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 font-mono text-xs font-bold tabular-nums text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
-                />
-              </div>
-              <div className="sm:col-span-2">
-                <label className="block text-xs font-semibold text-slate-700">
-                  Motivo / Guía (opcional)
-                </label>
-                <input
-                  type="text"
-                  placeholder="Ej: Reposición de anaquel Sucursal Norte"
-                  value={transferNotes}
-                  onChange={(e) => setTransferNotes(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-[#76B900] focus:bg-white focus:outline-none"
-                />
-              </div>
-            </div>
-
-            {transferFeedback && (
-              <p
-                className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium ${
-                  transferFeedback.type === 'ok'
-                    ? 'border-[#84CC16]/40 bg-[#F7FEE7] text-[#3F6212]'
-                    : 'border-red-200 bg-red-50 text-red-700'
-                }`}
-              >
-                {transferFeedback.type === 'ok' && (
-                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-[#76B900]" />
-                )}
-                {transferFeedback.text}
-              </p>
-            )}
-
-            <button
-              type="submit"
-              disabled={products.length === 0 || operationalBranches.length < 2}
-              className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-400 transition-colors cursor-pointer"
-            >
-              <ArrowLeftRight className="h-3.5 w-3.5" />
-              Registrar traslado
-            </button>
-          </form>
-        </section>
-        )}
-      </div>
-      )}
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 space-y-3.5">
         <div className="flex flex-col gap-3 border-b border-slate-200 pb-3 lg:flex-row lg:items-center lg:justify-between">
@@ -1710,6 +1490,278 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                     : productForm.id
                     ? 'Guardar cambios'
                     : 'Crear producto'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {loadStockModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-3 sm:p-4">
+          <div className="flex max-h-[92vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+              <div className="flex items-center gap-2">
+                <PackagePlus className="h-4 w-4 text-[#76B900]" />
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Cargar stock a sucursal</h3>
+                  <p className="text-xs text-slate-500">Ingreso de mercancía por tienda · {activeCashier.name}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setLoadStockModalOpen(false)}
+                aria-label="Cerrar"
+                className="rounded-md p-1 text-slate-500 hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleLoadSubmit} className="flex-1 overflow-y-auto p-4 space-y-3.5">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700">
+                  Sucursal destino {isBranchLocked ? '(Fija)' : ''}
+                </label>
+                <select
+                  value={isBranchLocked ? activeBranchId : loadBranchId}
+                  disabled={isBranchLocked}
+                  onChange={(e) => {
+                    if (!isBranchLocked) setLoadBranchId(e.target.value);
+                  }}
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none disabled:cursor-not-allowed disabled:opacity-75"
+                >
+                  {operationalBranches.map((branch) => (
+                    <option key={branch.id} value={branch.id}>
+                      {branch.name} ({branch.code})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700">Producto</label>
+                <select
+                  value={loadProductId}
+                  onChange={(e) => setLoadProductId(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
+                >
+                  {products.map((product) => (
+                    <option key={product.id} value={product.id}>
+                      {product.sku} — {product.name} (Actual:{' '}
+                      {product.stockByBranch[loadBranchId] ?? 0})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700">Cantidad *</label>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    required
+                    value={loadQtyInput}
+                    onChange={(e) => setLoadQtyInput(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 font-mono text-xs font-bold tabular-nums text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-semibold text-slate-700">
+                    Referencia / Proveedor (opcional)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Ej: Factura proveedor #8841"
+                    value={loadNotes}
+                    onChange={(e) => setLoadNotes(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-[#76B900] focus:bg-white focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              {loadFeedback && (
+                <p
+                  className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium ${
+                    loadFeedback.type === 'ok'
+                      ? 'border-[#84CC16]/40 bg-[#F7FEE7] text-[#3F6212]'
+                      : 'border-red-200 bg-red-50 text-red-700'
+                  }`}
+                >
+                  {loadFeedback.type === 'ok' && (
+                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-[#76B900]" />
+                  )}
+                  {loadFeedback.text}
+                </p>
+              )}
+
+              <div className="flex items-center justify-end gap-2 border-t border-slate-200 pt-3">
+                <button
+                  type="button"
+                  onClick={() => setLoadStockModalOpen(false)}
+                  className="rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                >
+                  Cerrar
+                </button>
+                <button
+                  type="submit"
+                  disabled={products.length === 0 || operationalBranches.length === 0}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-[#84CC16] px-4 py-1.5 text-xs font-bold text-slate-950 hover:bg-[#76B900] disabled:bg-slate-200 disabled:text-slate-400 transition-colors cursor-pointer"
+                >
+                  <PackagePlus className="h-3.5 w-3.5" />
+                  Cargar stock
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {transferStockModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-3 sm:p-4">
+          <div className="flex max-h-[92vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+              <div className="flex items-center gap-2">
+                <ArrowLeftRight className="h-4 w-4 text-slate-800" />
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Traslado entre sucursales</h3>
+                  <p className="text-xs text-slate-500">Descuenta del origen, suma en el destino</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTransferStockModalOpen(false)}
+                aria-label="Cerrar"
+                className="rounded-md p-1 text-slate-500 hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleTransferSubmit} className="flex-1 overflow-y-auto p-4 space-y-3.5">
+              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700">Sucursal origen</label>
+                  <select
+                    value={fromBranchId}
+                    onChange={(e) => {
+                      setFromBranchId(e.target.value);
+                      setTransferFeedback(null);
+                    }}
+                    className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
+                  >
+                    {operationalBranches.map((branch) => (
+                      <option key={branch.id} value={branch.id}>
+                        {branch.name} ({branch.code})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700">Sucursal destino</label>
+                  <select
+                    value={toBranchId}
+                    onChange={(e) => {
+                      setToBranchId(e.target.value);
+                      setTransferFeedback(null);
+                    }}
+                    className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
+                  >
+                    {operationalBranches.map((branch) => (
+                      <option key={branch.id} value={branch.id}>
+                        {branch.name} ({branch.code})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-semibold text-slate-700">Producto</label>
+                  <span className="font-mono text-[11px] font-semibold tabular-nums text-slate-600">
+                    Disponible: {availableInSource} und
+                  </span>
+                </div>
+                <select
+                  value={transferProductId}
+                  onChange={(e) => {
+                    setTransferProductId(e.target.value);
+                    setTransferFeedback(null);
+                  }}
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
+                >
+                  {products.map((product) => (
+                    <option key={product.id} value={product.id}>
+                      {product.sku} — {product.name} (Origen:{' '}
+                      {product.stockByBranch[fromBranchId] ?? 0} → Destino:{' '}
+                      {product.stockByBranch[toBranchId] ?? 0})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700">Cantidad *</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max={Math.max(1, availableInSource)}
+                    step="1"
+                    required
+                    value={transferQtyInput}
+                    onChange={(e) => setTransferQtyInput(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 font-mono text-xs font-bold tabular-nums text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-semibold text-slate-700">
+                    Motivo / Guía (opcional)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Ej: Reposición de anaquel Sucursal Norte"
+                    value={transferNotes}
+                    onChange={(e) => setTransferNotes(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-[#76B900] focus:bg-white focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              {transferFeedback && (
+                <p
+                  className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium ${
+                    transferFeedback.type === 'ok'
+                      ? 'border-[#84CC16]/40 bg-[#F7FEE7] text-[#3F6212]'
+                      : 'border-red-200 bg-red-50 text-red-700'
+                  }`}
+                >
+                  {transferFeedback.type === 'ok' && (
+                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-[#76B900]" />
+                  )}
+                  {transferFeedback.text}
+                </p>
+              )}
+
+              <div className="flex items-center justify-end gap-2 border-t border-slate-200 pt-3">
+                <button
+                  type="button"
+                  onClick={() => setTransferStockModalOpen(false)}
+                  className="rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                >
+                  Cerrar
+                </button>
+                <button
+                  type="submit"
+                  disabled={products.length === 0 || operationalBranches.length < 2}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-400 transition-colors cursor-pointer"
+                >
+                  <ArrowLeftRight className="h-3.5 w-3.5" />
+                  Registrar traslado
                 </button>
               </div>
             </form>
