@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  AlertTriangle,
   Calendar,
   CheckCircle2,
   Clock,
@@ -10,6 +11,7 @@ import {
   ShieldCheck,
   Trash2,
   UserCheck,
+  X,
 } from 'lucide-react';
 import type { Branch, Cashier, Sale, Shift } from '../types/pos';
 
@@ -269,6 +271,8 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
   const [closingNote, setClosingNote] = useState<string>('');
   const [closeError, setCloseError] = useState<string>('');
   const [successMessage, setSuccessMessage] = useState<string>('');
+  const [confirmCloseOpen, setConfirmCloseOpen] = useState<boolean>(false);
+  const [isClosingShift, setIsClosingShift] = useState<boolean>(false);
 
   const [filterFromDate, setFilterFromDate] = useState<string>('');
   const [filterToDate, setFilterToDate] = useState<string>('');
@@ -283,6 +287,8 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
     setCountedVesInput('0.00');
     setClosingNote('');
     setCloseError('');
+    setConfirmCloseOpen(false);
+    setIsClosingShift(false);
   }, [activeShift?.id]);
 
   useEffect(() => {
@@ -392,7 +398,7 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
     setSuccessMessage('Turno abierto correctamente y registrado en IndexedDB.');
   };
 
-  const handleCloseSubmit = async (e: React.FormEvent) => {
+  const handleCloseSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeShift) return;
     setCloseError('');
@@ -406,22 +412,45 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
       return;
     }
 
-    await onCloseShift({
-      shiftId: activeShift.id,
-      countedCashUsd: round2(countedUsd),
-      countedCashVes: round2(countedVes),
-      expectedCashUsd: activeShiftMetrics.expectedCashUsd,
-      expectedCashVes: activeShiftMetrics.expectedCashVes,
-      digitalTotalUsd: activeShiftMetrics.digitalTotalUsd,
-      creditTotalUsd: activeShiftMetrics.creditTotalUsd,
-      salesCount: activeShiftMetrics.salesCount,
-      closingNote: closingNote.trim() || undefined,
-    });
+    setConfirmCloseOpen(true);
+  };
 
-    setCountedUsdInput('0.00');
-    setCountedVesInput('0.00');
-    setClosingNote('');
-    setSuccessMessage('Turno cerrado y arqueo guardado en el historial.');
+  const handleConfirmCloseShift = async () => {
+    if (!activeShift || isClosingShift) return;
+    setCloseError('');
+    setSuccessMessage('');
+
+    const countedUsd = parseFloat(countedUsdInput.replace(',', '.'));
+    const countedVes = parseFloat(countedVesInput.replace(',', '.'));
+
+    if (!Number.isFinite(countedUsd) || countedUsd < 0 || !Number.isFinite(countedVes) || countedVes < 0) {
+      setConfirmCloseOpen(false);
+      setCloseError('Debes ingresar el conteo físico de efectivo en USD ($) y en Bolívares (Bs).');
+      return;
+    }
+
+    setIsClosingShift(true);
+    try {
+      await onCloseShift({
+        shiftId: activeShift.id,
+        countedCashUsd: round2(countedUsd),
+        countedCashVes: round2(countedVes),
+        expectedCashUsd: activeShiftMetrics.expectedCashUsd,
+        expectedCashVes: activeShiftMetrics.expectedCashVes,
+        digitalTotalUsd: activeShiftMetrics.digitalTotalUsd,
+        creditTotalUsd: activeShiftMetrics.creditTotalUsd,
+        salesCount: activeShiftMetrics.salesCount,
+        closingNote: closingNote.trim() || undefined,
+      });
+
+      setConfirmCloseOpen(false);
+      setCountedUsdInput('0.00');
+      setCountedVesInput('0.00');
+      setClosingNote('');
+      setSuccessMessage('Turno cerrado y arqueo guardado en el historial.');
+    } finally {
+      setIsClosingShift(false);
+    }
   };
 
   const effectiveFilterBranchId = isBranchLocked ? activeBranch.id : filterBranchId;
@@ -934,6 +963,105 @@ export const ShiftManager: React.FC<ShiftManagerProps> = ({
           </div>
         )}
       </section>
+
+      {confirmCloseOpen && activeShift && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-3 sm:p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="confirm-close-shift-title"
+        >
+          <div className="w-full max-w-md overflow-hidden rounded-xl border border-slate-200 bg-white">
+            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4 text-amber-600" />
+                <div>
+                  <h3 id="confirm-close-shift-title" className="text-sm font-bold text-slate-900">
+                    Confirmar cierre de turno
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    {activeShift.cashierName} · {activeShift.branchName}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={isClosingShift}
+                onClick={() => setConfirmCloseOpen(false)}
+                aria-label="Cancelar cierre de turno"
+                className="rounded-md p-1 text-slate-500 hover:bg-slate-100 disabled:opacity-50 cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3.5 p-4">
+              <p className="text-xs leading-relaxed text-slate-600">
+                ¿Estás seguro de que deseas cerrar el turno actual y guardar este arqueo de caja? Esta acción registrará el cierre definitivo en el historial.
+              </p>
+
+              <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-500">Ventas en turno</span>
+                  <span className="font-mono font-semibold tabular-nums text-slate-900">
+                    {activeShiftMetrics.salesCount}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between border-t border-slate-200/80 pt-2">
+                  <span className="text-slate-500">Contado en USD ($)</span>
+                  <span className="font-mono font-bold tabular-nums text-slate-900">
+                    {formatUsd(Number.isFinite(parsedCountedUsd) ? round2(parsedCountedUsd) : 0)}
+                  </span>
+                </div>
+                {liveDiffUsd !== null && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-500">Diferencia ($)</span>
+                    <span className="font-mono tabular-nums">{renderDiffLabel(liveDiffUsd, formatUsd)}</span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between border-t border-slate-200/80 pt-2">
+                  <span className="text-slate-500">Contado en Bolívares (Bs)</span>
+                  <span className="font-mono font-bold tabular-nums text-[#558B00]">
+                    {formatVes(Number.isFinite(parsedCountedVes) ? round2(parsedCountedVes) : 0)}
+                  </span>
+                </div>
+                {liveDiffVes !== null && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-500">Diferencia (Bs)</span>
+                    <span className="font-mono tabular-nums">{renderDiffLabel(liveDiffVes, formatVes)}</span>
+                  </div>
+                )}
+                {closingNote.trim() && (
+                  <div className="border-t border-slate-200/80 pt-2">
+                    <span className="block text-slate-500">Observaciones</span>
+                    <p className="mt-0.5 text-slate-700">{closingNote.trim()}</p>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  disabled={isClosingShift}
+                  onClick={() => setConfirmCloseOpen(false)}
+                  className="rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 transition-colors cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={isClosingShift}
+                  onClick={() => void handleConfirmCloseShift()}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60 transition-colors cursor-pointer"
+                >
+                  <Lock className="h-3.5 w-3.5" />
+                  {isClosingShift ? 'Cerrando turno...' : 'Confirmar y cerrar turno'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
