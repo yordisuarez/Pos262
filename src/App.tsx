@@ -1121,7 +1121,8 @@ export default function App() {
       (activeTab === 'subscriptions' && !isSuperAdmin) ||
       (activeTab === 'inventory' && !isAdmin && !permissions.viewInventory) ||
       (activeTab === 'reports' && !isAdmin && !permissions.viewReports) ||
-      (activeTab === 'costing' && !isAdmin && !permissions.manageCosting)
+      (activeTab === 'costing' && !isAdmin && !permissions.manageCosting) ||
+      (activeTab === 'webCatalog' && !isAdmin)
     ) {
       setActiveTab('pos');
     }
@@ -3920,27 +3921,29 @@ export default function App() {
               )}
             </button>
 
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                setActiveTab('webCatalog');
-                setNavMenuOpen(false);
-              }}
-              className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold transition-colors cursor-pointer ${
-                activeTab === 'webCatalog'
-                  ? 'bg-[#F7FEE7] text-[#3F6212]'
-                  : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
-              }`}
-            >
-              <span className="inline-flex items-center gap-2">
-                <Store className="h-3.5 w-3.5 shrink-0" />
-                <span>Catálogo Web</span>
-              </span>
-              {activeTab === 'webCatalog' && (
-                <Check className="h-3.5 w-3.5 shrink-0 text-[#558B00]" />
-              )}
-            </button>
+            {isAdmin && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setActiveTab('webCatalog');
+                  setNavMenuOpen(false);
+                }}
+                className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold transition-colors cursor-pointer ${
+                  activeTab === 'webCatalog'
+                    ? 'bg-[#F7FEE7] text-[#3F6212]'
+                    : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
+                }`}
+              >
+                <span className="inline-flex items-center gap-2">
+                  <Store className="h-3.5 w-3.5 shrink-0" />
+                  <span>Catálogo Web</span>
+                </span>
+                {activeTab === 'webCatalog' && (
+                  <Check className="h-3.5 w-3.5 shrink-0 text-[#558B00]" />
+                )}
+              </button>
+            )}
 
             {(isAdmin || permissions.viewInventory) && (
               <>
