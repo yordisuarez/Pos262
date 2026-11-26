@@ -4,7 +4,9 @@ import {
   ArrowRight,
   Building2,
   Camera,
+  Check,
   CheckCircle2,
+  ChevronDown,
   ImagePlus,
   Lock,
   PackagePlus,
@@ -40,6 +42,23 @@ const formatVes = (amount: number): string =>
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
+
+const CUSTOM_CATEGORIES_STORAGE_KEY = 'pos_262_custom_categories';
+
+const mergeSortedCategories = (categories: string[]): string[] => {
+  const seen = new Map<string, string>();
+  categories.forEach((raw) => {
+    const cleaned = raw.trim();
+    if (!cleaned) return;
+    const key = cleaned.toLowerCase();
+    if (!seen.has(key)) {
+      seen.set(key, cleaned);
+    }
+  });
+  return Array.from(seen.values()).sort((a, b) =>
+    a.localeCompare(b, 'es', { sensitivity: 'base' })
+  );
+};
 
 const PRODUCT_UNIT_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'und', label: 'Unidad (und)' },
@@ -247,10 +266,67 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
     }
   }, [products, loadProductId, transferProductId]);
 
+  const [customCategories, setCustomCategories] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem(CUSTOM_CATEGORIES_STORAGE_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed)
+        ? parsed.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+        : [];
+    } catch {
+      return [];
+    }
+  });
+  const [categoryDropdownOpen, setCategoryDropdownOpen] = useState<boolean>(false);
+  const [categoryFilterActive, setCategoryFilterActive] = useState<boolean>(false);
+  const categoryBoxRef = useRef<HTMLDivElement | null>(null);
+  const categoryInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(CUSTOM_CATEGORIES_STORAGE_KEY, JSON.stringify(customCategories));
+    } catch {
+      // Ignore storage errors
+    }
+  }, [customCategories]);
+
   const existingCategories = useMemo(() => {
-    const unique = Array.from(new Set(products.map((p) => p.category).filter(Boolean)));
-    return unique.length > 0 ? unique : ['Víveres', 'Bebidas', 'Snacks', 'Limpieza', 'General'];
-  }, [products]);
+    const merged = mergeSortedCategories([
+      ...products.map((p) => p.category),
+      ...customCategories,
+    ]);
+    return merged.length > 0
+      ? merged
+      : ['Bebidas', 'General', 'Limpieza', 'Snacks', 'Víveres'];
+  }, [products, customCategories]);
+
+  const registerCategory = (rawCategory: string) => {
+    const cleaned = rawCategory.trim();
+    if (!cleaned) return;
+    setCustomCategories((prev) => {
+      const lower = cleaned.toLowerCase();
+      const existsInProducts = products.some((p) => p.category.trim().toLowerCase() === lower);
+      const existsInCustom = prev.some((c) => c.trim().toLowerCase() === lower);
+      if (existsInProducts || existsInCustom) return prev;
+      return [...prev, cleaned];
+    });
+  };
+
+  useEffect(() => {
+    if (!categoryDropdownOpen) return;
+    const handleOutsideMouseDown = (event: MouseEvent) => {
+      if (categoryBoxRef.current && !categoryBoxRef.current.contains(event.target as Node)) {
+        if (categoryFilterActive && productForm.category.trim()) {
+          registerCategory(productForm.category);
+        }
+        setCategoryDropdownOpen(false);
+        setCategoryFilterActive(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideMouseDown);
+    return () => document.removeEventListener('mousedown', handleOutsideMouseDown);
+  }, [categoryDropdownOpen, categoryFilterActive, productForm.category, products]);
 
   const selectedTransferProduct = useMemo(
     () => products.find((p) => p.id === transferProductId) || products[0],
@@ -289,6 +365,8 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
 
   const closeProductModal = () => {
     resetStagedPhoto();
+    setCategoryDropdownOpen(false);
+    setCategoryFilterActive(false);
     setProductModalOpen(false);
   };
 
@@ -344,6 +422,8 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
       stockByBranch: initialStocks,
     });
     setProductFormError('');
+    setCategoryDropdownOpen(false);
+    setCategoryFilterActive(false);
     setProductModalOpen(true);
   };
 
@@ -369,6 +449,8 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
       stockByBranch: stocks,
     });
     setProductFormError('');
+    setCategoryDropdownOpen(false);
+    setCategoryFilterActive(false);
     setProductModalOpen(true);
   };
 
@@ -381,6 +463,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
     const trimmedName = productForm.name.trim();
     const trimmedSku = productForm.sku.trim().toUpperCase();
     const trimmedCategory = productForm.category.trim() || 'General';
+    registerCategory(trimmedCategory);
     const trimmedUnit = productForm.unit.trim() || 'und';
     const parsedMinStock = Math.max(0, parseInt(productForm.minStock, 10) || 0);
     const parsedCost = parseFloat(productForm.costUsd.replace(',', '.'));
@@ -1280,22 +1363,199 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                   />
                 </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700">Categoría *</label>
-                  <input
-                    type="text"
-                    list="inventory-product-categories"
-                    required
-                    value={productForm.category}
-                    onChange={(e) => setProductForm({ ...productForm, category: e.target.value })}
-                    placeholder="Víveres, Bebidas..."
-                    className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
-                  />
-                  <datalist id="inventory-product-categories">
-                    {existingCategories.map((cat) => (
-                      <option key={cat} value={cat} />
-                    ))}
-                  </datalist>
+                <div
+                  ref={categoryBoxRef}
+                  className="relative"
+                  onBlur={(e) => {
+                    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                      if (categoryFilterActive && productForm.category.trim()) {
+                        registerCategory(productForm.category);
+                      }
+                      setCategoryDropdownOpen(false);
+                      setCategoryFilterActive(false);
+                    }
+                  }}
+                >
+                  <label
+                    htmlFor="inventory-product-category"
+                    className="block text-xs font-semibold text-slate-700"
+                  >
+                    Categoría *
+                  </label>
+                  <div className="relative mt-1">
+                    <input
+                      ref={categoryInputRef}
+                      id="inventory-product-category"
+                      type="text"
+                      required
+                      autoComplete="off"
+                      role="combobox"
+                      aria-expanded={categoryDropdownOpen}
+                      aria-controls="inventory-product-category-listbox"
+                      aria-autocomplete="list"
+                      value={productForm.category}
+                      onFocus={() => {
+                        setCategoryFilterActive(false);
+                        setCategoryDropdownOpen(true);
+                      }}
+                      onClick={() => {
+                        if (!categoryDropdownOpen) {
+                          setCategoryFilterActive(false);
+                          setCategoryDropdownOpen(true);
+                        }
+                      }}
+                      onChange={(e) => {
+                        const nextVal = e.target.value;
+                        setProductForm((prev) => ({ ...prev, category: nextVal }));
+                        setCategoryFilterActive(true);
+                        setCategoryDropdownOpen(true);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'ArrowDown') {
+                          e.preventDefault();
+                          setCategoryFilterActive(false);
+                          setCategoryDropdownOpen(true);
+                        } else if (e.key === 'Escape' && categoryDropdownOpen) {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setCategoryDropdownOpen(false);
+                          setCategoryFilterActive(false);
+                        } else if (e.key === 'Enter' && categoryDropdownOpen) {
+                          e.preventDefault();
+                          const typed = productForm.category.trim();
+                          if (typed) {
+                            const exact = existingCategories.find(
+                              (c) => c.toLowerCase() === typed.toLowerCase()
+                            );
+                            const chosen = exact || typed;
+                            registerCategory(chosen);
+                            setProductForm((prev) => ({ ...prev, category: chosen }));
+                          }
+                          setCategoryDropdownOpen(false);
+                          setCategoryFilterActive(false);
+                        }
+                      }}
+                      placeholder="Víveres, Bebidas..."
+                      className="w-full rounded-lg border border-slate-200 bg-slate-50 py-1.5 pl-3 pr-8 text-xs text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      tabIndex={-1}
+                      aria-label="Mostrar categorías"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        if (categoryDropdownOpen) {
+                          if (categoryFilterActive && productForm.category.trim()) {
+                            registerCategory(productForm.category);
+                          }
+                          setCategoryDropdownOpen(false);
+                          setCategoryFilterActive(false);
+                        } else {
+                          if (productForm.category.trim()) {
+                            registerCategory(productForm.category);
+                          }
+                          setCategoryFilterActive(false);
+                          setCategoryDropdownOpen(true);
+                          categoryInputRef.current?.focus();
+                        }
+                      }}
+                      className="absolute inset-y-0 right-0 flex items-center px-2 text-slate-500 hover:text-slate-900 cursor-pointer"
+                    >
+                      <ChevronDown
+                        className={`h-3.5 w-3.5 transition-transform ${
+                          categoryDropdownOpen ? 'rotate-180' : ''
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  {categoryDropdownOpen && (
+                    <div
+                      id="inventory-product-category-listbox"
+                      role="listbox"
+                      className="absolute left-0 right-0 top-full z-30 mt-1 max-h-48 overflow-y-auto rounded-lg border border-slate-200 bg-white p-1 shadow-lg"
+                    >
+                      {(() => {
+                        const trimmedInput = productForm.category.trim();
+                        const query = categoryFilterActive ? trimmedInput.toLowerCase() : '';
+                        const matchingCategories = query
+                          ? existingCategories.filter((cat) =>
+                              cat.toLowerCase().includes(query)
+                            )
+                          : existingCategories;
+                        const hasExactMatch =
+                          trimmedInput.length > 0 &&
+                          existingCategories.some(
+                            (cat) => cat.toLowerCase() === trimmedInput.toLowerCase()
+                          );
+
+                        return (
+                          <>
+                            {trimmedInput.length > 0 && !hasExactMatch && (
+                              <button
+                                type="button"
+                                role="option"
+                                aria-selected={false}
+                                onMouseDown={(e) => e.preventDefault()}
+                                onClick={() => {
+                                  registerCategory(trimmedInput);
+                                  setProductForm((prev) => ({ ...prev, category: trimmedInput }));
+                                  setCategoryDropdownOpen(false);
+                                  setCategoryFilterActive(false);
+                                }}
+                                className="flex w-full items-center justify-between gap-2 rounded-md bg-[#F7FEE7] px-2.5 py-1.5 text-left text-xs font-semibold text-[#3F6212] hover:bg-[#ECFCCB] transition-colors cursor-pointer"
+                              >
+                                <span className="truncate">
+                                  Agregar «{trimmedInput}»
+                                </span>
+                                <span className="inline-flex shrink-0 items-center gap-0.5 text-[11px] font-bold text-[#558B00]">
+                                  <Plus className="h-3 w-3" />
+                                  Nueva
+                                </span>
+                              </button>
+                            )}
+
+                            {matchingCategories.length > 0 ? (
+                              matchingCategories.map((cat) => {
+                                const isSelected =
+                                  trimmedInput.toLowerCase() === cat.toLowerCase();
+                                return (
+                                  <button
+                                    key={cat}
+                                    type="button"
+                                    role="option"
+                                    aria-selected={isSelected}
+                                    onMouseDown={(e) => e.preventDefault()}
+                                    onClick={() => {
+                                      setProductForm((prev) => ({ ...prev, category: cat }));
+                                      setCategoryDropdownOpen(false);
+                                      setCategoryFilterActive(false);
+                                    }}
+                                    className={`flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors cursor-pointer ${
+                                      isSelected
+                                        ? 'bg-slate-100 font-semibold text-slate-900'
+                                        : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
+                                    }`}
+                                  >
+                                    <span className="truncate">{cat}</span>
+                                    {isSelected && (
+                                      <Check className="h-3.5 w-3.5 shrink-0 text-[#558B00]" />
+                                    )}
+                                  </button>
+                                );
+                              })
+                            ) : (
+                              trimmedInput.length === 0 && (
+                                <p className="px-2.5 py-2 text-xs text-slate-500">
+                                  Escribe para crear una categoría.
+                                </p>
+                              )
+                            )}
+                          </>
+                        );
+                      })()}
+                    </div>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-2 gap-2">

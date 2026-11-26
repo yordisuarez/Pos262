@@ -6,9 +6,64 @@ import {defineConfig} from 'vite';
 import {VitePWA} from 'vite-plugin-pwa';
 
 export default defineConfig(() => {
+  const hmrEnabled = process.env.DISABLE_HMR !== 'true';
+
   return {
     base: './',
     plugins: [
+      {
+        name: 'safe-pwa-dev-sw',
+        apply: 'serve' as const,
+        enforce: 'pre' as const,
+        load(id: string) {
+          if (id !== '\0/@vite-plugin-pwa/pwa-entry-point-loaded') {
+            return null;
+          }
+          const fallbackCode = `
+function fallbackRegisterDevSW() {
+  if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+    navigator.serviceWorker
+      .register('./dev-sw.js?dev-sw', { scope: './', type: 'classic' })
+      .catch(() => {});
+  }
+}`;
+          if (!hmrEnabled) {
+            return `${fallbackCode}
+export default function registerDevSW() {
+  fallbackRegisterDevSW();
+}
+`;
+          }
+          return `${fallbackCode}
+if (import.meta.hot) {
+  import.meta.hot.on('vite-plugin-pwa:register-sw', ({ mode, inlinePath, registerPath, scope, swType = 'classic' }) => {
+    if (mode == 'inline') {
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register(inlinePath, { scope, type: swType }).catch(() => {});
+      }
+    } else {
+      const registerSW = document.createElement('script');
+      registerSW.setAttribute('id', 'vite-plugin-pwa:register-sw');
+      if (mode === 'script-defer') registerSW.setAttribute('defer', 'defer');
+      registerSW.setAttribute('src', registerPath);
+      document.head.appendChild(registerSW);
+    }
+  });
+}
+export default function registerDevSW() {
+  if (!import.meta.hot) {
+    fallbackRegisterDevSW();
+    return;
+  }
+  try {
+    Promise.resolve(import.meta.hot.send('vite-pwa-plugin:dev-ready')).catch(fallbackRegisterDevSW);
+  } catch {
+    fallbackRegisterDevSW();
+  }
+}
+`;
+        },
+      },
       react(),
       tailwindcss(),
       VitePWA({
@@ -108,8 +163,8 @@ export default defineConfig(() => {
       },
     },
     server: {
-      hmr: process.env.DISABLE_HMR !== 'true',
-      watch: process.env.DISABLE_HMR === 'true' ? null : {},
+      hmr: hmrEnabled,
+      watch: hmrEnabled ? {} : null,
     },
   };
 });
