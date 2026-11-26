@@ -32,6 +32,8 @@ import {
   UserCheck,
   UserPlus,
   Users,
+  Volume2,
+  VolumeX,
   Wallet,
   WifiOff,
   X,
@@ -74,6 +76,13 @@ import { ProductImageBox } from './components/ProductImageBox';
 import { hasCatalogUrlParam, WebCatalogView } from './components/WebCatalogView';
 import { CartDecimalQtyInput, WeightQuantityModal } from './components/WeightQuantityModal';
 import { triggerFlyToCart } from './utils/flyToCart';
+import {
+  getInitialSoundEnabled,
+  persistSoundEnabled,
+  playAddToCartSound,
+  playCashRegisterSound,
+  primePosAudio,
+} from './utils/posSounds';
 import {
   formatQuantity,
   getQuantityStep,
@@ -406,6 +415,7 @@ export default function App() {
     }
   });
   const [customizeViewOpen, setCustomizeViewOpen] = useState<boolean>(false);
+  const [soundEnabled, setSoundEnabled] = useState<boolean>(() => getInitialSoundEnabled());
 
   useEffect(() => {
     try {
@@ -418,6 +428,18 @@ export default function App() {
       // Ignore storage errors
     }
   }, [showPhoto, showCategory, showSku, showDualCurrency, hideOutOfStock]);
+
+  useEffect(() => {
+    persistSoundEnabled(soundEnabled);
+  }, [soundEnabled]);
+
+  const handleToggleSound = () => {
+    const next = !soundEnabled;
+    setSoundEnabled(next);
+    if (next) {
+      primePosAudio(true);
+    }
+  };
 
   const activeCustomizeCount = useMemo(() => {
     let count = 0;
@@ -2627,6 +2649,9 @@ export default function App() {
     const safeAdd = roundQty(quantityToAdd);
     if (available <= 0 || safeAdd <= 0) return;
 
+    const currentQty = getCartQuantity(product.id);
+    if (currentQty >= available - 0.0001) return;
+
     setCart((prev) => {
       const existing = prev.find((item) => item.productId === product.id);
       if (existing) {
@@ -2651,6 +2676,8 @@ export default function App() {
         },
       ];
     });
+
+    playAddToCartSound(soundEnabled);
   };
 
   const firePosFlyToCart = (product: Product, sourceEl: HTMLElement | null) => {
@@ -3073,6 +3100,8 @@ export default function App() {
       timestamp: nowIso,
     });
 
+    primePosAudio(soundEnabled);
+
     await db.transaction('rw', [db.sales, db.products, db.customers, db.syncQueue], async () => {
       await db.sales.put(newSale);
 
@@ -3103,6 +3132,8 @@ export default function App() {
 
       await db.syncQueue.put(queueItem);
     });
+
+    playCashRegisterSound(soundEnabled);
 
     await reloadAllData();
     let finalSaleRecord = newSale;
@@ -3618,6 +3649,29 @@ export default function App() {
 
             <button
               type="button"
+              onClick={handleToggleSound}
+              aria-pressed={soundEnabled}
+              aria-label={soundEnabled ? 'Silenciar sonidos POS' : 'Activar sonidos POS'}
+              title={
+                soundEnabled
+                  ? 'Sonidos activados (clic para silenciar)'
+                  : 'Sonidos silenciados (clic para activar)'
+              }
+              className={`inline-flex items-center justify-center rounded-md border p-1.5 transition-colors shrink-0 cursor-pointer ${
+                soundEnabled
+                  ? 'border-slate-200 bg-white text-[#558B00] hover:bg-slate-50'
+                  : 'border-slate-200 bg-slate-100 text-slate-400 hover:bg-slate-200/70 hover:text-slate-600'
+              }`}
+            >
+              {soundEnabled ? (
+                <Volume2 className="h-3.5 w-3.5" />
+              ) : (
+                <VolumeX className="h-3.5 w-3.5" />
+              )}
+            </button>
+
+            <button
+              type="button"
               onClick={() => {
                 setHistoryTab('sales');
                 setHistoryOpen(true);
@@ -4042,6 +4096,21 @@ export default function App() {
                                 type="checkbox"
                                 checked={hideOutOfStock}
                                 onChange={(e) => setHideOutOfStock(e.target.checked)}
+                                className="rounded border-slate-300 text-[#84CC16] focus:ring-[#84CC16]"
+                              />
+                            </label>
+                            <label className="flex items-center justify-between cursor-pointer select-none border-t border-slate-100 pt-2">
+                              <span>Sonidos POS (caja y carrito)</span>
+                              <input
+                                type="checkbox"
+                                checked={soundEnabled}
+                                onChange={(e) => {
+                                  const next = e.target.checked;
+                                  setSoundEnabled(next);
+                                  if (next) {
+                                    primePosAudio(true);
+                                  }
+                                }}
                                 className="rounded border-slate-300 text-[#84CC16] focus:ring-[#84CC16]"
                               />
                             </label>
