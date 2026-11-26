@@ -20,6 +20,7 @@ import {
   Minus,
   Plus,
   RefreshCw,
+  ScanBarcode,
   Search,
   Settings,
   ShieldCheck,
@@ -67,6 +68,7 @@ import {
   PasswordRecoveryModal,
 } from './components/PasswordRecoveryModal';
 import { CustomersModule } from './components/CustomersModule';
+import { PriceCheckerView } from './components/PriceCheckerView';
 import { ProductImageBox } from './components/ProductImageBox';
 import {
   buildSubscriptionRenewalWhatsAppUrl,
@@ -109,6 +111,7 @@ type WorkspaceTab =
   | 'shifts'
   | 'inventory'
   | 'customers'
+  | 'priceChecker'
   | 'reports'
   | 'costing'
   | 'settings'
@@ -1048,11 +1051,11 @@ export default function App() {
     const trigger = navMenuTriggerRef.current;
     if (!trigger) return;
     const rect = trigger.getBoundingClientRect();
-    const menuWidth = Math.min(208, window.innerWidth - 16);
+    const menuWidth = Math.min(224, window.innerWidth - 16);
     const margin = 8;
     const maxLeft = Math.max(margin, window.innerWidth - menuWidth - margin);
     const left = Math.min(Math.max(margin, rect.left), maxLeft);
-    const top = Math.min(rect.bottom + 6, Math.max(margin, window.innerHeight - 295));
+    const top = Math.min(rect.bottom + 6, Math.max(margin, window.innerHeight - 335));
     setNavMenuPos({ top, left });
   }, []);
 
@@ -3502,6 +3505,7 @@ export default function App() {
               {(() => {
                 const isGroupedTabActive =
                   activeTab === 'customers' ||
+                  activeTab === 'priceChecker' ||
                   activeTab === 'inventory' ||
                   activeTab === 'reports' ||
                   activeTab === 'costing' ||
@@ -3591,7 +3595,7 @@ export default function App() {
           role="menu"
           aria-label="Menú de módulos"
           style={{ top: navMenuPos.top, left: navMenuPos.left }}
-          className="fixed z-50 w-52 max-w-[calc(100vw-16px)] rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg"
+          className="fixed z-50 w-56 max-w-[calc(100vw-16px)] rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg"
         >
           <div className="space-y-0.5">
             <button
@@ -3612,6 +3616,28 @@ export default function App() {
                 <span>Clientes</span>
               </span>
               {activeTab === 'customers' && <Check className="h-3.5 w-3.5 shrink-0 text-[#558B00]" />}
+            </button>
+
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setActiveTab('priceChecker');
+                setNavMenuOpen(false);
+              }}
+              className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold transition-colors cursor-pointer ${
+                activeTab === 'priceChecker'
+                  ? 'bg-[#F7FEE7] text-[#3F6212]'
+                  : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
+              }`}
+            >
+              <span className="inline-flex items-center gap-2">
+                <ScanBarcode className="h-3.5 w-3.5 shrink-0" />
+                <span>Verificador de precios</span>
+              </span>
+              {activeTab === 'priceChecker' && (
+                <Check className="h-3.5 w-3.5 shrink-0 text-[#558B00]" />
+              )}
             </button>
 
             {(isAdmin || permissions.viewInventory) && (
@@ -4185,6 +4211,17 @@ export default function App() {
             onOwnSubscriptionUpdated={async () => {
               await verifyUserSubscription(cloudUser.id);
             }}
+          />
+        </div>
+      )}
+
+      {activeTab === 'priceChecker' && (
+        <div className="flex-1 overflow-y-auto">
+          <PriceCheckerView
+            products={products}
+            activeBranch={activeBranch}
+            exchangeRate={exchangeRate}
+            onExit={() => setActiveTab('pos')}
           />
         </div>
       )}
