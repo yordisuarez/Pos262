@@ -41,6 +41,17 @@ const formatVes = (amount: number): string =>
     maximumFractionDigits: 2,
   })}`;
 
+const PRODUCT_UNIT_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'und', label: 'Unidad (und)' },
+  { value: 'kg', label: 'Kilogramo (kg)' },
+  { value: 'g', label: 'Gramo (g)' },
+  { value: 'caja', label: 'Caja' },
+  { value: 'bulto', label: 'Bulto' },
+  { value: 'paquete', label: 'Paquete' },
+  { value: 'lt', label: 'Litro (lt)' },
+  { value: 'ml', label: 'Mililitro (ml)' },
+];
+
 interface InventoryManagerProps {
   branches: Branch[];
   activeBranchId: string;
@@ -1289,14 +1300,32 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
 
                 <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700">Unidad</label>
-                    <input
-                      type="text"
-                      value={productForm.unit}
+                    <label
+                      htmlFor="inventory-product-unit"
+                      className="block text-xs font-semibold text-slate-700"
+                    >
+                      Unidad
+                    </label>
+                    <select
+                      id="inventory-product-unit"
+                      value={productForm.unit.trim() || 'und'}
                       onChange={(e) => setProductForm({ ...productForm, unit: e.target.value })}
-                      placeholder="und"
-                      className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
-                    />
+                      className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-[#76B900] focus:outline-none"
+                    >
+                      {PRODUCT_UNIT_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                      {productForm.unit.trim() &&
+                        !PRODUCT_UNIT_OPTIONS.some(
+                          (opt) => opt.value === productForm.unit.trim()
+                        ) && (
+                          <option value={productForm.unit.trim()}>
+                            {productForm.unit.trim()}
+                          </option>
+                        )}
+                    </select>
                   </div>
                   <div>
                     <label className="block text-xs font-semibold text-slate-700">Stock mínimo</label>
