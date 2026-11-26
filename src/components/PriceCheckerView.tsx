@@ -1,19 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  AlertCircle,
-  ArrowLeft,
-  Barcode,
-  Camera,
-  CameraOff,
-  CheckCircle2,
-  Package,
-  ScanBarcode,
-  Search,
-  Tag,
-  X,
-} from 'lucide-react';
+import { AlertCircle, ArrowLeft, Camera, CameraOff, ScanBarcode } from 'lucide-react';
 import type { Branch, Product } from '../types/pos';
-import { ProductImageBox } from './ProductImageBox';
+import { getSafeProductImageUrl } from '../services/productImage';
 
 interface PriceCheckerViewProps {
   products: Product[];
@@ -56,17 +44,25 @@ export const PriceCheckerView: React.FC<PriceCheckerViewProps> = ({
 }) => {
   const [scanInput, setScanInput] = useState<string>('');
   const [matchedProductId, setMatchedProductId] = useState<string | null>(null);
-  const [notFoundCode, setNotFoundCode] = useState<string | null>(null);
-  const [lastScannedCode, setLastScannedCode] = useState<string>('');
+  const [notFound, setNotFound] = useState<boolean>(false);
+  const [scanSeq, setScanSeq] = useState<number>(0);
+  const [failedImageSrc, setFailedImageSrc] = useState<string | null>(null);
 
   // Optional camera barcode scanner state (native BarcodeDetector API when supported)
   const [cameraActive, setCameraActive] = useState<boolean>(false);
   const [cameraError, setCameraError] = useState<string>('');
 
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const exitButtonRef = useRef<HTMLButtonElement | null>(null);
+  const cameraButtonRef = useRef<HTMLButtonElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const scanTimerRef = useRef<number | null>(null);
+  const autoLookupTimerRef = useRef<number | null>(null);
+  const bufferRef = useRef<string>('');
+  const lastCharAtRef = useRef<number>(0);
+  const rapidBurstRef = useRef<boolean>(false);
+  const isExitingRef = useRef<boolean>(false);
   const lastCameraScanRef = useRef<{ code: string; at: number }>({ code: '', at: 0 });
 
   const supportsCameraScanner = useMemo(() => {
@@ -78,7 +74,15 @@ export const PriceCheckerView: React.FC<PriceCheckerViewProps> = ({
     );
   }, []);
 
+  const clearAutoLookupTimer = useCallback(() => {
+    if (autoLookupTimerRef.current !== null) {
+      window.clearTimeout(autoLookupTimerRef.current);
+      autoLookupTimerRef.current = null;
+    }
+  }, []);
+
   const focusScannerInput = useCallback(() => {
+    if (isExitingRef.current) return;
     const el = inputRef.current;
     if (el && document.activeElement !== el) {
       el.focus({ preventScroll: true });
@@ -100,7 +104,7 @@ export const PriceCheckerView: React.FC<PriceCheckerViewProps> = ({
     setCameraActive(false);
   }, []);
 
-  // Keep latest live product reference from catalog in case price/stock updates via sync
+  // Keep latest live product reference from catalog in case price updates via sync
   const matchedProduct = useMemo(() => {
     if (!matchedProductId) return null;
     return products.find((p) => p.id === matchedProductId) ?? null;
@@ -108,7 +112,13 @@ export const PriceCheckerView: React.FC<PriceCheckerViewProps> = ({
 
   const lookupCode = useCallback(
     (rawCode: string) => {
-      const cleaned = rawCode.trim();
+      clearAutoLookupTimer();
+
+      const cleaned = rawCode.replace(/[\r\n]+/g, '').trim();
+      bufferRef.current = '';
+      rapidBurstRef.current = false;
+      setScanInput('');
+
       if (!cleaned) {
         focusScannerInput();
         return;
@@ -119,35 +129,133 @@ export const PriceCheckerView: React.FC<PriceCheckerViewProps> = ({
       // Priority: exact barcode -> exact SKU -> exact name -> partial barcode/SKU/name
       const found =
         products.find((p) => p.barcode && p.barcode.trim().toLowerCase() === lower) ??
-        products.find((p) => p.sku.trim().toLowerCase() === lower) ??
+        products.find((p) => p.sku && p.sku.trim().toLowerCase() === lower) ??
         products.find((p) => p.name.trim().toLowerCase() === lower) ??
         products.find(
           (p) =>
             (p.barcode && p.barcode.toLowerCase().includes(lower)) ||
-            p.sku.toLowerCase().includes(lower) ||
+            (p.sku && p.sku.toLowerCase().includes(lower)) ||
             p.name.toLowerCase().includes(lower)
         ) ??
         null;
 
-      setLastScannedCode(cleaned);
-      setScanInput('');
+      setScanSeq((prev) => prev + 1);
 
       if (found) {
         setMatchedProductId(found.id);
-        setNotFoundCode(null);
+        setNotFound(false);
+        setFailedImageSrc(null);
       } else {
         setMatchedProductId(null);
-        setNotFoundCode(cleaned);
+        setNotFound(true);
       }
 
       window.requestAnimationFrame(() => {
         focusScannerInput();
       });
     },
-    [products, focusScannerInput]
+    [products, clearAutoLookupTimer, focusScannerInput]
   );
 
-  // Auto-focus scanner input on mount, window refocus, and non-interactive keystrokes
+  const handleScannerBufferChange = useCallback(
+    (rawValue: string) => {
+      clearAutoLookupTimer();
+
+      // Immediate lookup if scanner appended a newline or carriage return
+      if (/[\r\n]/.test(rawValue)) {
+        lookupCode(rawValue);
+        return;
+      }
+
+      const now = Date.now();
+      const prevLen = bufferRef.current.length;
+      const deltaMs = now - lastCharAtRef.current;
+
+      if (rawValue.length === 0) {
+        bufferRef.current = '';
+        rapidBurstRef.current = false;
+        setScanInput('');
+        return;
+      }
+
+      if ((prevLen > 0 && deltaMs <= 90) || rawValue.length - prevLen >= 3) {
+        rapidBurstRef.current = true;
+      } else if (prevLen === 0) {
+        rapidBurstRef.current = false;
+      }
+
+      lastCharAtRef.current = now;
+      bufferRef.current = rawValue;
+      setScanInput(rawValue);
+
+      const trimmed = rawValue.trim();
+      if (!trimmed) return;
+
+      const lower = trimmed.toLowerCase();
+
+      // 1. Instant lookup on unambiguous exact barcode match (zero Enter required)
+      const exactBarcodeMatch = products.find(
+        (p) => p.barcode && p.barcode.trim().toLowerCase() === lower
+      );
+      if (exactBarcodeMatch) {
+        const hasLongerBarcodePrefix = products.some((p) => {
+          const code = p.barcode?.trim().toLowerCase();
+          return Boolean(code && code !== lower && code.startsWith(lower));
+        });
+
+        if (!hasLongerBarcodePrefix) {
+          lookupCode(trimmed);
+          return;
+        }
+
+        autoLookupTimerRef.current = window.setTimeout(() => {
+          lookupCode(bufferRef.current);
+        }, 180);
+        return;
+      }
+
+      // 2. Fast auto-lookup on exact SKU match (length >= 4)
+      if (trimmed.length >= 4) {
+        const exactSkuMatch = products.find(
+          (p) => p.sku && p.sku.trim().toLowerCase() === lower
+        );
+        if (exactSkuMatch) {
+          const hasLongerSkuPrefix = products.some((p) => {
+            const sku = p.sku?.trim().toLowerCase();
+            return Boolean(sku && sku !== lower && sku.startsWith(lower));
+          });
+
+          if (!hasLongerSkuPrefix && rapidBurstRef.current) {
+            lookupCode(trimmed);
+            return;
+          }
+
+          autoLookupTimerRef.current = window.setTimeout(() => {
+            lookupCode(bufferRef.current);
+          }, hasLongerSkuPrefix ? 240 : 160);
+          return;
+        }
+      }
+
+      // 3. Rapid scanner burst without Enter (including unregistered barcodes) -> commit right after burst ends
+      if (rapidBurstRef.current && trimmed.length >= 3) {
+        autoLookupTimerRef.current = window.setTimeout(() => {
+          lookupCode(bufferRef.current);
+        }, 220);
+        return;
+      }
+
+      // 4. Manual typing without pressing Enter -> auto-commit cleanly after brief pause
+      if (trimmed.length >= 4) {
+        autoLookupTimerRef.current = window.setTimeout(() => {
+          lookupCode(bufferRef.current);
+        }, 700);
+      }
+    },
+    [products, clearAutoLookupTimer, lookupCode]
+  );
+
+  // Keep scanner 100% active: mount focus, window/tab refocus, and zero-drop global key capture
   useEffect(() => {
     focusScannerInput();
 
@@ -155,31 +263,57 @@ export const PriceCheckerView: React.FC<PriceCheckerViewProps> = ({
       focusScannerInput();
     };
 
-    const handleGlobalKeyDown = (event: KeyboardEvent) => {
-      if (event.ctrlKey || event.metaKey || event.altKey) return;
-      const target = event.target as HTMLElement | null;
-      if (
-        target &&
-        (target.tagName === 'INPUT' ||
-          target.tagName === 'TEXTAREA' ||
-          target.tagName === 'SELECT' ||
-          target.isContentEditable)
-      ) {
-        return;
-      }
-      if (event.key.length === 1 || event.key === 'Enter') {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
         focusScannerInput();
       }
     };
 
+    const handleGlobalKeyDown = (event: KeyboardEvent) => {
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+
+      const inputEl = inputRef.current;
+      if (document.activeElement === inputEl) return;
+
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        if (bufferRef.current.trim().length > 0) {
+          event.preventDefault();
+          lookupCode(bufferRef.current);
+        } else {
+          focusScannerInput();
+        }
+        return;
+      }
+
+      if (event.key === 'Backspace') {
+        if (bufferRef.current.length > 0) {
+          event.preventDefault();
+          focusScannerInput();
+          handleScannerBufferChange(bufferRef.current.slice(0, -1));
+        }
+        return;
+      }
+
+      if (event.key.length === 1) {
+        // Capture first character even if focus drifted so scanners never drop digit 1
+        event.preventDefault();
+        focusScannerInput();
+        handleScannerBufferChange(bufferRef.current + event.key);
+      }
+    };
+
     window.addEventListener('focus', handleWindowFocus);
-    window.addEventListener('keydown', handleGlobalKeyDown);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('keydown', handleGlobalKeyDown, true);
+
     return () => {
+      clearAutoLookupTimer();
       window.removeEventListener('focus', handleWindowFocus);
-      window.removeEventListener('keydown', handleGlobalKeyDown);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('keydown', handleGlobalKeyDown, true);
       stopCamera();
     };
-  }, [focusScannerInput, stopCamera]);
+  }, [focusScannerInput, lookupCode, handleScannerBufferChange, clearAutoLookupTimer, stopCamera]);
 
   // Camera barcode scanning loop when activated
   useEffect(() => {
@@ -242,9 +376,7 @@ export const PriceCheckerView: React.FC<PriceCheckerViewProps> = ({
         }, 250);
       } catch {
         if (!cancelled) {
-          setCameraError(
-            'No se pudo acceder a la cámara. Verifica los permisos o usa el lector/teclado.'
-          );
+          setCameraError('No se pudo acceder a la cámara. Verifica los permisos o usa el lector.');
           stopCamera();
         }
       }
@@ -265,145 +397,87 @@ export const PriceCheckerView: React.FC<PriceCheckerViewProps> = ({
     };
   }, [cameraActive, supportsCameraScanner, lookupCode, stopCamera]);
 
-  const handleInputChange = (value: string) => {
-    setScanInput(value);
-
-    // Instant auto-lookup if a scanner inputs an exact barcode (length >= 6) without sending Enter
-    const trimmed = value.trim();
-    if (trimmed.length >= 6) {
-      const lower = trimmed.toLowerCase();
-      const exactBarcodeMatch = products.find(
-        (p) => p.barcode && p.barcode.trim().toLowerCase() === lower
-      );
-      if (exactBarcodeMatch) {
-        lookupCode(trimmed);
-      }
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault();
+      lookupCode(bufferRef.current);
     }
   };
 
-  const handleFormSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    lookupCode(scanInput);
+  const handleInputBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+    const nextFocus = e.relatedTarget as Node | null;
+    if (
+      nextFocus &&
+      (nextFocus === exitButtonRef.current || nextFocus === cameraButtonRef.current)
+    ) {
+      return;
+    }
+    window.setTimeout(() => {
+      focusScannerInput();
+    }, 60);
   };
 
-  const handleClearResult = () => {
-    setMatchedProductId(null);
-    setNotFoundCode(null);
-    setLastScannedCode('');
-    setScanInput('');
-    focusScannerInput();
+  const handleExit = () => {
+    isExitingRef.current = true;
+    clearAutoLookupTimer();
+    stopCamera();
+    onExit();
   };
-
-  const branchStock = matchedProduct
-    ? activeBranch
-      ? matchedProduct.stockByBranch[activeBranch.id] ?? 0
-      : Object.values(matchedProduct.stockByBranch).reduce((acc, qty) => acc + qty, 0)
-    : 0;
-
-  const totalCatalogStock = matchedProduct
-    ? Object.values(matchedProduct.stockByBranch).reduce((acc, qty) => acc + qty, 0)
-    : 0;
 
   const matchedPriceVes = matchedProduct ? round2(matchedProduct.priceUsd * exchangeRate) : 0;
+  const safeImageUrl = matchedProduct
+    ? getSafeProductImageUrl(matchedProduct.imageUrl || matchedProduct.image_url) || ''
+    : '';
+  const hasVisibleImage = Boolean(safeImageUrl && failedImageSrc !== safeImageUrl);
 
   return (
     <div
-      className="mx-auto flex w-full max-w-4xl flex-col gap-4 p-4 lg:p-6"
+      className="fixed inset-0 z-50 flex flex-col bg-slate-50 text-slate-900"
       onClick={(e) => {
         const target = e.target as HTMLElement | null;
-        if (!target?.closest('button, a, input, video')) {
+        if (!target?.closest('button, a, video')) {
           focusScannerInput();
         }
       }}
     >
-      <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 space-y-3.5">
-        <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-slate-200 pb-3">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[#84CC16]/50 bg-[#F7FEE7] text-[#558B00]">
-              <ScanBarcode className="h-4 w-4" />
-            </span>
-            <div className="min-w-0">
-              <h1 className="text-sm sm:text-base font-bold text-slate-900">
-                Verificador de precios
-              </h1>
-              <p className="truncate text-xs text-slate-500">
-                Consulta rápida por código de barras o SKU
-                {activeBranch ? ` · ${activeBranch.name}` : ''} · Tasa{' '}
-                <span className="font-mono font-semibold tabular-nums text-slate-700">
-                  Bs {exchangeRate.toFixed(2)}/$
-                </span>
-              </p>
-            </div>
+      {/* Discreet Full-Screen Header */}
+      <header className="flex items-center justify-between gap-4 border-b border-slate-200 bg-white px-4 py-3 sm:px-6">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[#84CC16]/50 bg-[#F7FEE7] text-[#558B00]">
+            <ScanBarcode className="h-4 w-4" />
+          </span>
+          <div className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
+            <h1 className="whitespace-nowrap text-sm font-bold tracking-tight text-slate-900 sm:text-base">
+              Verificador de precios
+            </h1>
+            <p className="truncate text-xs text-slate-500">
+              {activeBranch ? `${activeBranch.name} · ` : ''}
+              Tasa{' '}
+              <span className="font-mono font-semibold tabular-nums text-slate-700">
+                Bs {exchangeRate.toFixed(2)}/$
+              </span>
+            </p>
           </div>
-
-          <button
-            type="button"
-            onClick={() => {
-              stopCamera();
-              onExit();
-            }}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-[#76B900] hover:bg-slate-50 hover:text-slate-900 transition-colors cursor-pointer whitespace-nowrap"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" />
-            Volver al POS
-          </button>
         </div>
 
-        <form onSubmit={handleFormSubmit} className="flex flex-wrap items-center gap-2">
-          <div className="relative flex-1 min-w-[210px]">
-            <Barcode className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#558B00]" />
-            <input
-              ref={inputRef}
-              type="text"
-              autoFocus
-              autoComplete="off"
-              autoCorrect="off"
-              spellCheck={false}
-              value={scanInput}
-              onChange={(e) => handleInputChange(e.target.value)}
-              placeholder="Escanea código de barras o escribe SKU / nombre y pulsa Enter..."
-              aria-label="Código de barras o SKU del producto"
-              className="w-full rounded-lg border-2 border-[#84CC16]/70 bg-slate-50 py-2.5 pl-9 pr-9 text-sm font-medium text-slate-900 placeholder:text-slate-400 focus:border-[#76B900] focus:bg-white focus:outline-none"
-            />
-            {scanInput && (
-              <button
-                type="button"
-                onClick={() => {
-                  setScanInput('');
-                  focusScannerInput();
-                }}
-                aria-label="Limpiar código"
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 cursor-pointer"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            )}
-          </div>
-
-          <button
-            type="submit"
-            className="inline-flex items-center gap-1.5 rounded-lg bg-[#84CC16] px-4 py-2.5 text-xs font-bold text-slate-950 hover:bg-[#76B900] transition-colors cursor-pointer whitespace-nowrap"
-          >
-            <Search className="h-3.5 w-3.5" />
-            Consultar
-          </button>
-
+        <div className="flex shrink-0 items-center gap-2">
           {supportsCameraScanner && (
             <button
+              ref={cameraButtonRef}
               type="button"
               onClick={() => {
                 setCameraError('');
                 if (cameraActive) {
                   stopCamera();
-                  focusScannerInput();
                 } else {
                   setCameraActive(true);
                 }
+                window.setTimeout(() => focusScannerInput(), 0);
               }}
-              className={`inline-flex items-center gap-1.5 rounded-lg border px-3.5 py-2.5 text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
                 cameraActive
                   ? 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100/70'
-                  : 'border-slate-200 bg-white text-slate-700 hover:border-[#76B900] hover:text-slate-900'
+                  : 'border-slate-200 bg-white text-slate-600 hover:border-[#76B900] hover:bg-slate-50 hover:text-slate-900'
               }`}
             >
               {cameraActive ? (
@@ -419,186 +493,190 @@ export const PriceCheckerView: React.FC<PriceCheckerViewProps> = ({
               )}
             </button>
           )}
-        </form>
 
-        {cameraError && (
-          <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-            <AlertCircle className="h-4 w-4 shrink-0 text-amber-600" />
-            <span>{cameraError}</span>
+          <button
+            ref={exitButtonRef}
+            type="button"
+            onClick={handleExit}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:border-[#76B900] hover:bg-slate-50 hover:text-slate-900 transition-colors whitespace-nowrap cursor-pointer"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+            Volver al POS
+          </button>
+        </div>
+      </header>
+
+      {/* Optional Camera Scanner Strip */}
+      {(cameraActive || cameraError) && (
+        <div className="border-b border-slate-200 bg-white px-4 py-3 sm:px-6">
+          <div className="mx-auto max-w-xl space-y-2">
+            {cameraError && (
+              <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                <AlertCircle className="h-4 w-4 shrink-0 text-amber-600" />
+                <span>{cameraError}</span>
+              </div>
+            )}
+
+            {cameraActive && (
+              <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-950">
+                <div className="relative aspect-video max-h-48 w-full">
+                  <video
+                    ref={videoRef}
+                    muted
+                    playsInline
+                    className="h-full w-full object-cover"
+                  />
+                  <div className="pointer-events-none absolute inset-x-10 top-1/2 h-0.5 -translate-y-1/2 bg-[#84CC16] shadow-[0_0_8px_#84CC16]" />
+                </div>
+                <p className="bg-slate-900 px-3 py-1.5 text-center text-xs text-slate-200">
+                  Apunta la cámara al código de barras
+                </p>
+              </div>
+            )}
           </div>
-        )}
+        </div>
+      )}
 
-        {cameraActive && (
-          <div className="overflow-hidden rounded-lg border border-slate-200 bg-slate-950">
-            <div className="relative mx-auto aspect-video max-h-56 w-full">
-              <video
-                ref={videoRef}
-                muted
-                playsInline
-                className="h-full w-full object-cover"
-              />
-              <div className="pointer-events-none absolute inset-x-8 top-1/2 h-0.5 -translate-y-1/2 bg-[#84CC16] shadow-[0_0_8px_#84CC16]" />
-            </div>
-            <p className="bg-slate-900 px-3 py-1.5 text-center text-[11px] font-medium text-slate-200">
-              Apunta la cámara al código de barras del producto
-            </p>
-          </div>
-        )}
-      </section>
+      {/* Main Full-Screen Showcase Stage */}
+      <main className="flex flex-1 items-center justify-center overflow-y-auto px-4 py-6 sm:px-8 sm:py-10 lg:px-12">
+        {matchedProduct ? (
+          <section
+            key={`${matchedProduct.id}-${scanSeq}`}
+            className="w-full max-w-5xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
+          >
+            {hasVisibleImage ? (
+              <div className="grid grid-cols-1 items-stretch md:grid-cols-12">
+                <div className="flex items-center justify-center border-b border-slate-200 bg-white p-6 sm:p-8 md:col-span-5 md:border-b-0 md:border-r lg:p-10">
+                  <img
+                    src={safeImageUrl}
+                    alt={matchedProduct.name}
+                    decoding="async"
+                    referrerPolicy="no-referrer"
+                    onError={() => setFailedImageSrc(safeImageUrl)}
+                    className="max-h-64 w-full object-contain sm:max-h-80 lg:max-h-[400px]"
+                  />
+                </div>
 
-      {matchedProduct ? (
-        <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xs">
-          <div className="grid grid-cols-1 gap-0 md:grid-cols-12">
-            <div className="border-b border-slate-200 bg-slate-50/70 p-4 md:col-span-5 md:border-b-0 md:border-r">
-              <ProductImageBox
-                src={matchedProduct.imageUrl || matchedProduct.image_url}
-                name={matchedProduct.name}
-                alt={matchedProduct.name}
-                fit="contain"
-                className="h-56 w-full rounded-lg border-slate-200 bg-white sm:h-64 md:h-full md:min-h-[280px]"
-              />
-            </div>
-
-            <div className="flex flex-col justify-between gap-4 p-4 sm:p-6 md:col-span-7">
-              <div className="space-y-4">
-                <div className="flex flex-wrap items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-[11px] font-semibold text-slate-600">
-                      <Tag className="h-3 w-3 text-[#558B00]" />
-                      {matchedProduct.category || 'General'}
-                    </span>
-                    <h2 className="mt-2 text-xl sm:text-2xl font-bold leading-tight tracking-tight text-slate-900">
+                <div className="flex flex-col justify-center gap-6 p-6 sm:p-10 md:col-span-7 lg:p-12">
+                  <div className="space-y-2">
+                    {matchedProduct.category && (
+                      <p className="text-sm font-medium text-slate-500">
+                        {matchedProduct.category}
+                      </p>
+                    )}
+                    <h2 className="text-balance text-3xl font-extrabold leading-[1.12] tracking-tight text-slate-900 sm:text-4xl lg:text-5xl">
                       {matchedProduct.name}
                     </h2>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={handleClearResult}
-                    aria-label="Limpiar consulta actual"
-                    className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors cursor-pointer"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
-
-                <div className="rounded-xl border border-[#84CC16]/50 bg-[#F7FEE7]/70 p-4 tabular-nums">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-[#3F6212]">
-                    Precio de venta
-                  </p>
-                  <p className="mt-1 text-3xl sm:text-4xl font-extrabold tracking-tight text-slate-950">
-                    {formatVes(matchedPriceVes)}
-                  </p>
-                  <div className="mt-2 flex flex-wrap items-baseline justify-between gap-2 border-t border-[#84CC16]/30 pt-2">
-                    <p className="font-mono text-lg sm:text-xl font-bold text-[#3F6212]">
-                      {formatUsd(matchedProduct.priceUsd)}{' '}
-                      <span className="font-sans text-xs font-semibold text-[#558B00]">USD</span>
+                  <div className="border-t border-slate-200 pt-6 tabular-nums">
+                    <p className="text-5xl font-black leading-none tracking-tight text-slate-950 sm:text-6xl lg:text-7xl">
+                      {formatVes(matchedPriceVes)}
                     </p>
-                    <span className="text-[11px] font-medium text-slate-600">
-                      por {matchedProduct.unit || 'und'} · Tasa Bs {exchangeRate.toFixed(2)}/$
-                    </span>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
-                  <div className="rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2">
-                    <p className="text-[11px] font-medium text-slate-500">Código de barras</p>
-                    <p className="mt-0.5 truncate font-mono text-xs font-semibold tabular-nums text-slate-900">
-                      {matchedProduct.barcode || 'Sin código'}
-                    </p>
-                  </div>
-
-                  <div className="rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2">
-                    <p className="text-[11px] font-medium text-slate-500">SKU</p>
-                    <p className="mt-0.5 truncate font-mono text-xs font-semibold text-slate-900">
-                      {matchedProduct.sku || 'Sin SKU'}
-                    </p>
-                  </div>
-
-                  <div className="rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2">
-                    <p className="text-[11px] font-medium text-slate-500">Unidad</p>
-                    <p className="mt-0.5 text-xs font-semibold text-slate-900">
-                      {matchedProduct.unit || 'und'}
-                    </p>
-                  </div>
-
-                  <div className="col-span-2 rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2 sm:col-span-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <p className="text-[11px] font-medium text-slate-500">
-                          Disponibilidad{activeBranch ? ` (${activeBranch.name})` : ''}
-                        </p>
-                        <p className="mt-0.5 text-sm font-bold tabular-nums text-slate-900">
-                          {branchStock} {matchedProduct.unit || 'und'}
-                          {activeBranch && totalCatalogStock !== branchStock && (
-                            <span className="ml-2 text-xs font-medium text-slate-500">
-                              (Total sucursales: {totalCatalogStock})
-                            </span>
-                          )}
-                        </p>
-                      </div>
-
-                      {branchStock <= 0 ? (
-                        <span className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-700">
-                          <AlertCircle className="h-3.5 w-3.5" />
-                          Agotado
+                    <div className="mt-4 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                      <p className="font-mono text-2xl font-extrabold text-[#3F6212] sm:text-3xl lg:text-4xl">
+                        {formatUsd(matchedProduct.priceUsd)}
+                        <span className="ml-1.5 font-sans text-base font-bold text-[#558B00] sm:text-lg">
+                          USD
                         </span>
-                      ) : branchStock <= matchedProduct.minStock ? (
-                        <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800">
-                          <Package className="h-3.5 w-3.5" />
-                          Stock bajo
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 rounded-full border border-[#84CC16]/45 bg-[#F7FEE7] px-2.5 py-1 text-xs font-semibold text-[#3F6212]">
-                          <CheckCircle2 className="h-3.5 w-3.5 text-[#558B00]" />
-                          Disponible
+                      </p>
+                      {matchedProduct.unit && (
+                        <span className="text-sm font-medium text-slate-500">
+                          · por {matchedProduct.unit}
                         </span>
                       )}
                     </div>
                   </div>
                 </div>
               </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center gap-6 px-6 py-12 text-center sm:px-12 sm:py-16 lg:px-16 lg:py-20">
+                <div className="space-y-2.5">
+                  {matchedProduct.category && (
+                    <p className="text-sm font-medium text-slate-500">
+                      {matchedProduct.category}
+                    </p>
+                  )}
+                  <h2 className="mx-auto max-w-3xl text-balance text-4xl font-extrabold leading-[1.1] tracking-tight text-slate-900 sm:text-5xl lg:text-6xl">
+                    {matchedProduct.name}
+                  </h2>
+                </div>
 
-              <p className="text-[11px] text-slate-400">
-                Escanea otro código en cualquier momento para reemplazar automáticamente esta consulta.
-              </p>
+                <div className="w-24 border-t border-slate-200" />
+
+                <div className="tabular-nums">
+                  <p className="text-6xl font-black leading-none tracking-tight text-slate-950 sm:text-7xl lg:text-8xl">
+                    {formatVes(matchedPriceVes)}
+                  </p>
+                  <div className="mt-5 flex flex-wrap items-baseline justify-center gap-x-3 gap-y-1">
+                    <p className="font-mono text-3xl font-extrabold text-[#3F6212] sm:text-4xl">
+                      {formatUsd(matchedProduct.priceUsd)}
+                      <span className="ml-1.5 font-sans text-lg font-bold text-[#558B00] sm:text-xl">
+                        USD
+                      </span>
+                    </p>
+                    {matchedProduct.unit && (
+                      <span className="text-base font-medium text-slate-500">
+                        · por {matchedProduct.unit}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </section>
+        ) : notFound ? (
+          <section
+            key={`not-found-${scanSeq}`}
+            className="w-full max-w-xl rounded-2xl border border-red-200 bg-white px-6 py-12 text-center shadow-sm sm:px-10 sm:py-14"
+          >
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-red-200 bg-red-50 text-red-600">
+              <AlertCircle className="h-7 w-7" />
             </div>
-          </div>
-        </section>
-      ) : notFoundCode ? (
-        <section className="rounded-xl border border-red-200 bg-white p-6 sm:p-8 text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full border border-red-200 bg-red-50 text-red-600">
-            <AlertCircle className="h-6 w-6" />
-          </div>
-          <h2 className="mt-3 text-base sm:text-lg font-bold text-slate-900">
-            Producto no encontrado
-          </h2>
-          <p className="mt-1 text-xs sm:text-sm text-slate-600">
-            No se encontró ningún artículo registrado para el código{' '}
-            <span className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-mono font-semibold text-slate-900">
-              {notFoundCode}
-            </span>
-            .
-          </p>
-          <p className="mt-2 text-xs text-slate-500">
-            El lector sigue listo: escanea otro código de barras o ingresa otro SKU.
-          </p>
-        </section>
-      ) : (
-        <section className="rounded-xl border border-dashed border-slate-300 bg-white p-8 sm:p-12 text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl border border-[#84CC16]/45 bg-[#F7FEE7] text-[#558B00]">
-            <ScanBarcode className="h-6 w-6" />
-          </div>
-          <h2 className="mt-3 text-base font-bold text-slate-900">Listo para escanear</h2>
-          <p className="mx-auto mt-1 max-w-md text-xs sm:text-sm text-slate-600">
-            Escanea un código de barras con tu lector USB/Bluetooth o escribe el código para
-            consultar el precio en Bs y USD junto con los detalles del producto.
-          </p>
-          {lastScannedCode && (
-            <p className="mt-2 text-[11px] text-slate-400">Última consulta: {lastScannedCode}</p>
-          )}
-        </section>
-      )}
+            <h2 className="mt-5 text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
+              Producto no encontrado
+            </h2>
+            <p className="mt-2 text-sm text-slate-600 sm:text-base">
+              Escanea otro producto para consultar su precio al instante.
+            </p>
+          </section>
+        ) : (
+          <section className="w-full max-w-xl rounded-2xl border border-slate-200 bg-white px-6 py-12 text-center shadow-sm sm:px-10 sm:py-16">
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-[#84CC16]/45 bg-[#F7FEE7] text-[#558B00]">
+              <ScanBarcode className="h-8 w-8" />
+            </div>
+            <h2 className="mt-5 text-balance text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
+              Escanea un producto
+            </h2>
+            <p className="mx-auto mt-2.5 max-w-md text-sm text-slate-600 sm:text-base">
+              Acerca el código de barras al lector para mostrar el precio de inmediato.
+            </p>
+          </section>
+        )}
+      </main>
+
+      {/* Discreet Always-Active Scanner Bar (No Submit Button, No Enter Required) */}
+      <footer className="border-t border-slate-200 bg-white px-4 py-3 sm:px-6">
+        <div className="relative mx-auto w-full max-w-md">
+          <ScanBarcode className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#558B00]" />
+          <input
+            ref={inputRef}
+            type="text"
+            autoFocus
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            value={scanInput}
+            onChange={(e) => handleScannerBufferChange(e.target.value)}
+            onKeyDown={handleInputKeyDown}
+            onBlur={handleInputBlur}
+            placeholder="Lector siempre activo — escanea un código..."
+            aria-label="Lector de código de barras del verificador de precios"
+            className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-10 pr-4 text-sm text-slate-900 placeholder:text-slate-400 focus:border-[#76B900] focus:bg-white focus:outline-none"
+          />
+        </div>
+      </footer>
     </div>
   );
 };
