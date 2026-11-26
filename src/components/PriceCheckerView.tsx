@@ -1,5 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, ArrowLeft, Camera, CameraOff, ScanBarcode } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import {
+  AlertCircle,
+  ArrowLeft,
+  Camera,
+  CameraOff,
+  Maximize2,
+  Minimize2,
+  ScanBarcode,
+} from 'lucide-react';
 import type { Branch, Product } from '../types/pos';
 import { getSafeProductImageUrl } from '../services/productImage';
 
@@ -51,10 +60,12 @@ export const PriceCheckerView: React.FC<PriceCheckerViewProps> = ({
   // Optional camera barcode scanner state (native BarcodeDetector API when supported)
   const [cameraActive, setCameraActive] = useState<boolean>(false);
   const [cameraError, setCameraError] = useState<string>('');
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
 
   const inputRef = useRef<HTMLInputElement | null>(null);
   const exitButtonRef = useRef<HTMLButtonElement | null>(null);
   const cameraButtonRef = useRef<HTMLButtonElement | null>(null);
+  const fullscreenButtonRef = useRef<HTMLButtonElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const scanTimerRef = useRef<number | null>(null);
@@ -72,6 +83,26 @@ export const PriceCheckerView: React.FC<PriceCheckerViewProps> = ({
         navigator.mediaDevices &&
         typeof navigator.mediaDevices.getUserMedia === 'function'
     );
+  }, []);
+
+  const supportsFullscreen = useMemo(() => {
+    if (typeof document === 'undefined') return false;
+    const docEl = document.documentElement as HTMLElement & {
+      webkitRequestFullscreen?: () => Promise<void> | void;
+    };
+    const doc = document as Document & { webkitFullscreenEnabled?: boolean };
+    const enabled = doc.fullscreenEnabled ?? doc.webkitFullscreenEnabled ?? true;
+    return Boolean(
+      enabled &&
+        (typeof docEl.requestFullscreen === 'function' ||
+          typeof docEl.webkitRequestFullscreen === 'function')
+    );
+  }, []);
+
+  const getIsDocumentFullscreen = useCallback((): boolean => {
+    if (typeof document === 'undefined') return false;
+    const doc = document as Document & { webkitFullscreenElement?: Element | null };
+    return Boolean(document.fullscreenElement || doc.webkitFullscreenElement);
   }, []);
 
   const clearAutoLookupTimer = useCallback(() => {
@@ -397,6 +428,57 @@ export const PriceCheckerView: React.FC<PriceCheckerViewProps> = ({
     };
   }, [cameraActive, supportsCameraScanner, lookupCode, stopCamera]);
 
+  // Sync browser fullscreen state and lock background body scroll while kiosk view is active
+  useEffect(() => {
+    setIsFullscreen(getIsDocumentFullscreen());
+
+    const prevBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const handleFullscreenChange = () => {
+      setIsFullscreen(getIsDocumentFullscreen());
+      window.setTimeout(() => focusScannerInput(), 0);
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+
+    return () => {
+      document.body.style.overflow = prevBodyOverflow;
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+    };
+  }, [getIsDocumentFullscreen, focusScannerInput]);
+
+  const handleToggleFullscreen = async () => {
+    if (!supportsFullscreen) return;
+    try {
+      const doc = document as Document & {
+        webkitExitFullscreen?: () => Promise<void> | void;
+      };
+      const docEl = document.documentElement as HTMLElement & {
+        webkitRequestFullscreen?: () => Promise<void> | void;
+      };
+
+      if (getIsDocumentFullscreen()) {
+        if (typeof document.exitFullscreen === 'function') {
+          await document.exitFullscreen();
+        } else if (typeof doc.webkitExitFullscreen === 'function') {
+          await doc.webkitExitFullscreen();
+        }
+      } else if (typeof docEl.requestFullscreen === 'function') {
+        await docEl.requestFullscreen();
+      } else if (typeof docEl.webkitRequestFullscreen === 'function') {
+        await docEl.webkitRequestFullscreen();
+      }
+    } catch {
+      // Safe fallback when fullscreen is blocked by browser or iframe policy
+    } finally {
+      setIsFullscreen(getIsDocumentFullscreen());
+      window.setTimeout(() => focusScannerInput(), 0);
+    }
+  };
+
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' || e.key === 'Tab') {
       e.preventDefault();
@@ -408,7 +490,9 @@ export const PriceCheckerView: React.FC<PriceCheckerViewProps> = ({
     const nextFocus = e.relatedTarget as Node | null;
     if (
       nextFocus &&
-      (nextFocus === exitButtonRef.current || nextFocus === cameraButtonRef.current)
+      (nextFocus === exitButtonRef.current ||
+        nextFocus === cameraButtonRef.current ||
+        nextFocus === fullscreenButtonRef.current)
     ) {
       return;
     }
@@ -421,6 +505,20 @@ export const PriceCheckerView: React.FC<PriceCheckerViewProps> = ({
     isExitingRef.current = true;
     clearAutoLookupTimer();
     stopCamera();
+    if (getIsDocumentFullscreen()) {
+      const doc = document as Document & {
+        webkitExitFullscreen?: () => Promise<void> | void;
+      };
+      try {
+        if (typeof document.exitFullscreen === 'function') {
+          void document.exitFullscreen().catch(() => {});
+        } else if (typeof doc.webkitExitFullscreen === 'function') {
+          void doc.webkitExitFullscreen();
+        }
+      } catch {
+        // Ignore fullscreen exit errors
+      }
+    }
     onExit();
   };
 
@@ -430,9 +528,9 @@ export const PriceCheckerView: React.FC<PriceCheckerViewProps> = ({
     : '';
   const hasVisibleImage = Boolean(safeImageUrl && failedImageSrc !== safeImageUrl);
 
-  return (
+  const kioskContent = (
     <div
-      className="fixed inset-0 z-50 flex flex-col bg-slate-50 text-slate-900"
+      className="fixed inset-0 z-50 flex h-screen w-screen flex-col overflow-hidden bg-slate-50 text-slate-900 supports-[height:100dvh]:h-dvh"
       onClick={(e) => {
         const target = e.target as HTMLElement | null;
         if (!target?.closest('button, a, video')) {
@@ -440,9 +538,9 @@ export const PriceCheckerView: React.FC<PriceCheckerViewProps> = ({
         }
       }}
     >
-      {/* Discreet Full-Screen Header */}
-      <header className="flex items-center justify-between gap-4 border-b border-slate-200 bg-white px-4 py-3 sm:px-6">
-        <div className="flex min-w-0 items-center gap-3">
+      {/* Discreet Top Control Bar */}
+      <header className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-2.5 sm:px-6">
+        <div className="flex min-w-0 items-center gap-2.5">
           <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[#84CC16]/50 bg-[#F7FEE7] text-[#558B00]">
             <ScanBarcode className="h-4 w-4" />
           </span>
@@ -474,6 +572,7 @@ export const PriceCheckerView: React.FC<PriceCheckerViewProps> = ({
                 }
                 window.setTimeout(() => focusScannerInput(), 0);
               }}
+              aria-label={cameraActive ? 'Cerrar cámara' : 'Activar cámara'}
               className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
                 cameraActive
                   ? 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100/70'
@@ -483,12 +582,37 @@ export const PriceCheckerView: React.FC<PriceCheckerViewProps> = ({
               {cameraActive ? (
                 <>
                   <CameraOff className="h-3.5 w-3.5" />
-                  Cerrar cámara
+                  <span className="hidden sm:inline">Cerrar cámara</span>
                 </>
               ) : (
                 <>
                   <Camera className="h-3.5 w-3.5 text-[#558B00]" />
-                  Cámara
+                  <span className="hidden sm:inline">Cámara</span>
+                </>
+              )}
+            </button>
+          )}
+
+          {supportsFullscreen && (
+            <button
+              ref={fullscreenButtonRef}
+              type="button"
+              onClick={() => {
+                void handleToggleFullscreen();
+              }}
+              aria-label={isFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa'}
+              title={isFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa'}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:border-[#76B900] hover:bg-slate-50 hover:text-slate-900 transition-colors whitespace-nowrap cursor-pointer"
+            >
+              {isFullscreen ? (
+                <>
+                  <Minimize2 className="h-3.5 w-3.5 text-[#558B00]" />
+                  <span className="hidden sm:inline">Ventana</span>
+                </>
+              ) : (
+                <>
+                  <Maximize2 className="h-3.5 w-3.5 text-[#558B00]" />
+                  <span className="hidden sm:inline">Pantalla completa</span>
                 </>
               )}
             </button>
@@ -508,8 +632,8 @@ export const PriceCheckerView: React.FC<PriceCheckerViewProps> = ({
 
       {/* Optional Camera Scanner Strip */}
       {(cameraActive || cameraError) && (
-        <div className="border-b border-slate-200 bg-white px-4 py-3 sm:px-6">
-          <div className="mx-auto max-w-xl space-y-2">
+        <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-2.5 sm:px-6">
+          <div className="mx-auto max-w-lg space-y-2">
             {cameraError && (
               <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
                 <AlertCircle className="h-4 w-4 shrink-0 text-amber-600" />
@@ -519,7 +643,7 @@ export const PriceCheckerView: React.FC<PriceCheckerViewProps> = ({
 
             {cameraActive && (
               <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-950">
-                <div className="relative aspect-video max-h-48 w-full">
+                <div className="relative aspect-video max-h-40 w-full">
                   <video
                     ref={videoRef}
                     muted
@@ -528,7 +652,7 @@ export const PriceCheckerView: React.FC<PriceCheckerViewProps> = ({
                   />
                   <div className="pointer-events-none absolute inset-x-10 top-1/2 h-0.5 -translate-y-1/2 bg-[#84CC16] shadow-[0_0_8px_#84CC16]" />
                 </div>
-                <p className="bg-slate-900 px-3 py-1.5 text-center text-xs text-slate-200">
+                <p className="bg-slate-900 px-3 py-1 text-center text-xs text-slate-200">
                   Apunta la cámara al código de barras
                 </p>
               </div>
@@ -537,40 +661,40 @@ export const PriceCheckerView: React.FC<PriceCheckerViewProps> = ({
         </div>
       )}
 
-      {/* Main Full-Screen Showcase Stage */}
-      <main className="flex flex-1 items-center justify-center overflow-y-auto px-4 py-6 sm:px-8 sm:py-10 lg:px-12">
+      {/* Main Full-Viewport Kiosk Stage */}
+      <main className="flex min-h-0 flex-1 items-center justify-center overflow-hidden p-4 sm:p-8 lg:p-10">
         {matchedProduct ? (
           <section
             key={`${matchedProduct.id}-${scanSeq}`}
-            className="w-full max-w-5xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
+            className="flex max-h-full w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
           >
             {hasVisibleImage ? (
-              <div className="grid grid-cols-1 items-stretch md:grid-cols-12">
-                <div className="flex items-center justify-center border-b border-slate-200 bg-white p-6 sm:p-8 md:col-span-5 md:border-b-0 md:border-r lg:p-10">
+              <div className="grid h-full min-h-0 grid-cols-1 items-stretch md:grid-cols-12">
+                <div className="flex items-center justify-center border-b border-slate-200 bg-white p-5 sm:p-8 md:col-span-5 md:border-b-0 md:border-r lg:p-10">
                   <img
                     src={safeImageUrl}
                     alt={matchedProduct.name}
                     decoding="async"
                     referrerPolicy="no-referrer"
                     onError={() => setFailedImageSrc(safeImageUrl)}
-                    className="max-h-64 w-full object-contain sm:max-h-80 lg:max-h-[400px]"
+                    className="max-h-[26vh] w-full object-contain sm:max-h-[34vh] md:max-h-[62vh]"
                   />
                 </div>
 
-                <div className="flex flex-col justify-center gap-6 p-6 sm:p-10 md:col-span-7 lg:p-12">
+                <div className="flex flex-col justify-center gap-5 p-6 sm:gap-6 sm:p-10 md:col-span-7 lg:p-14">
                   <div className="space-y-2">
                     {matchedProduct.category && (
-                      <p className="text-sm font-medium text-slate-500">
+                      <p className="text-sm font-medium text-slate-500 sm:text-base">
                         {matchedProduct.category}
                       </p>
                     )}
-                    <h2 className="text-balance text-3xl font-extrabold leading-[1.12] tracking-tight text-slate-900 sm:text-4xl lg:text-5xl">
+                    <h2 className="text-balance text-3xl font-extrabold leading-[1.08] tracking-tight text-slate-900 sm:text-4xl lg:text-5xl xl:text-6xl">
                       {matchedProduct.name}
                     </h2>
                   </div>
 
-                  <div className="border-t border-slate-200 pt-6 tabular-nums">
-                    <p className="text-5xl font-black leading-none tracking-tight text-slate-950 sm:text-6xl lg:text-7xl">
+                  <div className="border-t border-slate-200 pt-5 sm:pt-6 tabular-nums">
+                    <p className="text-5xl font-black leading-none tracking-tight text-slate-950 sm:text-6xl lg:text-7xl xl:text-8xl">
                       {formatVes(matchedPriceVes)}
                     </p>
                     <div className="mt-4 flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -581,7 +705,7 @@ export const PriceCheckerView: React.FC<PriceCheckerViewProps> = ({
                         </span>
                       </p>
                       {matchedProduct.unit && (
-                        <span className="text-sm font-medium text-slate-500">
+                        <span className="text-sm font-medium text-slate-500 sm:text-base">
                           · por {matchedProduct.unit}
                         </span>
                       )}
@@ -590,14 +714,14 @@ export const PriceCheckerView: React.FC<PriceCheckerViewProps> = ({
                 </div>
               </div>
             ) : (
-              <div className="flex flex-col items-center justify-center gap-6 px-6 py-12 text-center sm:px-12 sm:py-16 lg:px-16 lg:py-20">
+              <div className="flex flex-col items-center justify-center gap-6 px-6 py-10 text-center sm:px-14 sm:py-16 lg:px-20 lg:py-20">
                 <div className="space-y-2.5">
                   {matchedProduct.category && (
-                    <p className="text-sm font-medium text-slate-500">
+                    <p className="text-sm font-medium text-slate-500 sm:text-base">
                       {matchedProduct.category}
                     </p>
                   )}
-                  <h2 className="mx-auto max-w-3xl text-balance text-4xl font-extrabold leading-[1.1] tracking-tight text-slate-900 sm:text-5xl lg:text-6xl">
+                  <h2 className="mx-auto max-w-4xl text-balance text-4xl font-extrabold leading-[1.08] tracking-tight text-slate-900 sm:text-5xl lg:text-6xl xl:text-7xl">
                     {matchedProduct.name}
                   </h2>
                 </div>
@@ -605,18 +729,18 @@ export const PriceCheckerView: React.FC<PriceCheckerViewProps> = ({
                 <div className="w-24 border-t border-slate-200" />
 
                 <div className="tabular-nums">
-                  <p className="text-6xl font-black leading-none tracking-tight text-slate-950 sm:text-7xl lg:text-8xl">
+                  <p className="text-6xl font-black leading-none tracking-tight text-slate-950 sm:text-7xl lg:text-8xl xl:text-9xl">
                     {formatVes(matchedPriceVes)}
                   </p>
                   <div className="mt-5 flex flex-wrap items-baseline justify-center gap-x-3 gap-y-1">
-                    <p className="font-mono text-3xl font-extrabold text-[#3F6212] sm:text-4xl">
+                    <p className="font-mono text-3xl font-extrabold text-[#3F6212] sm:text-4xl lg:text-5xl">
                       {formatUsd(matchedProduct.priceUsd)}
                       <span className="ml-1.5 font-sans text-lg font-bold text-[#558B00] sm:text-xl">
                         USD
                       </span>
                     </p>
                     {matchedProduct.unit && (
-                      <span className="text-base font-medium text-slate-500">
+                      <span className="text-base font-medium text-slate-500 sm:text-lg">
                         · por {matchedProduct.unit}
                       </span>
                     )}
@@ -628,27 +752,27 @@ export const PriceCheckerView: React.FC<PriceCheckerViewProps> = ({
         ) : notFound ? (
           <section
             key={`not-found-${scanSeq}`}
-            className="w-full max-w-xl rounded-2xl border border-red-200 bg-white px-6 py-12 text-center shadow-sm sm:px-10 sm:py-14"
+            className="w-full max-w-2xl rounded-2xl border border-red-200 bg-white px-6 py-12 text-center shadow-sm sm:px-12 sm:py-16"
           >
-            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-red-200 bg-red-50 text-red-600">
-              <AlertCircle className="h-7 w-7" />
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border border-red-200 bg-red-50 text-red-600">
+              <AlertCircle className="h-8 w-8" />
             </div>
-            <h2 className="mt-5 text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
+            <h2 className="mt-5 text-2xl font-bold tracking-tight text-slate-900 sm:text-4xl">
               Producto no encontrado
             </h2>
-            <p className="mt-2 text-sm text-slate-600 sm:text-base">
+            <p className="mt-3 text-sm text-slate-600 sm:text-lg">
               Escanea otro producto para consultar su precio al instante.
             </p>
           </section>
         ) : (
-          <section className="w-full max-w-xl rounded-2xl border border-slate-200 bg-white px-6 py-12 text-center shadow-sm sm:px-10 sm:py-16">
+          <section className="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white px-6 py-12 text-center shadow-sm sm:px-12 sm:py-16">
             <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-[#84CC16]/45 bg-[#F7FEE7] text-[#558B00]">
               <ScanBarcode className="h-8 w-8" />
             </div>
-            <h2 className="mt-5 text-balance text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
+            <h2 className="mt-5 text-balance text-2xl font-bold tracking-tight text-slate-900 sm:text-4xl">
               Escanea un producto
             </h2>
-            <p className="mx-auto mt-2.5 max-w-md text-sm text-slate-600 sm:text-base">
+            <p className="mx-auto mt-3 max-w-md text-sm text-slate-600 sm:text-lg">
               Acerca el código de barras al lector para mostrar el precio de inmediato.
             </p>
           </section>
@@ -656,7 +780,7 @@ export const PriceCheckerView: React.FC<PriceCheckerViewProps> = ({
       </main>
 
       {/* Discreet Always-Active Scanner Bar (No Submit Button, No Enter Required) */}
-      <footer className="border-t border-slate-200 bg-white px-4 py-3 sm:px-6">
+      <footer className="shrink-0 border-t border-slate-200 bg-white px-4 py-2.5 sm:px-6">
         <div className="relative mx-auto w-full max-w-md">
           <ScanBarcode className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#558B00]" />
           <input
@@ -679,4 +803,10 @@ export const PriceCheckerView: React.FC<PriceCheckerViewProps> = ({
       </footer>
     </div>
   );
+
+  if (typeof document !== 'undefined') {
+    return createPortal(kioskContent, document.body);
+  }
+
+  return kioskContent;
 };
