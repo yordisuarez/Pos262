@@ -64,6 +64,7 @@ import { InventoryManager } from './components/InventoryManager';
 import { InventoryValuationPanel } from './components/InventoryValuationPanel';
 import { ReportsManager } from './components/ReportsManager';
 import { CostingManager } from './components/CostingManager';
+import { ServicesManager } from './components/ServicesManager';
 import { CloudAuthScreen } from './components/CloudAuthScreen';
 import { SettingsManager } from './components/SettingsManager';
 import { SubscriptionLockScreen } from './components/SubscriptionLockScreen';
@@ -138,6 +139,7 @@ type WorkspaceTab =
   | 'webCatalog'
   | 'reports'
   | 'costing'
+  | 'services'
   | 'settings'
   | 'subscriptions';
 
@@ -3903,6 +3905,26 @@ export default function App() {
               {activeTab === 'customers' && <Check className="h-3.5 w-3.5 shrink-0 text-[#558B00]" />}
             </button>
 
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setActiveTab('services');
+                setNavMenuOpen(false);
+              }}
+              className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold transition-colors cursor-pointer ${
+                activeTab === 'services'
+                  ? 'bg-[#F7FEE7] text-[#3F6212]'
+                  : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
+              }`}
+            >
+              <span className="inline-flex items-center gap-2">
+                <Smartphone className="h-3.5 w-3.5 shrink-0" />
+                <span>Servicios</span>
+              </span>
+              {activeTab === 'services' && <Check className="h-3.5 w-3.5 shrink-0 text-[#558B00]" />}
+            </button>
+
             {(isAdmin || permissions.viewInventory) && (
               <>
                 <button
@@ -4512,6 +4534,20 @@ export default function App() {
             onAddExpense={handleAddExpense}
             onUpdateExpense={handleUpdateExpense}
             onDeleteExpense={handleDeleteExpense}
+          />
+        </div>
+      )}
+
+      {activeTab === 'services' && activeCashier && (
+        <div className="flex-1 overflow-y-auto">
+          <ServicesManager
+            branches={branches}
+            activeBranchId={activeBranch.id}
+            activeCashier={activeCashier}
+            currency={currency}
+            exchangeRate={exchangeRate}
+            isBranchLocked={isBranchLocked}
+            onBack={() => setActiveTab('pos')}
           />
         </div>
       )}
