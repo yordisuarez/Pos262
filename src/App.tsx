@@ -3202,6 +3202,7 @@ export default function App() {
     setCart([]);
     setOrderNotes('');
     setPayments([]);
+    setSelectedCustomerId('');
   };
 
   const handleCopyReceipt = async (sale: Sale) => {
@@ -3435,7 +3436,10 @@ export default function App() {
           {cart.length > 0 && (
             <button
               type="button"
-              onClick={() => setCart([])}
+              onClick={() => {
+                setCart([]);
+                setSelectedCustomerId('');
+              }}
               className="text-[11px] font-medium text-slate-500 hover:text-red-600 transition-colors cursor-pointer whitespace-nowrap"
             >
               Vaciar
@@ -4711,6 +4715,7 @@ export default function App() {
                 onClick={() => {
                   setCheckoutOpen(false);
                   setCompletedSale(null);
+                  setSelectedCustomerId('');
                 }}
                 aria-label="Cerrar ventana de cobro"
                 className="rounded-md p-1 text-slate-500 hover:bg-slate-100 cursor-pointer"
@@ -4797,6 +4802,7 @@ export default function App() {
                   onClick={() => {
                     setCheckoutOpen(false);
                     setCompletedSale(null);
+                    setSelectedCustomerId('');
                   }}
                   className="w-full rounded-lg bg-slate-900 px-3.5 py-2 text-xs font-semibold text-white hover:bg-slate-800 transition-colors cursor-pointer"
                 >
