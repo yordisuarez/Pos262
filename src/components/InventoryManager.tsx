@@ -30,7 +30,7 @@ import type {
   StockTransfer,
   SupplierQuote,
 } from '../types/pos';
-import { CostingManager } from './CostingManager';
+import { BulkPricingCalculator } from './BulkPricingCalculator';
 import {
   compressProductImage,
   formatImageSize,
@@ -1845,23 +1845,11 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
               </button>
             </div>
             <div className="flex-1 overflow-y-auto">
-              <CostingManager
+              <BulkPricingCalculator
                 products={products}
-                branches={branches}
-                activeBranchId={activeBranchId}
-                activeCashier={activeCashier}
-                supplierQuotes={supplierQuotes || []}
-                expenses={expenses || []}
-                sales={sales || []}
                 currency={currency || 'USD'}
                 exchangeRate={exchangeRate}
-                isBranchLocked={isBranchLocked}
                 onUpdateProductPricing={onUpdateProductPricing || (async () => {})}
-                onAddSupplierQuote={onAddSupplierQuote || (async () => {})}
-                onDeleteSupplierQuote={onDeleteSupplierQuote || (async () => {})}
-                onAddExpense={onAddExpense || (async () => {})}
-                onUpdateExpense={onUpdateExpense || (async () => {})}
-                onDeleteExpense={onDeleteExpense || (async () => {})}
                 onBack={() => setCalculatorModalOpen(false)}
               />
             </div>
