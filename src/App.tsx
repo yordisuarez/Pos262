@@ -3899,6 +3899,50 @@ export default function App() {
               {activeTab === 'customers' && <Check className="h-3.5 w-3.5 shrink-0 text-[#558B00]" />}
             </button>
 
+            {(isAdmin || permissions.viewInventory) && (
+              <>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setActiveTab('valuation');
+                    setNavMenuOpen(false);
+                  }}
+                  className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold transition-colors cursor-pointer ${
+                    activeTab === 'valuation'
+                      ? 'bg-[#F7FEE7] text-[#3F6212]'
+                      : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
+                  }`}
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <TrendingUp className="h-3.5 w-3.5 shrink-0" />
+                    <span>Resumen financiero</span>
+                  </span>
+                  {activeTab === 'valuation' && <Check className="h-3.5 w-3.5 shrink-0 text-[#558B00]" />}
+                </button>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setActiveTab('inventory');
+                    setNavMenuOpen(false);
+                  }}
+                  className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold transition-colors cursor-pointer ${
+                    activeTab === 'inventory'
+                      ? 'bg-[#F7FEE7] text-[#3F6212]'
+                      : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
+                  }`}
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <Warehouse className="h-3.5 w-3.5 shrink-0" />
+                    <span>Inventario</span>
+                  </span>
+                  {activeTab === 'inventory' && <Check className="h-3.5 w-3.5 shrink-0 text-[#558B00]" />}
+                </button>
+              </>
+            )}
+
             <button
               type="button"
               role="menuitem"
@@ -3943,50 +3987,6 @@ export default function App() {
                   <Check className="h-3.5 w-3.5 shrink-0 text-[#558B00]" />
                 )}
               </button>
-            )}
-
-            {(isAdmin || permissions.viewInventory) && (
-              <>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setActiveTab('valuation');
-                    setNavMenuOpen(false);
-                  }}
-                  className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold transition-colors cursor-pointer ${
-                    activeTab === 'valuation'
-                      ? 'bg-[#F7FEE7] text-[#3F6212]'
-                      : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
-                  }`}
-                >
-                  <span className="inline-flex items-center gap-2">
-                    <TrendingUp className="h-3.5 w-3.5 shrink-0" />
-                    <span>Resumen financiero</span>
-                  </span>
-                  {activeTab === 'valuation' && <Check className="h-3.5 w-3.5 shrink-0 text-[#558B00]" />}
-                </button>
-
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setActiveTab('inventory');
-                    setNavMenuOpen(false);
-                  }}
-                  className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold transition-colors cursor-pointer ${
-                    activeTab === 'inventory'
-                      ? 'bg-[#F7FEE7] text-[#3F6212]'
-                      : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
-                  }`}
-                >
-                  <span className="inline-flex items-center gap-2">
-                    <Warehouse className="h-3.5 w-3.5 shrink-0" />
-                    <span>Inventario</span>
-                  </span>
-                  {activeTab === 'inventory' && <Check className="h-3.5 w-3.5 shrink-0 text-[#558B00]" />}
-                </button>
-              </>
             )}
 
             {(isAdmin || permissions.viewReports) && (

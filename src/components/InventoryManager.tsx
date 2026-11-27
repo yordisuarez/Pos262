@@ -3,6 +3,7 @@ import {
   ArrowLeftRight,
   ArrowRight,
   Building2,
+  Calculator,
   Camera,
   Check,
   CheckCircle2,
@@ -18,7 +19,18 @@ import {
   Warehouse,
   X,
 } from 'lucide-react';
-import type { Branch, Cashier, Product, Sale, StockTransfer } from '../types/pos';
+import type {
+  Branch,
+  Cashier,
+  CurrencyMode,
+  Expense,
+  ExpenseType,
+  Product,
+  Sale,
+  StockTransfer,
+  SupplierQuote,
+} from '../types/pos';
+import { CostingManager } from './CostingManager';
 import {
   compressProductImage,
   formatImageSize,
@@ -111,6 +123,38 @@ interface InventoryManagerProps {
   onUpdateProduct: (product: Product) => Promise<void>;
   onDeleteProduct: (productId: string) => Promise<void>;
   onOpenBranchSettings?: () => void;
+  supplierQuotes?: SupplierQuote[];
+  expenses?: Expense[];
+  currency?: CurrencyMode;
+  onUpdateProductPricing?: (productId: string, costUsd: number, priceUsd: number) => Promise<void>;
+  onAddSupplierQuote?: (params: {
+    supplierName: string;
+    supplierPhone?: string;
+    productId: string;
+    bulkCostUsd: number;
+    unitsPerBulk: number;
+    notes?: string;
+  }) => Promise<void>;
+  onDeleteSupplierQuote?: (quoteId: string) => Promise<void>;
+  onAddExpense?: (params: {
+    branchId: string;
+    type: ExpenseType;
+    category: string;
+    description: string;
+    amountUsd: number;
+    expenseDate: string;
+    notes?: string;
+  }) => Promise<void>;
+  onUpdateExpense?: (params: {
+    id: string;
+    branchId: string;
+    type: ExpenseType;
+    category: string;
+    description: string;
+    amountUsd: number;
+    expenseDate: string;
+  }) => Promise<void>;
+  onDeleteExpense?: (expenseId: string) => Promise<void>;
 }
 
 interface ProductFormState {
@@ -145,7 +189,17 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
   onUpdateProduct,
   onDeleteProduct,
   onOpenBranchSettings,
+  supplierQuotes,
+  expenses,
+  currency,
+  onUpdateProductPricing,
+  onAddSupplierQuote,
+  onDeleteSupplierQuote,
+  onAddExpense,
+  onUpdateExpense,
+  onDeleteExpense,
 }) => {
+  const [calculatorModalOpen, setCalculatorModalOpen] = useState<boolean>(false);
   const loadSectionRef = useRef<HTMLElement | null>(null);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
@@ -711,17 +765,17 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
             </div>
 
             {canEditInventory && (
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center justify-center gap-1.5 sm:gap-2">
                 <div className="relative">
                   <button
                     type="button"
                     onClick={() => setStockMovementMenuOpen((prev) => !prev)}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors whitespace-nowrap cursor-pointer"
+                    className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-[11px] sm:text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors whitespace-nowrap cursor-pointer"
                   >
-                    <ArrowLeftRight className="h-3.5 w-3.5 text-slate-500" />
-                    Movimientos de stock
+                    <ArrowLeftRight className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-slate-500" />
+                    Movimientos
                     <ChevronDown
-                      className={`h-3 w-3 transition-transform ${stockMovementMenuOpen ? 'rotate-180' : ''}`}
+                      className={`h-2.5 w-2.5 transition-transform ${stockMovementMenuOpen ? 'rotate-180' : ''}`}
                     />
                   </button>
 
@@ -759,10 +813,19 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
 
                 <button
                   type="button"
-                  onClick={openCreateProductModal}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-[#84CC16] px-3.5 py-1.5 text-xs font-bold text-slate-950 hover:bg-[#76B900] transition-colors whitespace-nowrap cursor-pointer"
+                  onClick={() => setCalculatorModalOpen(true)}
+                  className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-[11px] sm:text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors whitespace-nowrap cursor-pointer"
                 >
-                  <Plus className="h-3.5 w-3.5" />
+                  <Calculator className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-[#76B900]" />
+                  Calculadora
+                </button>
+
+                <button
+                  type="button"
+                  onClick={openCreateProductModal}
+                  className="inline-flex items-center gap-1 rounded-md bg-[#84CC16] px-2.5 py-1 text-[11px] sm:text-xs font-bold text-slate-950 hover:bg-[#76B900] transition-colors whitespace-nowrap cursor-pointer"
+                >
+                  <Plus className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
                   Nuevo producto
                 </button>
               </div>
@@ -1761,6 +1824,47 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {calculatorModalOpen && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-slate-950/60 p-2 sm:p-6 overflow-y-auto">
+          <div className="relative mx-auto w-full max-w-6xl flex-1 rounded-2xl border border-slate-200 bg-white shadow-2xl overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-3 shrink-0">
+              <div className="flex items-center gap-2">
+                <Calculator className="h-5 w-5 text-[#76B900]" />
+                <h3 className="text-sm font-bold text-slate-900">Calculadora de precios por bulto y margen</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCalculatorModalOpen(false)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+                Cerrar
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              <CostingManager
+                products={products}
+                branches={branches}
+                activeBranchId={activeBranchId}
+                activeCashier={activeCashier}
+                supplierQuotes={supplierQuotes || []}
+                expenses={expenses || []}
+                sales={sales || []}
+                currency={currency || 'USD'}
+                exchangeRate={exchangeRate}
+                isBranchLocked={isBranchLocked}
+                onUpdateProductPricing={onUpdateProductPricing || (async () => {})}
+                onAddSupplierQuote={onAddSupplierQuote || (async () => {})}
+                onDeleteSupplierQuote={onDeleteSupplierQuote || (async () => {})}
+                onAddExpense={onAddExpense || (async () => {})}
+                onUpdateExpense={onUpdateExpense || (async () => {})}
+                onDeleteExpense={onDeleteExpense || (async () => {})}
+                onBack={() => setCalculatorModalOpen(false)}
+              />
+            </div>
           </div>
         </div>
       )}
