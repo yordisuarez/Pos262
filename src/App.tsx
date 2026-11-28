@@ -3758,35 +3758,6 @@ export default function App() {
               aria-label="Módulos"
               className="inline-flex items-center gap-0.5 rounded-md border border-slate-200 bg-white p-0.5 shrink-0"
             >
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveTab('pos');
-                  setNavMenuOpen(false);
-                }}
-                className={`rounded px-1.5 py-1 text-[11px] sm:px-2 sm:text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                  activeTab === 'pos'
-                    ? 'bg-[#84CC16] text-slate-950'
-                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
-                }`}
-              >
-                POS
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveTab('shifts');
-                  setNavMenuOpen(false);
-                }}
-                className={`inline-flex items-center gap-1 rounded px-1.5 py-1 text-[11px] sm:px-2 sm:text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                  activeTab === 'shifts'
-                    ? 'bg-[#84CC16] text-slate-950'
-                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
-                }`}
-              >
-                <Lock className="h-3 w-3 shrink-0" />
-                Turnos
-              </button>
               {(() => {
                 const isGroupedTabActive =
                   activeTab === 'customers' ||
@@ -3824,6 +3795,35 @@ export default function App() {
                   </button>
                 );
               })()}
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('shifts');
+                  setNavMenuOpen(false);
+                }}
+                className={`inline-flex items-center gap-1 rounded px-1.5 py-1 text-[11px] sm:px-2 sm:text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                  activeTab === 'shifts'
+                    ? 'bg-[#84CC16] text-slate-950'
+                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                }`}
+              >
+                <Lock className="h-3 w-3 shrink-0" />
+                Turno
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('pos');
+                  setNavMenuOpen(false);
+                }}
+                className={`rounded px-1.5 py-1 text-[11px] sm:px-2 sm:text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                  activeTab === 'pos'
+                    ? 'bg-[#84CC16] text-slate-950'
+                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                }`}
+              >
+                POS
+              </button>
             </nav>
 
             <button
