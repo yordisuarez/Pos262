@@ -30,6 +30,8 @@ export interface BusinessSettings {
   phone: string;
   address: string;
   exchangeRate: number;
+  exchangeRateMode?: 'auto' | 'manual';
+  exchangeRateUpdatedAt?: string;
   updatedAt: string;
   syncStatus: SyncStatus;
   syncedAt?: string;
@@ -82,7 +84,8 @@ export type PaymentMethod =
   | 'Biopago'
   | 'Punto de Venta'
   | 'Efectivo Divisa $'
-  | 'Binance USDT';
+  | 'Binance USDT'
+  | 'Cashea';
 
 export interface SyncQueueItem {
   id: string;

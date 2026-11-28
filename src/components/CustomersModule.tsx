@@ -507,7 +507,7 @@ export const CustomersModule: React.FC<CustomersModuleProps> = ({
                     <span>Deuda pendiente</span>
                     <AlertCircle className="h-4 w-4 text-amber-600" />
                   </div>
-                  <div className="mt-2">
+                  <div className="mt-2 tabular-nums">
                     <p className="text-lg font-black text-slate-900">{formatUsd(customerMetrics.totalPendingUsd)}</p>
                     <p className="text-[11px] text-slate-500">{formatVes(customerMetrics.totalPendingVes)}</p>
                   </div>
@@ -518,7 +518,7 @@ export const CustomersModule: React.FC<CustomersModuleProps> = ({
                     <span>Total comprado</span>
                     <DollarSign className="h-4 w-4 text-[#76B900]" />
                   </div>
-                  <div className="mt-2">
+                  <div className="mt-2 tabular-nums">
                     <p className="text-lg font-black text-slate-900">{formatUsd(customerMetrics.totalPurchasedUsd)}</p>
                     <p className="text-[11px] text-slate-500">{formatVes(customerMetrics.totalPurchasedVes)}</p>
                   </div>
@@ -529,7 +529,7 @@ export const CustomersModule: React.FC<CustomersModuleProps> = ({
                     <span>Cantidad de compras</span>
                     <Receipt className="h-4 w-4 text-sky-600" />
                   </div>
-                  <div className="mt-2">
+                  <div className="mt-2 tabular-nums">
                     <p className="text-lg font-black text-slate-900">{customerMetrics.purchaseCount}</p>
                     <p className="text-[11px] text-slate-500">Transacciones registradas</p>
                   </div>
@@ -617,7 +617,7 @@ export const CustomersModule: React.FC<CustomersModuleProps> = ({
                           </div>
 
                           <div className="flex items-center justify-between md:justify-end gap-4">
-                            <div className="text-right">
+                            <div className="text-right tabular-nums">
                               <p className="text-xs font-extrabold text-slate-900">{formatUsd(sale.totalUsd)}</p>
                               {pending > 0 ? (
                                 <p className="text-[11px] font-semibold text-amber-600">

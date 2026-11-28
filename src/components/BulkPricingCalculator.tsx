@@ -45,11 +45,33 @@ export const BulkPricingCalculator: React.FC<BulkPricingCalculatorProps> = ({
   const [pricingFormula, setPricingFormula] = useState<'markup' | 'grossMargin'>('markup');
   const [pricingFeedback, setPricingFeedback] = useState<string>('');
 
+  const safeRate = Number.isFinite(exchangeRate) && exchangeRate > 0 ? exchangeRate : 1;
+
   useEffect(() => {
     if (products.length > 0 && !products.some((p) => p.id === calcProductId)) {
       setCalcProductId(products[0].id);
     }
   }, [products, calcProductId]);
+
+  const handleSelectProduct = (productId: string) => {
+    setCalcProductId(productId);
+    setPricingFeedback('');
+    const target = products.find((p) => p.id === productId);
+    if (target && target.costUsd > 0) {
+      const displayCost = bulkInputCurrency === 'VES' ? target.costUsd * safeRate : target.costUsd;
+      setBulkCostInput(displayCost.toFixed(2));
+      setUnitCountInput('1');
+    }
+  };
+
+  const handleToggleCurrency = (targetCurrency: CurrencyMode) => {
+    if (bulkInputCurrency === targetCurrency) return;
+    const currentVal = parseFloat(bulkCostInput.replace(',', '.')) || 0;
+    const currentUsd = bulkInputCurrency === 'VES' ? currentVal / safeRate : currentVal;
+    const nextVal = targetCurrency === 'VES' ? currentUsd * safeRate : currentUsd;
+    setBulkInputCurrency(targetCurrency);
+    setBulkCostInput(nextVal > 0 ? nextVal.toFixed(2) : '');
+  };
 
   const pricingCalc = useMemo(() => {
     const rawBulk = parseFloat(bulkCostInput.replace(',', '.'));
@@ -58,7 +80,7 @@ export const BulkPricingCalculator: React.FC<BulkPricingCalculatorProps> = ({
 
     const validBulk = Number.isFinite(rawBulk) && rawBulk > 0 ? rawBulk : 0;
     const bulkCostUsd =
-      bulkInputCurrency === 'VES' ? round2(validBulk / exchangeRate) : round2(validBulk);
+      bulkInputCurrency === 'VES' ? round2(validBulk / safeRate) : round2(validBulk);
     const validUnits = Number.isFinite(units) && units > 0 ? units : 1;
     const validMargin = Number.isFinite(margin) && margin >= 0 ? margin : 0;
 
@@ -79,9 +101,9 @@ export const BulkPricingCalculator: React.FC<BulkPricingCalculatorProps> = ({
     return {
       bulkCostUsd,
       unitCostUsd,
-      unitCostVes: round2(unitCostUsd * exchangeRate),
+      unitCostVes: round2(unitCostUsd * safeRate),
       salePriceUsd,
-      salePriceVes: round2(salePriceUsd * exchangeRate),
+      salePriceVes: round2(salePriceUsd * safeRate),
       profitPerUnitUsd,
       totalBulkProfitUsd,
       actualGrossMarginPct,
@@ -92,7 +114,7 @@ export const BulkPricingCalculator: React.FC<BulkPricingCalculatorProps> = ({
     unitCountInput,
     marginPercentInput,
     pricingFormula,
-    exchangeRate,
+    safeRate,
   ]);
 
   const handleApplyPricing = async () => {
@@ -218,10 +240,7 @@ export const BulkPricingCalculator: React.FC<BulkPricingCalculatorProps> = ({
                         type="button"
                         role="radio"
                         aria-checked={isSelected}
-                        onClick={() => {
-                          setCalcProductId(p.id);
-                          setPricingFeedback('');
-                        }}
+                        onClick={() => handleSelectProduct(p.id)}
                         className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left transition-colors cursor-pointer ${
                           isSelected
                             ? 'bg-[#F7FEE7]/70'
@@ -262,7 +281,7 @@ export const BulkPricingCalculator: React.FC<BulkPricingCalculatorProps> = ({
                   <div className="inline-flex gap-1.5 text-[11px] font-bold">
                     <button
                       type="button"
-                      onClick={() => setBulkInputCurrency('USD')}
+                      onClick={() => handleToggleCurrency('USD')}
                       className={`cursor-pointer ${
                         bulkInputCurrency === 'USD' ? 'text-[#558B00] underline' : 'text-slate-400'
                       }`}
@@ -271,7 +290,7 @@ export const BulkPricingCalculator: React.FC<BulkPricingCalculatorProps> = ({
                     </button>
                     <button
                       type="button"
-                      onClick={() => setBulkInputCurrency('VES')}
+                      onClick={() => handleToggleCurrency('VES')}
                       className={`cursor-pointer ${
                         bulkInputCurrency === 'VES' ? 'text-[#558B00] underline' : 'text-slate-400'
                       }`}

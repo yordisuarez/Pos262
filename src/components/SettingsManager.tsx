@@ -12,6 +12,7 @@ import {
   KeyRound,
   Lock,
   LogOut,
+  Moon,
   Pencil,
   Plus,
   Power,
@@ -79,7 +80,10 @@ interface SettingsManagerProps {
     phone: string;
     address: string;
     exchangeRate: number;
+    exchangeRateMode?: 'auto' | 'manual';
+    exchangeRateUpdatedAt?: string;
   }) => Promise<void>;
+  onRefreshAutoRate?: () => Promise<{ rate: number; updatedAt?: string } | null>;
   onSaveExchangeRate: (exchangeRate: number) => Promise<void>;
   onManualSync: () => Promise<string | null>;
   onSignOutCloud: () => Promise<void>;
@@ -113,6 +117,8 @@ interface SettingsManagerProps {
   }>;
   products?: Product[];
   onUpdateProduct?: (product: Product) => Promise<void>;
+  nightMode?: boolean;
+  onToggleNightMode?: () => void;
 }
 
 export const SettingsManager: React.FC<SettingsManagerProps> = ({
@@ -134,6 +140,7 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
   onSelectBranch,
   counts,
   onSaveBusinessSettings,
+  onRefreshAutoRate,
   onSaveExchangeRate,
   onManualSync,
   onSignOutCloud,
@@ -149,6 +156,8 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
   onResetOperationalData,
   products,
   onUpdateProduct,
+  nightMode = false,
+  onToggleNightMode,
 }) => {
   const CUSTOM_CATEGORIES_STORAGE_KEY = 'pos_262_custom_categories';
   const mergeSortedCategories = (cats: string[]): string[] => {
@@ -272,6 +281,15 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
   const [exchangeRateInput, setExchangeRateInput] = useState<string>(
     businessSettings.exchangeRate.toFixed(2)
   );
+  const [rateMode, setRateMode] = useState<'auto' | 'manual'>(
+    businessSettings.exchangeRateMode || 'auto'
+  );
+  const [isRefreshingRate, setIsRefreshingRate] = useState<boolean>(false);
+  const [rateStatusMessage, setRateStatusMessage] = useState<string>(
+    businessSettings.exchangeRateMode === 'manual'
+      ? 'Modo manual activo. Puedes editar la tasa libremente.'
+      : 'Tasa automática vinculada con DolarAPI.'
+  );
   const [quickRateInput, setQuickRateInput] = useState<string>(
     businessSettings.exchangeRate.toFixed(2)
   );
@@ -391,6 +409,8 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
         phone: phone.trim(),
         address: address.trim(),
         exchangeRate: Math.round((parsedRate + Number.EPSILON) * 100) / 100,
+        exchangeRateMode: rateMode,
+        exchangeRateUpdatedAt: new Date().toISOString(),
       });
       setSaveMessage(
         cloudUser && isOnline
@@ -1801,6 +1821,42 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 space-y-4">
+        <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
+          <Moon className="h-4 w-4 text-[#76B900]" />
+          <div>
+            <h2 className="text-sm font-bold text-slate-900">Apariencia y Tema</h2>
+            <p className="text-xs text-slate-500">
+              Personaliza el aspecto visual del punto de venta
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between py-1">
+          <div>
+            <p className="text-xs font-semibold text-slate-900">Modo nocturno</p>
+            <p className="text-[11px] text-slate-500">
+              Cambia entre el tema claro tradicional y un tema nocturno de alto contraste para ambientes oscuros.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => onToggleNightMode?.()}
+            className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+              nightMode ? 'bg-[#84CC16]' : 'bg-slate-300'
+            }`}
+            role="switch"
+            aria-checked={nightMode}
+          >
+            <span
+              className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                nightMode ? 'translate-x-5' : 'translate-x-0'
+              }`}
+            />
+          </button>
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 space-y-4">
         <div className="flex items-center justify-between border-b border-slate-200 pb-3">
           <div className="flex items-center gap-2">
             <Store className="h-4 w-4 text-[#76B900]" />
@@ -1867,20 +1923,110 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
             />
           </div>
 
-          <div>
-            <label htmlFor="settings-rate" className="block text-xs font-semibold text-slate-700">
-              Tasa diaria de cambio (Bs / $) *
-            </label>
-            <input
-              id="settings-rate"
-              type="number"
-              step="0.01"
-              min="0.01"
-              required
-              value={exchangeRateInput}
-              onChange={(e) => setExchangeRateInput(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 font-mono text-xs font-bold tabular-nums text-[#558B00] focus:border-[#76B900] focus:bg-white focus:outline-none"
-            />
+          <div className="sm:col-span-2 space-y-2.5 rounded-lg border border-slate-200 bg-slate-50/70 p-3.5">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <div>
+                <label className="block text-xs font-bold text-slate-900">
+                  Modo de Tasa de Cambio (Bs / $) *
+                </label>
+                <p className="text-[11px] text-slate-500">
+                  Selecciona tasa automática o tasa manual personalizada.
+                </p>
+              </div>
+              <div className="flex items-center gap-1.5 bg-slate-200/70 p-1 rounded-lg">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setRateMode('auto');
+                    if (onRefreshAutoRate) {
+                      setIsRefreshingRate(true);
+                      const res = await onRefreshAutoRate();
+                      setIsRefreshingRate(false);
+                      if (res) {
+                        setExchangeRateInput(res.rate.toFixed(2));
+                        setRateStatusMessage('Tasa automática actualizada correctamente desde DolarAPI.');
+                      } else {
+                        setRateStatusMessage('No se pudo conectar con DolarAPI (usando última tasa guardada). Cambia a tasa manual si deseas fijarla tú mismo.');
+                      }
+                    }
+                  }}
+                  className={`rounded px-3 py-1 text-xs font-semibold transition-colors cursor-pointer ${
+                    rateMode === 'auto'
+                      ? 'bg-[#84CC16] text-slate-950 shadow-xs font-bold'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Tasa automática
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRateMode('manual');
+                    setRateStatusMessage('Modo manual activo. Puedes editar la tasa libremente.');
+                  }}
+                  className={`rounded px-3 py-1 text-xs font-semibold transition-colors cursor-pointer ${
+                    rateMode === 'manual'
+                      ? 'bg-white text-slate-900 shadow-xs font-bold'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Tasa manual
+                </button>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-1">
+              <div className="flex-1">
+                <label htmlFor="settings-rate" className="block text-[11px] font-semibold text-slate-700 mb-1">
+                  Valor actual (Bs / $)
+                </label>
+                <input
+                  id="settings-rate"
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  required
+                  disabled={rateMode === 'auto'}
+                  value={exchangeRateInput}
+                  onChange={(e) => setExchangeRateInput(e.target.value)}
+                  className={`w-full rounded-lg border border-slate-200 py-1.5 px-3 font-mono text-xs font-bold tabular-nums text-[#558B00] focus:border-[#76B900] focus:bg-white focus:outline-none ${
+                    rateMode === 'auto' ? 'bg-slate-100 cursor-not-allowed opacity-80' : 'bg-white'
+                  }`}
+                />
+              </div>
+
+              {rateMode === 'auto' && (
+                <div className="sm:self-end">
+                  <button
+                    type="button"
+                    disabled={isRefreshingRate}
+                    onClick={async () => {
+                      if (onRefreshAutoRate) {
+                        setIsRefreshingRate(true);
+                        const res = await onRefreshAutoRate();
+                        setIsRefreshingRate(false);
+                        if (res) {
+                          setExchangeRateInput(res.rate.toFixed(2));
+                          setRateStatusMessage('Tasa actualizada correctamente desde DolarAPI.');
+                        } else {
+                          setRateStatusMessage('No se pudo conectar con DolarAPI (usando última tasa guardada). Cambia a tasa manual si deseas fijarla tú mismo.');
+                        }
+                      }
+                    }}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 text-slate-500 ${isRefreshingRate ? 'animate-spin' : ''}`} />
+                    <span>Actualizar ahora</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {rateStatusMessage && (
+              <p className={`text-[11px] font-medium pt-1 ${rateStatusMessage.includes('No se pudo') ? 'text-amber-700' : 'text-slate-600'}`}>
+                {rateStatusMessage}
+              </p>
+            )}
           </div>
 
           <div className="sm:col-span-2">

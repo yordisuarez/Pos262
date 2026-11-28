@@ -157,6 +157,7 @@ const PAYMENT_METHODS: Array<{
   { method: 'Punto de Venta', currency: 'VES', requiresRef: true },
   { method: 'Efectivo Divisa $', currency: 'USD', requiresRef: false },
   { method: 'Binance USDT', currency: 'USD', requiresRef: true },
+  { method: 'Cashea', currency: 'USD', requiresRef: false },
 ];
 
 const getInitialLastPaymentMethod = (): PaymentMethod => {
@@ -499,6 +500,80 @@ export default function App() {
 
   const [historyOpen, setHistoryOpen] = useState<boolean>(false);
   const [historyTab, setHistoryTab] = useState<'queue' | 'sales'>('queue');
+
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'F1') {
+        e.preventDefault();
+        if (activeTab !== 'pos') {
+          setActiveTab('pos');
+        }
+        setTimeout(() => {
+          if (searchInputRef.current) {
+            searchInputRef.current.focus();
+            searchInputRef.current.select();
+          }
+        }, 50);
+      } else if (e.key === 'F2') {
+        e.preventDefault();
+        if (activeTab !== 'pos') {
+          setActiveTab('pos');
+        }
+        setTimeout(() => {
+          if (cart.length > 0 && !checkoutOpen && activeCashier) {
+            openCheckoutModal();
+          }
+        }, 50);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [activeTab, cart.length, checkoutOpen, activeCashier]);
+
+  const [cartDragStartY, setCartDragStartY] = useState<number | null>(null);
+  const [cartDragCurrentY, setCartDragCurrentY] = useState<number>(0);
+  const [isCartDragging, setIsCartDragging] = useState<boolean>(false);
+
+  const handleCartPointerDown = (e: React.PointerEvent) => {
+    setCartDragStartY(e.clientY);
+    setIsCartDragging(true);
+    setCartDragCurrentY(0);
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {
+      // Ignore
+    }
+  };
+
+  const handleCartPointerMove = (e: React.PointerEvent) => {
+    if (!isCartDragging || cartDragStartY === null) return;
+    const deltaY = e.clientY - cartDragStartY;
+    if (deltaY > 0) {
+      setCartDragCurrentY(deltaY);
+    } else {
+      setCartDragCurrentY(0);
+    }
+  };
+
+  const handleCartPointerUp = (e: React.PointerEvent) => {
+    if (!isCartDragging) return;
+    setIsCartDragging(false);
+    setCartDragStartY(null);
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {
+      // Ignore
+    }
+    if (cartDragCurrentY > 90) {
+      setMobileCartOpen(false);
+    }
+    setCartDragCurrentY(0);
+  };
 
   // PWA Install Prompt state
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
@@ -968,12 +1043,62 @@ export default function App() {
     }
   };
 
+  const fetchOfficialExchangeRate = useCallback(async (): Promise<{ rate: number; updatedAt?: string } | null> => {
+    try {
+      const res = await fetch('https://ve.dolarapi.com/v1/dolares/oficial', {
+        headers: { Accept: 'application/json' },
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      const rateVal = Number(data?.promedio ?? data?.rate ?? data?.price);
+      if (Number.isFinite(rateVal) && rateVal > 0) {
+        return {
+          rate: Math.round((rateVal + Number.EPSILON) * 100) / 100,
+          updatedAt: data?.fechaActualizacion || new Date().toISOString(),
+        };
+      }
+    } catch {
+      // Offline or network error
+    }
+    return null;
+  }, []);
+
+  const handleRefreshAutoRate = useCallback(async (): Promise<{ rate: number; updatedAt?: string } | null> => {
+    const fetched = await fetchOfficialExchangeRate();
+    if (fetched) {
+      const nowIso = new Date().toISOString();
+      const updated: BusinessSettings = {
+        ...businessSettings,
+        exchangeRate: fetched.rate,
+        exchangeRateMode: 'auto',
+        exchangeRateUpdatedAt: fetched.updatedAt || nowIso,
+        updatedAt: nowIso,
+        syncStatus: 'pending',
+      };
+      await saveLocalBusinessSettings(updated);
+      await db.syncQueue.put(
+        buildSyncQueueItem({
+          entityType: 'businessSettings',
+          entityId: 'business_settings',
+          operation: 'update',
+          summary: `Tasa automática actualizada: Bs ${fetched.rate.toFixed(2)}`,
+          timestamp: nowIso,
+        })
+      );
+      await reloadAllData();
+      return fetched;
+    }
+    return null;
+  }, [businessSettings, reloadAllData, fetchOfficialExchangeRate]);
+
   const handleSaveBusinessSettings = async (next: {
     businessName: string;
     rif: string;
     phone: string;
     address: string;
     exchangeRate: number;
+    exchangeRateMode?: 'auto' | 'manual';
+    exchangeRateUpdatedAt?: string;
   }) => {
     if (!isAdminUser(activeCashier)) return;
     const cleanBusinessName = next.businessName.trim().slice(0, 120);
@@ -987,6 +1112,8 @@ export default function App() {
       phone: next.phone.trim().slice(0, 30),
       address: next.address.trim().slice(0, 240),
       exchangeRate: round2(next.exchangeRate),
+      exchangeRateMode: next.exchangeRateMode || businessSettings.exchangeRateMode || 'auto',
+      exchangeRateUpdatedAt: next.exchangeRateUpdatedAt || businessSettings.exchangeRateUpdatedAt || nowIso,
       updatedAt: nowIso,
       syncStatus: 'pending',
     };
@@ -1206,6 +1333,189 @@ export default function App() {
     }
     return activeBranches.find((b) => b.id === activeBranchId) || activeBranches[0] || branches[0];
   }, [isBranchLocked, lockedBranchId, activeBranches, branches, activeBranchId]);
+
+  const recordConfirmedCasheaSale = async (pendingData: any) => {
+    if (!activeBranch || !activeCashier) return;
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const receiptNumber = `P262-${String(sales.length + 1).padStart(4, '0')}`;
+    const customer = customers.find((c) => c.id === pendingData.selectedCustomerId);
+
+    const newSale: Sale = {
+      id: `sale-${now.getTime()}`,
+      receiptNumber,
+      branchId: activeBranch.id,
+      branchName: activeBranch.name,
+      cashierId: activeCashier.id,
+      cashierName: activeCashier.name,
+      shiftId: activeShift?.id,
+      customerId: customer?.id ?? 'generic-client',
+      customerName: customer?.name ?? 'Cliente Cashea',
+      customerPhone: customer?.phone,
+      saleType: 'cash',
+      items: pendingData.cart,
+      exchangeRate: pendingData.exchangeRate,
+      subtotalUsd: pendingData.totalUsd,
+      taxRate: 0.16,
+      taxUsd: round2((pendingData.totalUsd * 0.16) / 1.16),
+      totalUsd: pendingData.totalUsd,
+      totalVes: pendingData.totalVes,
+      paidUsd: pendingData.totalUsd,
+      pendingUsd: 0,
+      changeUsd: 0,
+      payments: [
+        {
+          method: 'Cashea',
+          amountUsd: pendingData.totalUsd,
+          amountVes: pendingData.totalVes,
+        },
+      ],
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      syncStatus: 'pending',
+    };
+
+    const queueItem = buildSyncQueueItem({
+      entityType: 'sale',
+      entityId: newSale.id,
+      operation: 'create',
+      summary: `Venta Cashea ${receiptNumber} ${formatUsd(newSale.totalUsd)}`,
+      timestamp: nowIso,
+    });
+
+    await db.transaction('rw', [db.sales, db.products, db.customers, db.syncQueue], async () => {
+      await db.sales.put(newSale);
+      for (const item of pendingData.cart) {
+        const prod = await db.products.get(item.productId);
+        if (prod) {
+          const currentStock = prod.stockByBranch[activeBranch.id] ?? 0;
+          await db.products.update(prod.id, {
+            stockByBranch: {
+              ...prod.stockByBranch,
+              [activeBranch.id]: Math.max(0, roundQty(currentStock - item.quantity)),
+            },
+            updatedAt: nowIso,
+            syncStatus: 'pending',
+          });
+        }
+      }
+      await db.syncQueue.put(queueItem);
+    });
+
+    setCart([]);
+    setCheckoutOpen(false);
+    await reloadAllData();
+  };
+
+  const handleInitiateCasheaCheckout = async () => {
+    if (!selectedCustomer || !selectedCustomer.documentId?.trim()) {
+      setCheckoutError('Selecciona un cliente válido con Cédula / RIF para procesar con Cashea.');
+      return;
+    }
+    if (cart.length === 0 || !activeCashier) return;
+
+    const customerDoc = selectedCustomer.documentId.trim();
+    const casheaOrderPayload = {
+      identificationNumber: customerDoc,
+      externalClientId: selectedCustomer.id,
+      deliveryMethod: 'IN_STORE',
+      merchantName: businessSettings?.businessName || 'Pos 262',
+      deliveryPrice: 0,
+      redirectUrl: `${window.location.origin}${window.location.pathname}?cashea_checkout=return&idNumber=${encodeURIComponent(customerDoc)}`,
+      orders: [
+        {
+          store: activeBranch?.name || 'Principal',
+          products: cart.map((item) => ({
+            id: item.productId,
+            name: item.name,
+            sku: item.sku,
+            description: item.name,
+            imageUrl: products.find((p) => p.id === item.productId)?.imageUrl || '',
+            quantity: item.quantity,
+            price: item.priceUsd,
+            tax: 0,
+            discount: 0,
+          })),
+        },
+      ],
+    };
+
+    const pendingSaleObject = {
+      cart: [...cart],
+      saleType,
+      selectedCustomerId: selectedCustomer.id,
+      customerName: selectedCustomer.name,
+      exchangeRate,
+      totalUsd: cartTotals.totalUsd,
+      totalVes: cartTotals.totalVes,
+      branchId: activeBranch?.id || '',
+      branchName: activeBranch?.name || '',
+      cashierId: activeCashier.id,
+      cashierName: activeCashier.name,
+    };
+
+    try {
+      sessionStorage.setItem('pos_cashea_pending_sale', JSON.stringify(pendingSaleObject));
+      const publicKey = import.meta.env.VITE_CASHEA_PUBLIC_KEY || 'public_key_demo';
+      const res = await fetch('https://external.cashea.app/orders', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `ApiKey ${publicKey}`,
+        },
+        body: JSON.stringify(casheaOrderPayload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && (data.redirectUrl || data.url)) {
+        window.location.href = data.redirectUrl || data.url;
+      } else {
+        window.location.href = `https://external.cashea.app/checkout?idNumber=${encodeURIComponent(customerDoc)}`;
+      }
+    } catch (e: any) {
+      setCheckoutError(`Error al conectar con Cashea: ${e.message || 'Verifica tu conexión'}`);
+    }
+  };
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('cashea_checkout') === 'return' && params.get('idNumber')) {
+      const idNumber = params.get('idNumber')!;
+      const verifyCasheaOrder = async () => {
+        try {
+          showTemporarySyncNotice('Verificando pago de Cashea con el servidor...');
+          const pendingSaleRaw = sessionStorage.getItem('pos_cashea_pending_sale');
+          const pendingSaleData = pendingSaleRaw ? JSON.parse(pendingSaleRaw) : null;
+          const amountVes = pendingSaleData?.totalVes || 1000;
+
+          const response = await fetch(`/api/cashea/orders/${encodeURIComponent(idNumber)}/down-payment`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ amount: amountVes }),
+          });
+
+          if (response.status === 201 || response.ok) {
+            if (pendingSaleData && activeBranch && activeCashier) {
+              await recordConfirmedCasheaSale(pendingSaleData);
+              sessionStorage.removeItem('pos_cashea_pending_sale');
+              showTemporarySyncNotice('¡Pago con Cashea confirmado exitosamente! Venta registrada.');
+            } else {
+              showTemporarySyncNotice('¡Pago con Cashea confirmado con éxito!');
+            }
+          } else {
+            const errData = await response.json().catch(() => ({}));
+            showTemporarySyncNotice(`No se pudo confirmar el pago de Cashea: ${errData.error || 'Error en servidor'}`);
+          }
+        } catch (err: any) {
+          showTemporarySyncNotice(`Error al verificar Cashea: ${err.message || 'Error de red'}`);
+        } finally {
+          window.history.replaceState({}, '', window.location.pathname);
+        }
+      };
+      verifyCasheaOrder();
+    }
+  }, [activeBranch, activeCashier]);
 
   const handleCreateInternalUser = async (params: {
     name: string;
@@ -3496,6 +3806,7 @@ export default function App() {
           type="button"
           disabled={cart.length === 0 || !activeCashier}
           onClick={openCheckoutModal}
+          title="Finalizar cobro (F2)"
           className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-[#84CC16] px-3 py-2 text-xs font-bold text-slate-950 hover:bg-[#76B900] disabled:bg-slate-200 disabled:text-slate-400 transition-colors cursor-pointer disabled:cursor-not-allowed"
         >
           <CreditCard className="h-3.5 w-3.5" />
@@ -4118,11 +4429,13 @@ export default function App() {
                     <div className="relative flex-1">
                       <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
                       <input
+                        ref={searchInputRef}
                         type="search"
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         onKeyDown={handleSearchKeyDown}
-                        placeholder="Buscar por nombre, SKU o código de barras (Enter)..."
+                        placeholder="Buscar por nombre, SKU o código de barras (Enter, F1)..."
+                        title="Atajo: F1"
                         className="w-full rounded-md border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-3 text-xs text-slate-900 placeholder:text-slate-400 focus:border-[#76B900] focus:bg-white focus:outline-none"
                       />
                     </div>
@@ -4405,6 +4718,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={openCheckoutModal}
+                  title="Finalizar cobro (F2)"
                   className="rounded-lg bg-[#84CC16] px-3.5 py-2 text-xs font-bold text-slate-950 hover:bg-[#76B900] whitespace-nowrap shrink-0 cursor-pointer"
                 >
                   Cobrar
@@ -4581,6 +4895,7 @@ export default function App() {
               expenses: expenses.length,
             }}
             onSaveBusinessSettings={handleSaveBusinessSettings}
+            onRefreshAutoRate={handleRefreshAutoRate}
             onSaveExchangeRate={handleSaveExchangeRate}
             onManualSync={async () => {
               const result = await triggerSyncQueue('manual');
@@ -4695,12 +5010,28 @@ export default function App() {
             aria-modal="true"
             aria-label="Carrito de compras"
             onClick={(e) => e.stopPropagation()}
+            style={{
+              transform: isCartDragging || cartDragCurrentY > 0 ? `translateY(${cartDragCurrentY}px)` : undefined,
+              transition: isCartDragging ? 'none' : 'transform 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
+            }}
             className="pos-bottom-sheet flex max-h-[86vh] w-full flex-col overflow-hidden rounded-t-2xl border-t border-slate-200 bg-white shadow-2xl supports-[height:100dvh]:max-h-[86dvh]"
           >
-            <div className="flex shrink-0 justify-center pt-2 pb-1">
+            <div
+              onPointerDown={handleCartPointerDown}
+              onPointerMove={handleCartPointerMove}
+              onPointerUp={handleCartPointerUp}
+              onPointerCancel={handleCartPointerUp}
+              className="flex shrink-0 justify-center pt-2 pb-1 cursor-grab active:cursor-grabbing touch-none select-none"
+            >
               <span className="h-1.5 w-10 rounded-full bg-slate-300" aria-hidden="true" />
             </div>
-            <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-3.5 py-2">
+            <div
+              onPointerDown={handleCartPointerDown}
+              onPointerMove={handleCartPointerMove}
+              onPointerUp={handleCartPointerUp}
+              onPointerCancel={handleCartPointerUp}
+              className="flex shrink-0 items-center justify-between border-b border-slate-200 px-3.5 py-2 cursor-grab active:cursor-grabbing touch-none select-none"
+            >
               <h2 className="text-sm font-bold text-slate-900">
                 Carrito ({formatQuantity(cartTotals.itemCount)})
               </h2>
@@ -5030,43 +5361,58 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-12">
-                  <div className="sm:col-span-5">
-                    <label className="block text-xs font-medium text-slate-600">
-                      Monto ({activeMethodConfig.currency === 'VES' ? 'Bs' : 'USD $'})
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={paymentAmountInput}
-                      onChange={(e) => setPaymentAmountInput(e.target.value)}
-                      placeholder="0.00"
-                      className="mt-1 w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs font-bold tabular-nums text-slate-900 focus:border-[#76B900] focus:outline-none"
-                    />
-                  </div>
-                  <div className="sm:col-span-4">
-                    <label className="block text-xs font-medium text-slate-600">
-                      Referencia {activeMethodConfig.requiresRef ? '(últimos 4-6)' : '(opcional)'}
-                    </label>
-                    <input
-                      type="text"
-                      value={paymentReference}
-                      onChange={(e) => setPaymentReference(e.target.value)}
-                      placeholder="Ej: 482910"
-                      className="mt-1 w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs text-slate-900 focus:border-[#76B900] focus:outline-none"
-                    />
-                  </div>
-                  <div className="flex items-end sm:col-span-3">
+                {selectedMethod === 'Cashea' ? (
+                  <div className="rounded-lg border border-[#84CC16]/40 bg-[#F7FEE7] p-4 text-center space-y-3">
+                    <p className="text-xs font-semibold text-[#3F6212]">
+                      Financiamiento con Cashea. Serás redirigido de forma segura para completar el pago.
+                    </p>
                     <button
                       type="button"
-                      onClick={handleAddPaymentLine}
-                      className="w-full rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-100 transition-colors whitespace-nowrap cursor-pointer"
+                      onClick={handleInitiateCasheaCheckout}
+                      className="w-full rounded-lg bg-[#84CC16] px-4 py-2.5 text-xs font-bold text-slate-950 hover:bg-[#76B900] transition-colors cursor-pointer shadow-sm"
                     >
-                      + Agregar
+                      Pagar con Cashea ({formatUsd(cartTotals.totalUsd)} / {formatVes(cartTotals.totalVes)})
                     </button>
                   </div>
-                </div>
+                ) : (
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-12">
+                    <div className="sm:col-span-5">
+                      <label className="block text-xs font-medium text-slate-600">
+                        Monto ({activeMethodConfig.currency === 'VES' ? 'Bs' : 'USD $'})
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={paymentAmountInput}
+                        onChange={(e) => setPaymentAmountInput(e.target.value)}
+                        placeholder="0.00"
+                        className="mt-1 w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs font-bold tabular-nums text-slate-900 focus:border-[#76B900] focus:outline-none"
+                      />
+                    </div>
+                    <div className="sm:col-span-4">
+                      <label className="block text-xs font-medium text-slate-600">
+                        Referencia {activeMethodConfig.requiresRef ? '(últimos 4-6)' : '(opcional)'}
+                      </label>
+                      <input
+                        type="text"
+                        value={paymentReference}
+                        onChange={(e) => setPaymentReference(e.target.value)}
+                        placeholder="Ej: 482910"
+                        className="mt-1 w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs text-slate-900 focus:border-[#76B900] focus:outline-none"
+                      />
+                    </div>
+                    <div className="flex items-end sm:col-span-3">
+                      <button
+                        type="button"
+                        onClick={handleAddPaymentLine}
+                        className="w-full rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-100 transition-colors whitespace-nowrap cursor-pointer"
+                      >
+                        + Agregar
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {payments.length > 0 && (
                   <div className="divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white">

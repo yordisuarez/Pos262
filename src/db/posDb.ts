@@ -111,6 +111,8 @@ const ACCOUNT_SCOPED_SETTING_KEYS = [
   'businessPhone',
   'businessAddress',
   'exchangeRate',
+  'exchangeRateMode',
+  'exchangeRateUpdatedAt',
   'businessSettingsUpdatedAt',
   'businessSettingsSyncStatus',
   'businessSettingsSyncedAt',
@@ -155,6 +157,8 @@ export const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   phone: '',
   address: '',
   exchangeRate: 1,
+  exchangeRateMode: 'auto',
+  exchangeRateUpdatedAt: '',
   updatedAt: new Date(0).toISOString(),
   syncStatus: 'synced',
 };
@@ -166,6 +170,8 @@ export async function getLocalBusinessSettings(): Promise<BusinessSettings> {
     'businessPhone',
     'businessAddress',
     'exchangeRate',
+    'exchangeRateMode',
+    'exchangeRateUpdatedAt',
     'businessSettingsUpdatedAt',
     'businessSettingsSyncStatus',
     'businessSettingsSyncedAt',
@@ -182,6 +188,10 @@ export async function getLocalBusinessSettings(): Promise<BusinessSettings> {
       ? parsedRate
       : DEFAULT_BUSINESS_SETTINGS.exchangeRate;
 
+  const rawMode = map.get('exchangeRateMode');
+  const exchangeRateMode = rawMode === 'manual' ? 'manual' : 'auto';
+  const exchangeRateUpdatedAt = map.get('exchangeRateUpdatedAt') || '';
+
   const rawSyncStatus = map.get('businessSettingsSyncStatus');
   const syncStatus = rawSyncStatus === 'pending' ? 'pending' : 'synced';
 
@@ -191,6 +201,8 @@ export async function getLocalBusinessSettings(): Promise<BusinessSettings> {
     phone: map.get('businessPhone') ?? DEFAULT_BUSINESS_SETTINGS.phone,
     address: map.get('businessAddress') ?? DEFAULT_BUSINESS_SETTINGS.address,
     exchangeRate,
+    exchangeRateMode,
+    exchangeRateUpdatedAt,
     updatedAt: map.get('businessSettingsUpdatedAt') || DEFAULT_BUSINESS_SETTINGS.updatedAt,
     syncStatus,
     syncedAt: map.get('businessSettingsSyncedAt') || undefined,
@@ -204,6 +216,8 @@ export async function saveLocalBusinessSettings(settings: BusinessSettings): Pro
     { key: 'businessPhone', value: settings.phone },
     { key: 'businessAddress', value: settings.address },
     { key: 'exchangeRate', value: settings.exchangeRate.toFixed(2) },
+    { key: 'exchangeRateMode', value: settings.exchangeRateMode || 'auto' },
+    { key: 'exchangeRateUpdatedAt', value: settings.exchangeRateUpdatedAt || '' },
     { key: 'businessSettingsUpdatedAt', value: settings.updatedAt },
     { key: 'businessSettingsSyncStatus', value: settings.syncStatus },
   ];
