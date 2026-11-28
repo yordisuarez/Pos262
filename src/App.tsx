@@ -203,36 +203,59 @@ function buildWhatsAppReceiptText(sale: Sale, business?: BusinessSettings): stri
     timeStyle: 'short',
   });
   const businessTitle = business?.businessName || 'Pos 262';
-  const lines: string[] = [
-    `*${businessTitle} — ${sale.branchName}*`,
-    ...(business?.rif ? [`RIF: ${business.rif}`] : []),
-    `Recibo: ${sale.receiptNumber}`,
-    `Fecha: ${dateLabel}`,
-    `Cajero: ${sale.cashierName}`,
-    `Cliente: ${formatCustomerName(sale.customerName)}`,
-    `Modalidad: ${sale.saleType === 'cash' ? 'Contado' : 'Crédito'}`,
-    `Tasa aplicada: Bs ${sale.exchangeRate.toFixed(2)} / $`,
-    '------------------------------',
-  ];
+  const lines: string[] = [];
 
-  sale.items.forEach((item) => {
-    const lineUsd = round2(item.priceUsd * item.quantity);
-    const lineVes = round2(lineUsd * sale.exchangeRate);
-    const qtyText = isWeightOrVolumeUnit(item.unit)
-      ? `${formatQuantity(item.quantity)} ${item.unit} x ${item.name}`
-      : `${formatQuantity(item.quantity)}x ${item.name}`;
-    lines.push(qtyText);
-    lines.push(`   ${formatUsd(lineUsd)} (${formatVes(lineVes)})`);
-  });
+  if (business?.customHeader) {
+    lines.push(business.customHeader);
+    lines.push('------------------------------');
+  }
 
+  const headerTitle = business?.showBranchName !== false
+    ? `*${businessTitle} — ${sale.branchName}*`
+    : `*${businessTitle}*`;
+  lines.push(headerTitle);
+  if (business?.rif) lines.push(`RIF: ${business.rif}`);
+  if (business?.address) lines.push(`Dirección: ${business.address}`);
+  if (business?.phone) lines.push(`Teléfono: ${business.phone}`);
+  lines.push(`Recibo: ${sale.receiptNumber}`);
+  lines.push(`Fecha: ${dateLabel}`);
+  lines.push(`Cajero: ${sale.cashierName}`);
+  if (business?.showCustomerInfo !== false) {
+    lines.push(`Cliente: ${formatCustomerName(sale.customerName)}`);
+  }
+  lines.push(`Modalidad: ${sale.saleType === 'cash' ? 'Contado' : 'Crédito'}`);
+  if (business?.showExchangeRateLine !== false) {
+    lines.push(`Tasa aplicada: Bs ${sale.exchangeRate.toFixed(2)} / $`);
+  }
   lines.push('------------------------------');
+
+  if (business?.showItemLines !== false) {
+    sale.items.forEach((item) => {
+      const lineUsd = round2(item.priceUsd * item.quantity);
+      const lineVes = round2(lineUsd * sale.exchangeRate);
+      const qtyText = isWeightOrVolumeUnit(item.unit)
+        ? `${formatQuantity(item.quantity)} ${item.unit} x ${item.name}`
+        : `${formatQuantity(item.quantity)}x ${item.name}`;
+      lines.push(qtyText);
+      const priceParts: string[] = [];
+      if (business?.showUsdReference !== false) priceParts.push(formatUsd(lineUsd));
+      if (business?.showBsTotal !== false) priceParts.push(formatVes(lineVes));
+      lines.push(`   ${priceParts.join(' / ') || formatUsd(lineUsd)}`);
+    });
+    lines.push('------------------------------');
+  }
+
   lines.push(`Subtotal: ${formatUsd(sale.subtotalUsd)}`);
   if (sale.taxUsd > 0) {
     lines.push(`IVA (${Math.round(sale.taxRate * 100)}%): ${formatUsd(sale.taxUsd)}`);
   }
-  lines.push(`*TOTAL: ${formatUsd(sale.totalUsd)} / ${formatVes(sale.totalVes)}*`);
 
-  if (sale.payments.length > 0) {
+  const totalParts: string[] = [];
+  if (business?.showUsdReference !== false) totalParts.push(formatUsd(sale.totalUsd));
+  if (business?.showBsTotal !== false) totalParts.push(formatVes(sale.totalVes));
+  lines.push(`*TOTAL: ${totalParts.join(' / ') || formatUsd(sale.totalUsd)}*`);
+
+  if (business?.showPaymentMethod !== false && sale.payments.length > 0) {
     lines.push('Pagos:');
     sale.payments.forEach((p) => {
       const refText = p.reference ? ` [Ref: ${p.reference}]` : '';
@@ -252,6 +275,15 @@ function buildWhatsAppReceiptText(sale: Sale, business?: BusinessSettings): stri
     lines.push(
       `Vuelto: ${formatUsd(sale.changeUsd)} (${formatVes(round2(sale.changeUsd * sale.exchangeRate))})`
     );
+  }
+
+  if (business?.showOrderNote !== false && sale.notes) {
+    lines.push(`Nota: ${sale.notes}`);
+  }
+
+  if (business?.customFooter) {
+    lines.push('------------------------------');
+    lines.push(business.customFooter);
   }
   if (sale.pendingUsd > 0) {
     lines.push(
@@ -1099,6 +1131,16 @@ export default function App() {
     exchangeRate: number;
     exchangeRateMode?: 'auto' | 'manual';
     exchangeRateUpdatedAt?: string;
+    customHeader?: string;
+    customFooter?: string;
+    showCustomerInfo?: boolean;
+    showItemLines?: boolean;
+    showUsdReference?: boolean;
+    showBsTotal?: boolean;
+    showPaymentMethod?: boolean;
+    showOrderNote?: boolean;
+    showBranchName?: boolean;
+    showExchangeRateLine?: boolean;
   }) => {
     if (!isAdminUser(activeCashier)) return;
     const cleanBusinessName = next.businessName.trim().slice(0, 120);
@@ -1114,6 +1156,16 @@ export default function App() {
       exchangeRate: round2(next.exchangeRate),
       exchangeRateMode: next.exchangeRateMode || businessSettings.exchangeRateMode || 'auto',
       exchangeRateUpdatedAt: next.exchangeRateUpdatedAt || businessSettings.exchangeRateUpdatedAt || nowIso,
+      customHeader: (next.customHeader || '').trim().slice(0, 300),
+      customFooter: (next.customFooter || '').trim().slice(0, 300),
+      showCustomerInfo: next.showCustomerInfo !== false,
+      showItemLines: next.showItemLines !== false,
+      showUsdReference: next.showUsdReference !== false,
+      showBsTotal: next.showBsTotal !== false,
+      showPaymentMethod: next.showPaymentMethod !== false,
+      showOrderNote: next.showOrderNote !== false,
+      showBranchName: next.showBranchName !== false,
+      showExchangeRateLine: next.showExchangeRateLine !== false,
       updatedAt: nowIso,
       syncStatus: 'pending',
     };

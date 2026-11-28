@@ -32,6 +32,16 @@ export interface BusinessSettings {
   exchangeRate: number;
   exchangeRateMode?: 'auto' | 'manual';
   exchangeRateUpdatedAt?: string;
+  customHeader?: string;
+  customFooter?: string;
+  showCustomerInfo?: boolean;
+  showItemLines?: boolean;
+  showUsdReference?: boolean;
+  showBsTotal?: boolean;
+  showPaymentMethod?: boolean;
+  showOrderNote?: boolean;
+  showBranchName?: boolean;
+  showExchangeRateLine?: boolean;
   updatedAt: string;
   syncStatus: SyncStatus;
   syncedAt?: string;

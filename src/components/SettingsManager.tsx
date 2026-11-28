@@ -9,6 +9,7 @@ import {
   Database,
   Eye,
   EyeOff,
+  FileText,
   KeyRound,
   Lock,
   LogOut,
@@ -82,6 +83,16 @@ interface SettingsManagerProps {
     exchangeRate: number;
     exchangeRateMode?: 'auto' | 'manual';
     exchangeRateUpdatedAt?: string;
+    customHeader?: string;
+    customFooter?: string;
+    showCustomerInfo?: boolean;
+    showItemLines?: boolean;
+    showUsdReference?: boolean;
+    showBsTotal?: boolean;
+    showPaymentMethod?: boolean;
+    showOrderNote?: boolean;
+    showBranchName?: boolean;
+    showExchangeRateLine?: boolean;
   }) => Promise<void>;
   onRefreshAutoRate?: () => Promise<{ rate: number; updatedAt?: string } | null>;
   onSaveExchangeRate: (exchangeRate: number) => Promise<void>;
@@ -278,6 +289,16 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
   const [rif, setRif] = useState<string>(businessSettings.rif);
   const [phone, setPhone] = useState<string>(businessSettings.phone);
   const [address, setAddress] = useState<string>(businessSettings.address);
+  const [customHeader, setCustomHeader] = useState<string>(businessSettings.customHeader || '');
+  const [customFooter, setCustomFooter] = useState<string>(businessSettings.customFooter || '¡Gracias por su compra!');
+  const [showCustomerInfo, setShowCustomerInfo] = useState<boolean>(businessSettings.showCustomerInfo !== false);
+  const [showItemLines, setShowItemLines] = useState<boolean>(businessSettings.showItemLines !== false);
+  const [showUsdReference, setShowUsdReference] = useState<boolean>(businessSettings.showUsdReference !== false);
+  const [showBsTotal, setShowBsTotal] = useState<boolean>(businessSettings.showBsTotal !== false);
+  const [showPaymentMethod, setShowPaymentMethod] = useState<boolean>(businessSettings.showPaymentMethod !== false);
+  const [showOrderNote, setShowOrderNote] = useState<boolean>(businessSettings.showOrderNote !== false);
+  const [showBranchName, setShowBranchName] = useState<boolean>(businessSettings.showBranchName !== false);
+  const [showExchangeRateLine, setShowExchangeRateLine] = useState<boolean>(businessSettings.showExchangeRateLine !== false);
   const [exchangeRateInput, setExchangeRateInput] = useState<string>(
     businessSettings.exchangeRate.toFixed(2)
   );
@@ -373,6 +394,16 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
     setRif(businessSettings.rif);
     setPhone(businessSettings.phone);
     setAddress(businessSettings.address);
+    setCustomHeader(businessSettings.customHeader || '');
+    setCustomFooter(businessSettings.customFooter || '¡Gracias por su compra!');
+    setShowCustomerInfo(businessSettings.showCustomerInfo !== false);
+    setShowItemLines(businessSettings.showItemLines !== false);
+    setShowUsdReference(businessSettings.showUsdReference !== false);
+    setShowBsTotal(businessSettings.showBsTotal !== false);
+    setShowPaymentMethod(businessSettings.showPaymentMethod !== false);
+    setShowOrderNote(businessSettings.showOrderNote !== false);
+    setShowBranchName(businessSettings.showBranchName !== false);
+    setShowExchangeRateLine(businessSettings.showExchangeRateLine !== false);
     const formattedRate = businessSettings.exchangeRate.toFixed(2);
     setExchangeRateInput(formattedRate);
     setQuickRateInput(formattedRate);
@@ -411,6 +442,16 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
         exchangeRate: Math.round((parsedRate + Number.EPSILON) * 100) / 100,
         exchangeRateMode: rateMode,
         exchangeRateUpdatedAt: new Date().toISOString(),
+        customHeader: customHeader.trim(),
+        customFooter: customFooter.trim(),
+        showCustomerInfo,
+        showItemLines,
+        showUsdReference,
+        showBsTotal,
+        showPaymentMethod,
+        showOrderNote,
+        showBranchName,
+        showExchangeRateLine,
       });
       setSaveMessage(
         cloudUser && isOnline
@@ -2044,6 +2085,172 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({
               placeholder="Av. Bolívar, Edif. Comercial Local 4"
               className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
             />
+          </div>
+
+          <div className="sm:col-span-2 pt-4 border-t border-slate-200 space-y-4">
+            <div className="flex items-center gap-2">
+              <FileText className="h-4 w-4 text-[#76B900]" />
+              <div>
+                <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Editor de Factura y Ticket de Impresión</h3>
+                <p className="text-[11px] text-slate-500">
+                  Personaliza la cabecera, pie de página y los campos visibles en tus tickets y recibos
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                    Encabezado Personalizado (Línea superior opcional)
+                  </label>
+                  <input
+                    type="text"
+                    value={customHeader}
+                    onChange={(e) => setCustomHeader(e.target.value)}
+                    placeholder="Ej. SUCURSAL PRINCIPAL - CENTRO"
+                    className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                    Pie de Página / Mensaje de Agradecimiento
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={customFooter}
+                    onChange={(e) => setCustomFooter(e.target.value)}
+                    placeholder="Ej. ¡Gracias por su compra! Vuelva pronto."
+                    className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-900 focus:border-[#76B900] focus:bg-white focus:outline-none resize-none"
+                  />
+                </div>
+
+                <div className="space-y-2 pt-2 border-t border-slate-200">
+                  <p className="text-[11px] font-bold text-slate-900">Campos a mostrar en el ticket:</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                    <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={showCustomerInfo}
+                        onChange={(e) => setShowCustomerInfo(e.target.checked)}
+                        className="h-3.5 w-3.5 rounded border-slate-300 accent-[#76B900]"
+                      />
+                      <span>Información del cliente</span>
+                    </label>
+                    <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={showItemLines}
+                        onChange={(e) => setShowItemLines(e.target.checked)}
+                        className="h-3.5 w-3.5 rounded border-slate-300 accent-[#76B900]"
+                      />
+                      <span>Líneas de productos</span>
+                    </label>
+                    <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={showUsdReference}
+                        onChange={(e) => setShowUsdReference(e.target.checked)}
+                        className="h-3.5 w-3.5 rounded border-slate-300 accent-[#76B900]"
+                      />
+                      <span>Referencia en USD ($)</span>
+                    </label>
+                    <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={showBsTotal}
+                        onChange={(e) => setShowBsTotal(e.target.checked)}
+                        className="h-3.5 w-3.5 rounded border-slate-300 accent-[#76B900]"
+                      />
+                      <span>Total en Bolívares (Bs)</span>
+                    </label>
+                    <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={showPaymentMethod}
+                        onChange={(e) => setShowPaymentMethod(e.target.checked)}
+                        className="h-3.5 w-3.5 rounded border-slate-300 accent-[#76B900]"
+                      />
+                      <span>Métodos de pago</span>
+                    </label>
+                    <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={showOrderNote}
+                        onChange={(e) => setShowOrderNote(e.target.checked)}
+                        className="h-3.5 w-3.5 rounded border-slate-300 accent-[#76B900]"
+                      />
+                      <span>Nota del pedido</span>
+                    </label>
+                    <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={showBranchName}
+                        onChange={(e) => setShowBranchName(e.target.checked)}
+                        className="h-3.5 w-3.5 rounded border-slate-300 accent-[#76B900]"
+                      />
+                      <span>Mostrar nombre de sucursal</span>
+                    </label>
+                    <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={showExchangeRateLine}
+                        onChange={(e) => setShowExchangeRateLine(e.target.checked)}
+                        className="h-3.5 w-3.5 rounded border-slate-300 accent-[#76B900]"
+                      />
+                      <span>Mostrar línea de tasa aplicada</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              {/* Live Preview Card */}
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 space-y-2.5">
+                <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                  <span className="text-xs font-bold text-slate-700">Vista Previa del Ticket</span>
+                  <span className="rounded bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800">En vivo</span>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-white p-3 font-mono text-[10.5px] leading-relaxed text-slate-800 space-y-1 shadow-2xs">
+                  {customHeader && <p className="text-center font-bold text-slate-900">{customHeader}</p>}
+                  {customHeader && <p className="text-center text-slate-400">------------------------------</p>}
+                  <p className="text-center font-extrabold text-slate-900">
+                    *{businessName || 'Comercial'}{showBranchName ? ' — Sucursal Principal' : ''}*
+                  </p>
+                  {rif && <p className="text-center text-slate-600">RIF: {rif}</p>}
+                  {address && <p className="text-center text-slate-600">Dirección: {address}</p>}
+                  {phone && <p className="text-center text-slate-600">Teléfono: {phone}</p>}
+                  <p className="text-slate-600">Recibo: P262-0001</p>
+                  <p className="text-slate-600">Fecha: 28/11/2026 14:30</p>
+                  <p className="text-slate-600">Cajero: Admin Principal</p>
+                  {showCustomerInfo && <p className="text-slate-600">Cliente: Juan Pérez</p>}
+                  <p className="text-slate-600">Modalidad: Contado</p>
+                  {showExchangeRateLine && (
+                    <p className="text-slate-600">Tasa aplicada: Bs {exchangeRateInput || '930.00'} / $</p>
+                  )}
+                  <p className="text-slate-400">------------------------------</p>
+                  {showItemLines && (
+                    <>
+                      <p className="text-slate-800">1x Producto Ejemplo A</p>
+                      <p className="text-slate-600 pl-3">
+                        {showUsdReference && '$10.00'} {showUsdReference && showBsTotal && '/ '} {showBsTotal && 'Bs 9,300.00'}
+                      </p>
+                      <p className="text-slate-400">------------------------------</p>
+                    </>
+                  )}
+                  <p className="text-slate-800">Subtotal: $10.00</p>
+                  <p className="font-bold text-slate-900">
+                    TOTAL: {showUsdReference && '$10.00'} {showUsdReference && showBsTotal && '/ '} {showBsTotal && 'Bs 9,300.00'}
+                  </p>
+                  {showPaymentMethod && (
+                    <p className="text-slate-600">Pagos: • Pago Móvil: Bs 9,300.00 ($10.00)</p>
+                  )}
+                  {showOrderNote && <p className="text-slate-600 italic">Nota: Ejemplo de nota</p>}
+                  {customFooter && <p className="text-center text-slate-400">------------------------------</p>}
+                  {customFooter && <p className="text-center font-semibold text-slate-900">{customFooter}</p>}
+                </div>
+              </div>
+            </div>
           </div>
 
           {formError && (
