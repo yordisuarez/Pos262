@@ -1456,12 +1456,10 @@ export default function App() {
 
     try {
       sessionStorage.setItem('pos_cashea_pending_sale', JSON.stringify(pendingSaleObject));
-      const publicKey = import.meta.env.VITE_CASHEA_PUBLIC_KEY || 'public_key_demo';
-      const res = await fetch('https://external.cashea.app/orders', {
+      const res = await fetch('/api/cashea/orders', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `ApiKey ${publicKey}`,
         },
         body: JSON.stringify(casheaOrderPayload),
       });
@@ -1472,7 +1470,7 @@ export default function App() {
         window.location.href = `https://external.cashea.app/checkout?idNumber=${encodeURIComponent(customerDoc)}`;
       }
     } catch (e: any) {
-      setCheckoutError(`Error al conectar con Cashea: ${e.message || 'Verifica tu conexión'}`);
+      setCheckoutError('No se pudo conectar con el servicio de Cashea. Verifica la configuración o intenta con otro método de pago.');
     }
   };
 

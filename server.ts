@@ -11,7 +11,28 @@ async function startServer() {
 
   const PORT = Number(process.env.PORT) || 3000;
 
-  // Backend Proxy Routes for Cashea API (keeping private key secure on server)
+  // Backend Proxy Route for Cashea Orders Creation
+  app.post('/api/cashea/orders', async (req, res) => {
+    try {
+      const privateKey = process.env.CASHEA_PRIVATE_KEY || process.env.PRIVATE_KEY || '';
+
+      const response = await fetch('https://external.cashea.app/orders', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `ApiKey ${privateKey}`,
+        },
+        body: JSON.stringify(req.body),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      return res.status(response.status).json(data);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message || 'Internal server error' });
+    }
+  });
+
+  // Backend Proxy Routes for Cashea API (down-payment & cancellation)
   app.post('/api/cashea/orders/:idNumber/down-payment', async (req, res) => {
     try {
       const { idNumber } = req.params;
