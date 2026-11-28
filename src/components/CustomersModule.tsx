@@ -315,60 +315,343 @@ export const CustomersModule: React.FC<CustomersModuleProps> = ({
   };
 
   return (
-    <div className="flex h-full flex-col bg-slate-50 text-slate-900 lg:flex-row overflow-hidden">
-      {/* Left panel: Customer list with proper mobile bottom padding clearance */}
-      <div className="w-full lg:w-96 flex flex-col border-b lg:border-b-0 lg:border-r border-slate-200 bg-white">
-        <div className="p-4 border-b border-slate-200 flex items-center justify-between bg-white">
+    <div className="flex flex-col bg-slate-50 text-slate-900 min-h-full overflow-y-auto p-4 lg:p-6 space-y-6 pb-24 lg:pb-8">
+      {errorMsg && (
+        <div className="rounded-lg bg-amber-50 border border-amber-200 p-3.5 text-xs text-amber-800 flex items-center justify-between shadow-xs">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
+            <span>{errorMsg}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setErrorMsg('')}
+            className="text-amber-600 hover:text-amber-900 cursor-pointer"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
+      {/* TOP SECTION: Active Customer Detail & Purchase History */}
+      {!selectedCustomer ? (
+        <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-slate-500 shadow-sm">
+          <div className="space-y-2">
+            <User className="mx-auto h-12 w-12 text-slate-300" />
+            <p className="text-sm font-medium text-slate-600">No hay clientes seleccionados o registrados.</p>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-6">
+          {/* Customer Header Card */}
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <h1 className="text-lg font-extrabold text-slate-900">{selectedCustomer.name}</h1>
+                  <span className="rounded bg-slate-100 px-2 py-0.5 text-[11px] font-mono text-slate-700 border border-slate-200">
+                    {selectedCustomer.documentId || 'Cédula / RIF no especificada'}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500">
+                  Teléfono: <span className="text-slate-800 font-medium">{selectedCustomer.phone || 'No registrado'}</span> · Creado:{' '}
+                  {new Date(selectedCustomer.createdAt).toLocaleDateString()}
+                </p>
+                {selectedCustomer.notes && (
+                  <p className="text-xs text-slate-500 mt-1 italic">
+                    Notas: <span className="text-slate-700">{selectedCustomer.notes}</span>
+                  </p>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
+                {selectedCustomer.balanceUsd > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenPaymentModal(selectedCustomer)}
+                    className="flex items-center gap-1.5 rounded-lg bg-[#76B900] px-3.5 py-2 text-xs font-bold text-white transition-colors hover:bg-[#65a30d] cursor-pointer shadow-xs"
+                  >
+                    <DollarSign className="h-4 w-4" />
+                    Cobrar Deuda
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => handleOpenEdit(selectedCustomer)}
+                  className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 transition-colors hover:border-[#76B900] hover:bg-slate-50 cursor-pointer shadow-xs"
+                >
+                  <Pencil className="h-3.5 w-3.5 text-[#76B900]" />
+                  Editar cliente
+                </button>
+                {confirmDeleteId === selectedCustomer.id ? (
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => void handleConfirmDelete(selectedCustomer)}
+                      className="rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-red-700 cursor-pointer shadow-xs"
+                    >
+                      Confirmar eliminar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeleteId(null)}
+                      className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => handleRequestDelete(selectedCustomer)}
+                    className="flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-bold text-red-600 transition-colors hover:border-red-300 hover:bg-red-50 cursor-pointer shadow-xs"
+                  >
+                    <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                    Eliminar
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* 3 Summary Cards */}
+            <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5">
+                <div className="flex items-center justify-between text-xs text-slate-500 font-medium">
+                  <span>Deuda pendiente</span>
+                  <AlertCircle className="h-4 w-4 text-amber-600" />
+                </div>
+                <div className="mt-2 tabular-nums">
+                  <p className="text-lg font-black text-slate-900">{formatUsd(customerMetrics.totalPendingUsd)}</p>
+                  <p className="text-[11px] text-slate-500">{formatVes(customerMetrics.totalPendingVes)}</p>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5">
+                <div className="flex items-center justify-between text-xs text-slate-500 font-medium">
+                  <span>Total comprado</span>
+                  <DollarSign className="h-4 w-4 text-[#76B900]" />
+                </div>
+                <div className="mt-2 tabular-nums">
+                  <p className="text-lg font-black text-slate-900">{formatUsd(customerMetrics.totalPurchasedUsd)}</p>
+                  <p className="text-[11px] text-slate-500">{formatVes(customerMetrics.totalPurchasedVes)}</p>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5">
+                <div className="flex items-center justify-between text-xs text-slate-500 font-medium">
+                  <span>Cantidad de compras</span>
+                  <Receipt className="h-4 w-4 text-sky-600" />
+                </div>
+                <div className="mt-2 tabular-nums">
+                  <p className="text-lg font-black text-slate-900">{customerMetrics.purchaseCount}</p>
+                  <p className="text-[11px] text-slate-500">Transacciones registradas</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Purchase History Section */}
+          <div className="rounded-xl border border-slate-200 bg-white p-5 space-y-4 shadow-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-200 pb-3">
+              <div className="flex items-center gap-2">
+                <FileText className="h-5 w-5 text-[#76B900]" />
+                <h3 className="text-sm font-bold text-slate-900">Historial de Compras</h3>
+              </div>
+
+              <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-lg border border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setHistoryFilter('all')}
+                  className={`rounded px-2.5 py-1 text-xs font-semibold transition-colors cursor-pointer ${
+                    historyFilter === 'all' ? 'bg-[#76B900] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Todas ({customerSales.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setHistoryFilter('debt')}
+                  className={`rounded px-2.5 py-1 text-xs font-semibold transition-colors cursor-pointer ${
+                    historyFilter === 'debt' ? 'bg-amber-500 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Con deuda
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setHistoryFilter('paid')}
+                  className={`rounded px-2.5 py-1 text-xs font-semibold transition-colors cursor-pointer ${
+                    historyFilter === 'paid' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Pagadas
+                </button>
+              </div>
+            </div>
+
+            {filteredSalesHistory.length === 0 ? (
+              <div className="p-8 text-center text-xs text-slate-500">
+                No hay compras registradas para este filtro.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {filteredSalesHistory.map((sale) => {
+                  const isExpanded = expandedSaleId === sale.id;
+                  const pending = Math.max(0, Number(sale.pendingUsd) || 0);
+                  const isDebt = sale.saleType === 'credit' || pending > 0;
+
+                  return (
+                    <div
+                      key={sale.id}
+                      className="rounded-lg border border-slate-200 bg-white transition-all hover:border-slate-300 shadow-2xs"
+                    >
+                      <div className="p-3.5 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-slate-900 font-mono">{sale.receiptNumber}</span>
+                            <span
+                              className={`rounded px-2 py-0.5 text-[10px] font-bold ${
+                                isDebt ? 'bg-amber-100 text-amber-800 border border-amber-200' : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                              }`}
+                            >
+                              {isDebt ? 'Crédito / Pendiente' : 'Pagada'}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-3 text-xs text-slate-500">
+                            <span className="flex items-center gap-1">
+                              <Clock className="h-3 w-3" />
+                              {new Date(sale.createdAt).toLocaleString()}
+                            </span>
+                            <span>·</span>
+                            <span>Sucursal: {sale.branchName || 'Principal'}</span>
+                            <span>·</span>
+                            <span>Método: {sale.payments?.[0]?.method || 'Efectivo'}</span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between md:justify-end gap-4">
+                          <div className="text-right tabular-nums">
+                            <p className="text-xs font-extrabold text-slate-900">{formatUsd(sale.totalUsd)}</p>
+                            {pending > 0 ? (
+                              <p className="text-[11px] font-semibold text-amber-600">
+                                Saldo: {formatUsd(pending)} ({formatVes(pending * safeRate)})
+                              </p>
+                            ) : (
+                              <p className="text-[11px] text-emerald-600 font-medium">Pagado 100%</p>
+                            )}
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => setExpandedSaleId(isExpanded ? null : sale.id)}
+                            className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 cursor-pointer"
+                          >
+                            <span>{isExpanded ? 'Ocultar' : 'Productos'}</span>
+                            {isExpanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                          </button>
+                        </div>
+                      </div>
+
+                      {isExpanded && (
+                        <div className="border-t border-slate-200 bg-slate-50 p-3.5 space-y-2">
+                          <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                            Productos en la compra ({sale.items?.length || 0})
+                          </p>
+                          <div className="space-y-1.5">
+                            {sale.items?.map((item, idx) => (
+                              <div
+                                key={`${item.productId}-${idx}`}
+                                className="flex items-center justify-between rounded bg-white px-3 py-2 text-xs border border-slate-200 shadow-2xs"
+                              >
+                                <div>
+                                  <p className="font-semibold text-slate-900">{item.name}</p>
+                                  <p className="text-[11px] text-slate-500 font-mono">
+                                    SKU: {item.sku} · Cantidad: {item.quantity} {item.unit || 'und'}
+                                  </p>
+                                </div>
+                                <div className="text-right">
+                                  <p className="font-bold text-slate-900">{formatUsd(item.priceUsd * item.quantity)}</p>
+                                  <p className="text-[10px] text-slate-500">({formatUsd(item.priceUsd)} c/u)</p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                          {sale.notes && (
+                            <p className="text-xs text-slate-500 pt-2 italic">
+                              Nota de venta: <span className="text-slate-800">{sale.notes}</span>
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* BOTTOM SECTION: Full Customer List & Search / Actions */}
+      <div className="rounded-xl border border-slate-200 bg-white p-5 space-y-4 shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-200 pb-3">
           <div className="flex items-center gap-2">
             <Users className="h-5 w-5 text-[#76B900]" />
-            <h2 className="text-base font-bold tracking-tight text-slate-900">Clientes Pos262</h2>
+            <h3 className="text-sm font-bold text-slate-900">Listado de Clientes ({customers.length})</h3>
           </div>
           <button
             type="button"
             onClick={() => setIsCreating(true)}
-            className="flex items-center gap-1.5 rounded-lg bg-[#76B900] px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-[#65a30d] cursor-pointer"
+            className="flex items-center gap-1.5 rounded-lg bg-[#76B900] px-3.5 py-2 text-xs font-bold text-white transition-colors hover:bg-[#65a30d] cursor-pointer shadow-xs self-start sm:self-auto"
           >
             <Plus className="h-4 w-4" />
-            Nuevo
+            Nuevo Cliente
           </button>
         </div>
 
         {/* Search Bar */}
-        <div className="p-3 border-b border-slate-200 bg-slate-50">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Buscar por nombre, cédula o teléfono..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-xs text-slate-950 placeholder-slate-400 focus:border-[#76B900] focus:outline-none"
-            />
-          </div>
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <input
+            type="text"
+            placeholder="Buscar por nombre, cédula o teléfono..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-xs text-slate-950 placeholder-slate-400 focus:border-[#76B900] focus:outline-none"
+          />
         </div>
 
-        {/* Customer list with pb-24 for mobile bottom clearance */}
-        <div className="flex-1 overflow-y-auto p-2 space-y-1.5 pb-24 lg:pb-4">
-          {filteredCustomers.length === 0 ? (
-            <div className="p-6 text-center text-xs text-slate-500">
-              No se encontraron clientes registrados.
-            </div>
-          ) : (
-            filteredCustomers.map((c) => {
+        {/* Customer Cards Grid */}
+        {filteredCustomers.length === 0 ? (
+          <div className="p-8 text-center text-xs text-slate-500">
+            No se encontraron clientes registrados.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {filteredCustomers.map((c) => {
               const isSelected = selectedCustomer?.id === c.id;
               const hasDebt = (c.balanceUsd || 0) > 0;
               return (
-                <button
+                <div
                   key={c.id}
-                  type="button"
+                  role="button"
+                  tabIndex={0}
                   onClick={() => {
                     setSelectedCustomerId(c.id);
                     setConfirmDeleteId(null);
                     setErrorMsg('');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
                   }}
-                  className={`w-full text-left rounded-lg p-3 transition-all cursor-pointer border ${
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      setSelectedCustomerId(c.id);
+                      setConfirmDeleteId(null);
+                      setErrorMsg('');
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }
+                  }}
+                  className={`w-full text-left rounded-xl p-3.5 transition-all cursor-pointer border outline-none ${
                     isSelected
-                      ? 'border-[#76B900] bg-[#F7FEE7] text-slate-900 shadow-xs'
+                      ? 'border-[#76B900] bg-[#F7FEE7] text-slate-900 shadow-sm ring-1 ring-[#76B900]/30'
                       : 'border-slate-200 bg-white text-slate-800 hover:border-slate-300 hover:bg-slate-50'
                   }`}
                 >
@@ -396,287 +679,10 @@ export const CustomersModule: React.FC<CustomersModuleProps> = ({
                       </button>
                     </div>
                   )}
-                </button>
+                </div>
               );
-            })
-          )}
-        </div>
-      </div>
-
-      {/* Right panel: Customer Profile, summary cards, purchase history */}
-      <div className="flex-1 flex flex-col overflow-y-auto bg-slate-50 p-4 lg:p-6 space-y-6">
-        {errorMsg && (
-          <div className="rounded-lg bg-amber-50 border border-amber-200 p-3.5 text-xs text-amber-800 flex items-center justify-between shadow-xs">
-            <div className="flex items-center gap-2">
-              <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
-              <span>{errorMsg}</span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setErrorMsg('')}
-              className="text-amber-600 hover:text-amber-900 cursor-pointer"
-            >
-              <X className="h-4 w-4" />
-            </button>
+            })}
           </div>
-        )}
-
-        {!selectedCustomer ? (
-          <div className="flex flex-1 items-center justify-center text-slate-500">
-            <div className="text-center space-y-2">
-              <User className="mx-auto h-12 w-12 text-slate-300" />
-              <p className="text-sm font-medium text-slate-600">Selecciona un cliente para ver su detalle</p>
-            </div>
-          </div>
-        ) : (
-          <>
-            {/* Customer Header Card */}
-            <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <h1 className="text-lg font-extrabold text-slate-900">{selectedCustomer.name}</h1>
-                    <span className="rounded bg-slate-100 px-2 py-0.5 text-[11px] font-mono text-slate-700 border border-slate-200">
-                      {selectedCustomer.documentId || 'Cédula / RIF no especificada'}
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-500">
-                    Teléfono: <span className="text-slate-800 font-medium">{selectedCustomer.phone || 'No registrado'}</span> · Creado:{' '}
-                    {new Date(selectedCustomer.createdAt).toLocaleDateString()}
-                  </p>
-                  {selectedCustomer.notes && (
-                    <p className="text-xs text-slate-500 mt-1 italic">
-                      Notas: <span className="text-slate-700">{selectedCustomer.notes}</span>
-                    </p>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
-                  {selectedCustomer.balanceUsd > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => handleOpenPaymentModal(selectedCustomer)}
-                      className="flex items-center gap-1.5 rounded-lg bg-[#76B900] px-3.5 py-2 text-xs font-bold text-white transition-colors hover:bg-[#65a30d] cursor-pointer shadow-xs"
-                    >
-                      <DollarSign className="h-4 w-4" />
-                      Cobrar Deuda
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => handleOpenEdit(selectedCustomer)}
-                    className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 transition-colors hover:border-[#76B900] hover:bg-slate-50 cursor-pointer shadow-xs"
-                  >
-                    <Pencil className="h-3.5 w-3.5 text-[#76B900]" />
-                    Editar cliente
-                  </button>
-                  {confirmDeleteId === selectedCustomer.id ? (
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => void handleConfirmDelete(selectedCustomer)}
-                        className="rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-red-700 cursor-pointer shadow-xs"
-                      >
-                        Confirmar eliminar
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setConfirmDeleteId(null)}
-                        className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer"
-                      >
-                        Cancelar
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => handleRequestDelete(selectedCustomer)}
-                      className="flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-bold text-red-600 transition-colors hover:border-red-300 hover:bg-red-50 cursor-pointer shadow-xs"
-                    >
-                      <Trash2 className="h-3.5 w-3.5 text-red-500" />
-                      Eliminar
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* 3 Summary Cards */}
-              <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5">
-                  <div className="flex items-center justify-between text-xs text-slate-500 font-medium">
-                    <span>Deuda pendiente</span>
-                    <AlertCircle className="h-4 w-4 text-amber-600" />
-                  </div>
-                  <div className="mt-2 tabular-nums">
-                    <p className="text-lg font-black text-slate-900">{formatUsd(customerMetrics.totalPendingUsd)}</p>
-                    <p className="text-[11px] text-slate-500">{formatVes(customerMetrics.totalPendingVes)}</p>
-                  </div>
-                </div>
-
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5">
-                  <div className="flex items-center justify-between text-xs text-slate-500 font-medium">
-                    <span>Total comprado</span>
-                    <DollarSign className="h-4 w-4 text-[#76B900]" />
-                  </div>
-                  <div className="mt-2 tabular-nums">
-                    <p className="text-lg font-black text-slate-900">{formatUsd(customerMetrics.totalPurchasedUsd)}</p>
-                    <p className="text-[11px] text-slate-500">{formatVes(customerMetrics.totalPurchasedVes)}</p>
-                  </div>
-                </div>
-
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5">
-                  <div className="flex items-center justify-between text-xs text-slate-500 font-medium">
-                    <span>Cantidad de compras</span>
-                    <Receipt className="h-4 w-4 text-sky-600" />
-                  </div>
-                  <div className="mt-2 tabular-nums">
-                    <p className="text-lg font-black text-slate-900">{customerMetrics.purchaseCount}</p>
-                    <p className="text-[11px] text-slate-500">Transacciones registradas</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Purchase History Section */}
-            <div className="rounded-xl border border-slate-200 bg-white p-5 space-y-4 shadow-sm">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-200 pb-3">
-                <div className="flex items-center gap-2">
-                  <FileText className="h-5 w-5 text-[#76B900]" />
-                  <h3 className="text-sm font-bold text-slate-900">Historial de Compras</h3>
-                </div>
-
-                <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-lg border border-slate-200">
-                  <button
-                    type="button"
-                    onClick={() => setHistoryFilter('all')}
-                    className={`rounded px-2.5 py-1 text-xs font-semibold transition-colors cursor-pointer ${
-                      historyFilter === 'all' ? 'bg-[#76B900] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    Todas ({customerSales.length})
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setHistoryFilter('debt')}
-                    className={`rounded px-2.5 py-1 text-xs font-semibold transition-colors cursor-pointer ${
-                      historyFilter === 'debt' ? 'bg-amber-500 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    Con deuda
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setHistoryFilter('paid')}
-                    className={`rounded px-2.5 py-1 text-xs font-semibold transition-colors cursor-pointer ${
-                      historyFilter === 'paid' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    Pagadas
-                  </button>
-                </div>
-              </div>
-
-              {filteredSalesHistory.length === 0 ? (
-                <div className="p-8 text-center text-xs text-slate-500">
-                  No hay compras registradas para este filtro.
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {filteredSalesHistory.map((sale) => {
-                    const isExpanded = expandedSaleId === sale.id;
-                    const pending = Math.max(0, Number(sale.pendingUsd) || 0);
-                    const isDebt = sale.saleType === 'credit' || pending > 0;
-
-                    return (
-                      <div
-                        key={sale.id}
-                        className="rounded-lg border border-slate-200 bg-white transition-all hover:border-slate-300 shadow-2xs"
-                      >
-                        <div className="p-3.5 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs font-bold text-slate-900 font-mono">{sale.receiptNumber}</span>
-                              <span
-                                className={`rounded px-2 py-0.5 text-[10px] font-bold ${
-                                  isDebt ? 'bg-amber-100 text-amber-800 border border-amber-200' : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                                }`}
-                              >
-                                {isDebt ? 'Crédito / Pendiente' : 'Pagada'}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-3 text-xs text-slate-500">
-                              <span className="flex items-center gap-1">
-                                <Clock className="h-3 w-3" />
-                                {new Date(sale.createdAt).toLocaleString()}
-                              </span>
-                              <span>·</span>
-                              <span>Sucursal: {sale.branchName || 'Principal'}</span>
-                              <span>·</span>
-                              <span>Método: {sale.payments?.[0]?.method || 'Efectivo'}</span>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center justify-between md:justify-end gap-4">
-                            <div className="text-right tabular-nums">
-                              <p className="text-xs font-extrabold text-slate-900">{formatUsd(sale.totalUsd)}</p>
-                              {pending > 0 ? (
-                                <p className="text-[11px] font-semibold text-amber-600">
-                                  Saldo: {formatUsd(pending)} ({formatVes(pending * safeRate)})
-                                </p>
-                              ) : (
-                                <p className="text-[11px] text-emerald-600 font-medium">Pagado 100%</p>
-                              )}
-                            </div>
-
-                            <button
-                              type="button"
-                              onClick={() => setExpandedSaleId(isExpanded ? null : sale.id)}
-                              className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 cursor-pointer"
-                            >
-                              <span>{isExpanded ? 'Ocultar' : 'Productos'}</span>
-                              {isExpanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-                            </button>
-                          </div>
-                        </div>
-
-                        {isExpanded && (
-                          <div className="border-t border-slate-200 bg-slate-50 p-3.5 space-y-2">
-                            <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                              Productos en la compra ({sale.items?.length || 0})
-                            </p>
-                            <div className="space-y-1.5">
-                              {sale.items?.map((item, idx) => (
-                                <div
-                                  key={`${item.productId}-${idx}`}
-                                  className="flex items-center justify-between rounded bg-white px-3 py-2 text-xs border border-slate-200 shadow-2xs"
-                                >
-                                  <div>
-                                    <p className="font-semibold text-slate-900">{item.name}</p>
-                                    <p className="text-[11px] text-slate-500 font-mono">
-                                      SKU: {item.sku} · Cantidad: {item.quantity} {item.unit || 'und'}
-                                    </p>
-                                  </div>
-                                  <div className="text-right">
-                                    <p className="font-bold text-slate-900">{formatUsd(item.priceUsd * item.quantity)}</p>
-                                    <p className="text-[10px] text-slate-500">({formatUsd(item.priceUsd)} c/u)</p>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                            {sale.notes && (
-                              <p className="text-xs text-slate-500 pt-2 italic">
-                                Nota de venta: <span className="text-slate-800">{sale.notes}</span>
-                              </p>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </>
         )}
       </div>
 

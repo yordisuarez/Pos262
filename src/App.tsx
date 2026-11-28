@@ -3783,7 +3783,7 @@ export default function App() {
             <span className="text-xs font-semibold text-slate-900">Total a pagar</span>
             <div className="text-right leading-tight tabular-nums">
               <p
-                className={`text-sm font-bold tracking-tight ${
+                className={`text-2xl font-bold tracking-tight ${
                   currency === 'VES' ? 'text-[#558B00]' : 'text-slate-900'
                 }`}
               >
