@@ -7,6 +7,7 @@ import {
   Clock,
   DollarSign,
   FileText,
+  MessageCircle,
   Pencil,
   Plus,
   Receipt,
@@ -17,7 +18,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import type { Customer, Sale } from '../types/pos';
+import type { Customer, PaymentMethod, Sale } from '../types/pos';
 import { updateCustomer } from '../db/posDb';
 
 const round2 = (value: number): number => Math.round((value + Number.EPSILON) * 100) / 100;
@@ -33,6 +34,41 @@ const formatVes = (amount: number): string =>
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
+
+const normalizeWhatsAppPhone = (rawPhone?: string): string => {
+  if (!rawPhone) return '';
+  const cleaned = rawPhone.replace(/\D/g, '');
+  if (cleaned.startsWith('58') && cleaned.length >= 11) return cleaned;
+  if (cleaned.startsWith('0') && cleaned.length === 11) return `58${cleaned.substring(1)}`;
+  if (cleaned.length === 10) return `58${cleaned}`;
+  return cleaned;
+};
+
+const buildPaymentReceiptText = (
+  customer: Customer,
+  paidUsd: number,
+  paidVes: number,
+  paymentMethod: string,
+  reference: string,
+  remainingBalanceUsd: number
+): string => {
+  return `🧾 COMPROBANTE DE PAGO / ABONO
+Cliente: ${customer.name}
+Cédula/RIF: ${customer.documentId || 'S/C'}
+Monto Abonado: ${formatUsd(paidUsd)} (${formatVes(paidVes)})
+Método: ${paymentMethod}
+${reference ? `Referencia: ${reference}\n` : ''}Saldo Pendiente Actual: ${formatUsd(remainingBalanceUsd)}
+¡Gracias por su pago! - Pos 262`;
+};
+
+const buildPaymentWhatsAppUrl = (phone?: string, text?: string): string => {
+  const norm = normalizeWhatsAppPhone(phone);
+  const encoded = encodeURIComponent(text || '');
+  if (norm) {
+    return `https://wa.me/${norm}?text=${encoded}`;
+  }
+  return `https://wa.me/?text=${encoded}`;
+};
 
 interface CustomersModuleProps {
   customers: Customer[];
@@ -72,6 +108,21 @@ export const CustomersModule: React.FC<CustomersModuleProps> = ({
   const [newPhone, setNewPhone] = useState<string>('');
   const [newNotes, setNewNotes] = useState<string>('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  // Payment modal state ("Cobrar")
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState<boolean>(false);
+  const [paymentCustomer, setPaymentCustomer] = useState<Customer | null>(null);
+  const [paymentAmountVesInput, setPaymentAmountVesInput] = useState<string>('');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('Pago Móvil');
+  const [paymentReference, setPaymentReference] = useState<string>('');
+  const [paymentSuccessReceipt, setPaymentSuccessReceipt] = useState<{
+    customer: Customer;
+    paidUsd: number;
+    paidVes: number;
+    method: string;
+    reference: string;
+    remainingUsd: number;
+  } | null>(null);
 
   const safeRate = Number.isFinite(exchangeRate) && exchangeRate > 0 ? exchangeRate : 1;
 
@@ -220,9 +271,52 @@ export const CustomersModule: React.FC<CustomersModuleProps> = ({
     setSelectedCustomerId(newCust.id);
   };
 
+  const handleOpenPaymentModal = (c: Customer) => {
+    setPaymentCustomer(c);
+    const debtVes = round2((c.balanceUsd || 0) * safeRate);
+    setPaymentAmountVesInput(debtVes > 0 ? debtVes.toFixed(2) : '0.00');
+    setPaymentMethod('Pago Móvil');
+    setPaymentReference('');
+    setPaymentSuccessReceipt(null);
+    setErrorMsg('');
+    setIsPaymentModalOpen(true);
+  };
+
+  const handleRegisterPayment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!paymentCustomer) return;
+    const paidVes = parseFloat(paymentAmountVesInput.replace(',', '.')) || 0;
+    if (paidVes <= 0) {
+      setErrorMsg('El monto del pago debe ser mayor a cero.');
+      return;
+    }
+    const paidUsd = round2(paidVes / safeRate);
+    const currentBalance = paymentCustomer.balanceUsd || 0;
+    const newBalance = round2(Math.max(0, currentBalance - paidUsd));
+
+    try {
+      await updateCustomer(paymentCustomer.id, {
+        balanceUsd: newBalance,
+      });
+
+      if (onRefreshData) await onRefreshData();
+
+      setPaymentSuccessReceipt({
+        customer: paymentCustomer,
+        paidUsd,
+        paidVes,
+        method: paymentMethod,
+        reference: paymentReference.trim(),
+        remainingUsd: newBalance,
+      });
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Error al registrar el pago del cliente.');
+    }
+  };
+
   return (
     <div className="flex h-full flex-col bg-slate-50 text-slate-900 lg:flex-row overflow-hidden">
-      {/* Left panel: Customer list */}
+      {/* Left panel: Customer list with proper mobile bottom padding clearance */}
       <div className="w-full lg:w-96 flex flex-col border-b lg:border-b-0 lg:border-r border-slate-200 bg-white">
         <div className="p-4 border-b border-slate-200 flex items-center justify-between bg-white">
           <div className="flex items-center gap-2">
@@ -253,8 +347,8 @@ export const CustomersModule: React.FC<CustomersModuleProps> = ({
           </div>
         </div>
 
-        {/* Customer list */}
-        <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
+        {/* Customer list with pb-24 for mobile bottom clearance */}
+        <div className="flex-1 overflow-y-auto p-2 space-y-1.5 pb-24 lg:pb-4">
           {filteredCustomers.length === 0 ? (
             <div className="p-6 text-center text-xs text-slate-500">
               No se encontraron clientes registrados.
@@ -262,6 +356,7 @@ export const CustomersModule: React.FC<CustomersModuleProps> = ({
           ) : (
             filteredCustomers.map((c) => {
               const isSelected = selectedCustomer?.id === c.id;
+              const hasDebt = (c.balanceUsd || 0) > 0;
               return (
                 <button
                   key={c.id}
@@ -283,10 +378,24 @@ export const CustomersModule: React.FC<CustomersModuleProps> = ({
                   </div>
                   <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500">
                     <span>{c.phone || 'Sin teléfono'}</span>
-                    <span className={c.balanceUsd > 0 ? 'text-amber-600 font-semibold' : 'text-slate-400'}>
+                    <span className={hasDebt ? 'text-amber-700 font-bold' : 'text-slate-400'}>
                       Deuda: {formatUsd(c.balanceUsd || 0)}
                     </span>
                   </div>
+                  {hasDebt && (
+                    <div className="mt-2 flex items-center justify-end">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleOpenPaymentModal(c);
+                        }}
+                        className="rounded bg-[#76B900] px-2.5 py-1 text-[11px] font-bold text-white hover:bg-[#65a30d] transition-colors cursor-pointer shadow-2xs"
+                      >
+                        Cobrar
+                      </button>
+                    </div>
+                  )}
                 </button>
               );
             })
@@ -342,7 +451,17 @@ export const CustomersModule: React.FC<CustomersModuleProps> = ({
                   )}
                 </div>
 
-                <div className="flex items-center gap-2 self-start sm:self-auto">
+                <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
+                  {selectedCustomer.balanceUsd > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => handleOpenPaymentModal(selectedCustomer)}
+                      className="flex items-center gap-1.5 rounded-lg bg-[#76B900] px-3.5 py-2 text-xs font-bold text-white transition-colors hover:bg-[#65a30d] cursor-pointer shadow-xs"
+                    >
+                      <DollarSign className="h-4 w-4" />
+                      Cobrar Deuda
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => handleOpenEdit(selectedCustomer)}
@@ -383,7 +502,6 @@ export const CustomersModule: React.FC<CustomersModuleProps> = ({
 
               {/* 3 Summary Cards */}
               <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-3">
-                {/* 1. Deuda total pendiente */}
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5">
                   <div className="flex items-center justify-between text-xs text-slate-500 font-medium">
                     <span>Deuda pendiente</span>
@@ -395,7 +513,6 @@ export const CustomersModule: React.FC<CustomersModuleProps> = ({
                   </div>
                 </div>
 
-                {/* 2. Total comprado */}
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5">
                   <div className="flex items-center justify-between text-xs text-slate-500 font-medium">
                     <span>Total comprado</span>
@@ -407,7 +524,6 @@ export const CustomersModule: React.FC<CustomersModuleProps> = ({
                   </div>
                 </div>
 
-                {/* 3. Cantidad de compras */}
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5">
                   <div className="flex items-center justify-between text-xs text-slate-500 font-medium">
                     <span>Cantidad de compras</span>
@@ -429,7 +545,6 @@ export const CustomersModule: React.FC<CustomersModuleProps> = ({
                   <h3 className="text-sm font-bold text-slate-900">Historial de Compras</h3>
                 </div>
 
-                {/* Quick Filters */}
                 <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-lg border border-slate-200">
                   <button
                     type="button"
@@ -524,7 +639,6 @@ export const CustomersModule: React.FC<CustomersModuleProps> = ({
                           </div>
                         </div>
 
-                        {/* Accordion items details */}
                         {isExpanded && (
                           <div className="border-t border-slate-200 bg-slate-50 p-3.5 space-y-2">
                             <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
@@ -565,6 +679,166 @@ export const CustomersModule: React.FC<CustomersModuleProps> = ({
           </>
         )}
       </div>
+
+      {/* Payment Modal ("Cobrar Deuda") */}
+      {isPaymentModalOpen && paymentCustomer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 p-4 backdrop-blur-[1px]">
+          <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 space-y-4 shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <DollarSign className="h-4 w-4 text-[#76B900]" />
+                Cobrar Deuda: {paymentCustomer.name}
+              </h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsPaymentModalOpen(false);
+                  setPaymentSuccessReceipt(null);
+                }}
+                className="text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {errorMsg && (
+              <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-xs text-red-700">
+                {errorMsg}
+              </div>
+            )}
+
+            {paymentSuccessReceipt ? (
+              <div className="space-y-4 py-2">
+                <div className="flex items-center gap-3 rounded-lg bg-[#F7FEE7] border border-[#76B900]/40 p-3.5 text-xs text-[#3F6212]">
+                  <CheckCircle2 className="h-5 w-5 text-[#76B900] shrink-0" />
+                  <div>
+                    <p className="font-bold">¡Pago registrado con éxito!</p>
+                    <p className="text-[11px] text-slate-600">
+                      Se ha abonado {formatUsd(paymentSuccessReceipt.paidUsd)} ({formatVes(paymentSuccessReceipt.paidVes)}) a la cuenta de {paymentSuccessReceipt.customer.name}.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 font-mono text-xs text-slate-700 whitespace-pre-wrap">
+                  {buildPaymentReceiptText(
+                    paymentSuccessReceipt.customer,
+                    paymentSuccessReceipt.paidUsd,
+                    paymentSuccessReceipt.paidVes,
+                    paymentSuccessReceipt.method,
+                    paymentSuccessReceipt.reference,
+                    paymentSuccessReceipt.remainingUsd
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2">
+                  <a
+                    href={buildPaymentWhatsAppUrl(
+                      paymentSuccessReceipt.customer.phone,
+                      buildPaymentReceiptText(
+                        paymentSuccessReceipt.customer,
+                        paymentSuccessReceipt.paidUsd,
+                        paymentSuccessReceipt.paidVes,
+                        paymentSuccessReceipt.method,
+                        paymentSuccessReceipt.reference,
+                        paymentSuccessReceipt.remainingUsd
+                      )
+                    )}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#84CC16] px-4 py-2.5 text-xs font-bold text-slate-950 hover:bg-[#76B900] transition-colors"
+                  >
+                    <MessageCircle className="h-4 w-4" />
+                    Enviar por WhatsApp
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsPaymentModalOpen(false);
+                      setPaymentSuccessReceipt(null);
+                    }}
+                    className="rounded-lg bg-slate-900 px-4 py-2.5 text-xs font-bold text-white hover:bg-slate-800 cursor-pointer"
+                  >
+                    Cerrar
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={handleRegisterPayment} className="space-y-4">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5 font-mono tabular-nums space-y-1">
+                  <div className="flex justify-between text-xs text-slate-600 font-sans">
+                    <span>Deuda actual pendiente:</span>
+                    <span className="font-bold text-amber-700">{formatUsd(paymentCustomer.balanceUsd || 0)}</span>
+                  </div>
+                  <div className="flex justify-between text-xs text-slate-600 font-sans">
+                    <span>Equivalente en Bolívares:</span>
+                    <span className="font-bold text-slate-900">{formatVes((paymentCustomer.balanceUsd || 0) * safeRate)}</span>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Monto a abonar (Bs) *</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    required
+                    value={paymentAmountVesInput}
+                    onChange={(e) => setPaymentAmountVesInput(e.target.value)}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-xs font-bold text-slate-900 focus:border-[#76B900] focus:outline-none"
+                  />
+                  <p className="mt-1 text-[11px] text-slate-500 font-mono">
+                    Equivalente en USD: {formatUsd((parseFloat(paymentAmountVesInput.replace(',', '.')) || 0) / safeRate)}
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Método de pago *</label>
+                  <select
+                    value={paymentMethod}
+                    onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod)}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-900 focus:border-[#76B900] focus:outline-none"
+                  >
+                    <option value="Pago Móvil">Pago Móvil</option>
+                    <option value="Efectivo Bs">Efectivo Bs</option>
+                    <option value="Punto de Venta">Punto de Venta</option>
+                    <option value="Biopago">Biopago</option>
+                    <option value="Efectivo Divisa $">Efectivo Divisa $</option>
+                    <option value="Binance USDT">Binance USDT</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Número de referencia (opcional)</label>
+                  <input
+                    type="text"
+                    placeholder="Ej: 12345678"
+                    value={paymentReference}
+                    onChange={(e) => setPaymentReference(e.target.value)}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-xs text-slate-900 focus:border-[#76B900] focus:outline-none"
+                  />
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2 border-t border-slate-200">
+                  <button
+                    type="button"
+                    onClick={() => setIsPaymentModalOpen(false)}
+                    className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex items-center gap-1.5 rounded-lg bg-[#76B900] px-4 py-2 text-xs font-bold text-white hover:bg-[#65a30d] cursor-pointer"
+                  >
+                    <DollarSign className="h-4 w-4" />
+                    Registrar Pago
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Edit Customer Modal */}
       {isEditing && selectedCustomer && (
